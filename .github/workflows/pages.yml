@@ -28,7 +28,7 @@ env:
 jobs:
   build:
     # 网关下载包是 darwin-arm64 的单文件程序，nsh 用 macOS arm64 发行版：都在 Apple Silicon 机器上构建
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
