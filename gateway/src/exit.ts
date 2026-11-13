@@ -35,5 +35,5 @@ export function exitHandler(opts: {
 export async function cleanupAll(o: { stopUpdater?: () => Promise<void>; stopInstaller: () => void; closeServer?: () => Promise<void> }): Promise<void> {
   const updater = o.stopUpdater?.();
   o.stopInstaller();
-  await Promise.all([updater, o.closeServer?.()]);
+  await Promise.allSettled([updater, o.closeServer?.()]);
 }

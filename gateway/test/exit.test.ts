@@ -58,3 +58,18 @@ test("cleanupAll：等自动更新和关服务都结束才返回", async () => {
   await done;
   assert.equal(finished, true);
 });
+
+test("cleanupAll：自动更新出错时，照样等关服务结束再返回，不往外抛", async () => {
+  let release: () => void = () => {};
+  let finished = false;
+  const done = cleanupAll({
+    stopUpdater: () => Promise.reject(new Error("boom")),
+    stopInstaller: () => {},
+    closeServer: () => new Promise<void>((r) => (release = r)),
+  }).then(() => (finished = true));
+  await sleep(10);
+  assert.equal(finished, false);
+  release();
+  await done;
+  assert.equal(finished, true);
+});
