@@ -29,6 +29,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 | 校验什么 | `.tar.xz.sha256`：和压缩包同域，只防下载损坏 | `.update.json` 的 ed25519 签名（公钥写死在 `gateway/src/updater.ts`），清单里的 sha256、版本 |
 | 防下载站被换 | 不防：用户自己决定运行这条命令 | 防：没有私钥签不出能验过的清单 |
 | 防换回旧版本 | 不防 | 防：只换比正在运行的新的版本，新程序报的版本必须和清单一致 |
+| 防停在旧版本 | 不防 | 不防：控制了下载站的人可以一直不发新清单（或发不了签名的），网关就一直用现在的版本 |
 
 签名私钥只在仓库密钥 `DROIDPIER_UPDATE_SIGNING_KEY` 里（PEM，ed25519），不进仓库。`.github/workflows/pages.yml` 里只有“给网关更新清单签名”这一步拿得到它：写进 0600 的临时文件，签完就删；签名脚本在 `env -i` 的干净环境里跑。这一步只在从 `main` 部署时（不在 PR 上，也不在别的分支上手动运行时）、且重建了网关下载包时运行，和 Cloudflare 的部署凭据不在同一步。沿用线上下载包时，线上的 `.sig` 只有 404 才不带，别的错误让任务失败。没配这个密钥时照常发布，但没有 `.sig`，后台网关不会更新到这个版本（日志里是 `unsigned`），用户要运行安装命令。本地手动签名：`node scripts/sign-update.ts <私钥.pem> dist/droidpier-darwin-arm64.update.json`。`build-pages.ts` 会用网关里的公钥验部署目录里的签名，私钥和公钥不是一对就不让部署。换密钥：生成新的一对，公钥写进 `UPDATE_PUBLIC_KEY`、私钥换进密钥；已经装好的旧网关只认旧公钥，要靠用户运行一次安装命令换上带新公钥的版本。
 
