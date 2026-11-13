@@ -97,6 +97,35 @@ test("install.sh：远端 sha256 变了就重新下载、替换，再用 droidpi
   assert.match(r.stdout, /fake-gateway-v2 start\n$/);
 });
 
+test("install.sh：手动装上新版本时删掉自动更新的启动计数（update-pending），留着 droidpier.prev；没换文件时不动它", async (t) => {
+  const { home, run, publish } = await fixture(t);
+  assert.equal((await run({ DROIDPIER_NO_START: "1" })).status, 0);
+  const pending = join(home, ".local/share/droidpier/update-pending");
+  const prev = join(home, ".local/bin/droidpier.prev");
+  await writeFile(pending, "1");
+  await writeFile(prev, "old");
+  // 已是最新：没换文件，计数属于正在用的这个版本
+  assert.equal((await run({ DROIDPIER_NO_START: "1" })).status, 0);
+  assert.equal(await readFile(pending, "utf8"), "1");
+  await publish("fake-gateway-v2");
+  const r = await run({ DROIDPIER_NO_START: "1" });
+  assert.equal(r.status, 0, r.stderr);
+  await assert.rejects(stat(pending));
+  assert.equal(await readFile(prev, "utf8"), "old");
+});
+
+test("install.sh：校验失败没装上时不删自动更新的启动计数", async (t) => {
+  const { home, run } = await fixture(t);
+  assert.equal((await run({ DROIDPIER_NO_START: "1" })).status, 0);
+  const pending = join(home, ".local/share/droidpier/update-pending");
+  await writeFile(pending, "2");
+  await rm(join(home, ".local/share/droidpier/installed.sha256"));
+  await writeFile(join(home, "../files/droidpier-darwin-arm64.tar.xz.sha256"), `${"0".repeat(64)}  x\n`);
+  const r = await run({ DROIDPIER_NO_START: "1" });
+  assert.notEqual(r.status, 0);
+  assert.equal(await readFile(pending, "utf8"), "2");
+});
+
 test("install.sh：已装但没有记录过 sha256（旧版脚本装的）时当作更新重新下载", async (t) => {
   const { home, run, requests } = await fixture(t);
   assert.equal((await run({ DROIDPIER_NO_START: "1" })).status, 0);

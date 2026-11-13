@@ -80,6 +80,8 @@ main() {
         xattr -d com.apple.quarantine "$tmp/$name" 2>/dev/null || true
         mv -f "$tmp/$name" "$target"
         echo "$want" > "$stamp"
+        # 手动装的版本取代了正在试的自动更新：不再数它的启动次数，免得这次安装被当成没起来的新版本换回去（.prev 不动）
+        rm -f "$share_dir/update-pending"
         echo "已安装到 $target"
       fi
     fi
