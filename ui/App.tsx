@@ -29,6 +29,8 @@ type Inspected = { key: string; title: string; serial: number };
 type NavigateResult = { ok: boolean; title?: string; bridge?: boolean; error?: string; adbStuck?: boolean };
 type WebViewsResult = { list: Page[]; error?: string; adbStuck?: boolean };
 type Msg = { text: string; error?: boolean; adbStuck?: boolean };
+/** 网关比页面旧时画面上方的提示（host/src/gateway-update.ts）。 */
+type GatewayBanner = { kind: "updating" | "manual"; text: string; command?: string };
 type EnvId = "emulator" | "platform-tools" | "system-image" | "avd";
 type Missing = { id: EnvId; detail: string; pkg?: string; sizeMb?: number; diskMb?: number; command?: string; auto: boolean };
 type Env = {
@@ -828,6 +830,20 @@ function App() {
   const boots = signal<Record<string, Boot>>({});
   const notice = signal<Notice | null>(null);
   const upgrade = signal<string | null>(null);
+  const gatewayNote = signal<GatewayBanner | null>(null);
+  // 用户关掉的那条网关提示（按文字记）：同一条不再出现，换了内容再出现
+  const gatewayDismissed = signal<string | null>(null);
+  let gatewayRev = -1;
+  host.on("emu.gateway", (p: { banner: GatewayBanner | null; rev: number }) => {
+    if (isStaleStatus(p.rev, gatewayRev)) return;
+    gatewayRev = p.rev;
+    gatewayNote.set(p.banner);
+  });
+  // 协议版本不对时上面已经有拦着的提示和命令
+  const gatewayShown = () => {
+    const b = gatewayNote();
+    return b && b.text !== gatewayDismissed() && state() !== "gateway-outdated" && state() !== "page-outdated" ? b : null;
+  };
   const cmdCopyResult = signal<"ok" | "fail" | null>(null);
   const h5Open = signal(false);
   const rotation = signal(0);
@@ -1025,8 +1041,12 @@ function App() {
       () => copyFailed.set(true),
     );
   };
-  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[] } & Omit<Setup, "rev">) => {
+  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & Omit<Setup, "rev">) => {
     applySetup({ env: s.env, installs: s.installs, license: s.license, rev: s.rev });
+    if (!isStaleStatus(s.rev, gatewayRev)) {
+      gatewayRev = s.rev;
+      gatewayNote.set(s.gateway ?? null);
+    }
     applyUploads(s.uploads, s.rev);
     // 调用和结果之间到了更新的 emu.status 事件时，结果里的状态已过时
     if (!isStaleStatus(s.rev, statusRev)) {
@@ -1424,6 +1444,21 @@ function App() {
             </Toolbar>
           </View>
           <View style={{ position: "absolute", top: 8, left: 0, right: 0, alignItems: "center", gap: 8 }}>
+            <If when={gatewayShown()}>
+              {(b) => (
+                <View role="status" style={{ gap: 8, backgroundColor: C.overlay, borderRadius: 8, padding: 12, borderWidth: 1, borderColor: b().kind === "manual" ? C.warn : C.line, maxWidth: 520 }}>
+                  <Text style={{ color: b().kind === "manual" ? C.warn : C.text, fontSize: 13, lineHeight: 20 }}>{b().text}</Text>
+                  <If when={b().command}>
+                    {(cmd) => <CopyCmd cmd={cmd()} />}
+                  </If>
+                  <If when={b().kind === "manual"}>
+                    <View style={{ flexDirection: "row" }}>
+                      <Btn label="关闭" onPress={() => gatewayDismissed.set(b().text)} />
+                    </View>
+                  </If>
+                </View>
+              )}
+            </If>
             <If when={clip() !== null}>
               <View role="alert" style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.overlay, borderRadius: 8, padding: 8, borderWidth: 1, borderColor: C.line }}>
                 <Text style={{ color: copyFailed() ? C.danger : C.text, fontSize: 13 }}>

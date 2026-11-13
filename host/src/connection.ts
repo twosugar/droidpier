@@ -19,6 +19,7 @@ import {
 } from "../../shared/protocol.ts";
 import { classifyFailure, refineLocalFailure, type LocalPermission } from "./launch.ts";
 import { createPending } from "./pending.ts";
+import type { GatewayInfo, UpdateReport } from "./gateway-update.ts";
 
 /**
  * 页面看到的连接状态。bad-origin 之后不再重连；
@@ -100,6 +101,10 @@ export function createConnection(opts: {
   onUpload?: (m: Extract<ServerMsg, { t: "upload" }>) => void;
   /** 打开过的连接断开了。 */
   onClose?: () => void;
+  /** 每次连上后调用一次：网关报的功能级别等；null 表示旧网关（没发 gateway 就发了别的消息）。 */
+  onGateway?: (info: GatewayInfo | null) => void;
+  /** 网关自动更新的状态（回复 update，或马上要重启）。 */
+  onUpdate?: (r: UpdateReport) => void;
 }): {
   /** 发输入类消息：只在已接上设备时发。 */
   send(m: ClientMsg): boolean;
@@ -139,6 +144,8 @@ export function createConnection(opts: {
 
   const connect = () => {
     let opened = false;
+    // 新网关在 hello 之后最先发 gateway；先收到别的就是旧网关
+    let gatewayKnown = false;
     const sock = openSocket(opts.url);
     ws = sock;
     sock.binaryType = "arraybuffer";
@@ -178,7 +185,15 @@ export function createConnection(opts: {
         console.warn("[emu] 丢弃无法解析的网关消息", String(e.data).slice(0, 200));
         return;
       }
-      if (m.t === "ready") {
+      if (!gatewayKnown) {
+        gatewayKnown = true;
+        opts.onGateway?.(m.t === "gateway" ? { level: m.level, version: m.version, service: m.service, autoUpdate: m.autoUpdate } : null);
+      }
+      if (m.t === "gateway") {
+        // 已在上面交给 onGateway
+      } else if (m.t === "update") {
+        opts.onUpdate?.({ state: m.state, ...(m.message ? { message: m.message } : {}) });
+      } else if (m.t === "ready") {
         opts.onReady(m.device, m.serial);
         setState("connected");
       } else if (m.t === "status") {
