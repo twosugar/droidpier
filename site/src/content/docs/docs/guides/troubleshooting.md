@@ -85,6 +85,8 @@ The page checks for the gateway once a second and connects as soon as it answers
 - **Gateway out of date:** run the upgrade command the page shows. It is the same as the [install command](/docs/getting-started/install/).
 - **Page out of date:** force-reload the page with Cmd+Shift+R.
 
+When the page needs a newer gateway than the one that runs, it says so above the screen. A background gateway updates itself and the page reconnects: see [Automatic updates](/docs/reference/cli/#automatic-updates). A gateway that runs in a Terminal window, or one with automatic updates off, does not: the page shows the install command to copy. If deleting or renaming a device fails because the gateway is too old, run the install command too.
+
 ## Wrong browser
 
 <!-- verify: phase 3 -->
@@ -106,7 +108,7 @@ Stop the background gateway, then delete the files it uses:
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

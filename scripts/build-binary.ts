@@ -2,7 +2,7 @@
 // 用法：bun scripts/build-binary.ts（先跑 build:ui 生成 .nsh/out/Droidpier）
 import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { scrubDir } from "./scrub-paths.ts";
@@ -26,19 +26,30 @@ await cp(ui, stage, { recursive: true, filter: (src) => !/\.(br|gz)$/.test(src) 
 // 页面产物（nsh 的 wasm）里编译进了本机 home 路径；先抹掉再嵌入，build-pages 也会对 /app/ 做同样处理
 for (const f of await scrubDir(stage, homedir())) console.log(`抹掉本机路径：${f}`);
 
+const version = new Date().toISOString();
 // --asset 嵌入的目录在运行时位于 import.meta.dir/<目录名>，main.ts 按这个路径找页面
 const r = await Bun.build({
   entrypoints: [join(root, "gateway/src/main.ts")],
   compile: { target: "bun-darwin-arm64", outfile: out, assets: [stage] },
   minify: true,
-  // 网关版本 = 构建时间，/healthz 报出去，另一个 droidpier 启动时按它比新旧（gateway/src/already-running.ts）
-  define: { DROIDPIER_VERSION: JSON.stringify(new Date().toISOString()) },
+  // 网关版本 = 构建时间，/healthz 报出去，另一个 droidpier 启动时按它比新旧（gateway/src/already-running.ts）；
+  // 也写进更新清单，后台网关只换比自己新的（gateway/src/updater.ts）
+  define: { DROIDPIER_VERSION: JSON.stringify(version) },
 });
 if (!r.success) {
   for (const l of r.logs) console.error(l);
   process.exit(1);
 }
 await rm(join(dist, "stage"), { recursive: true, force: true });
+
+// bun 编出来的文件是 ad-hoc 签名，标识符是 a.out；系统设置 → 登录项与扩展 →“允许在后台”里后台服务会显示成 a.out，
+// 用户认不出。按 LaunchAgent 的 label 重新 ad-hoc 签一次（2026-11-13 实测 bun 1.4.2）
+const SIGN_ID = "dev.devpier.droidpier";
+execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", SIGN_ID, out]);
+// codesign -dv 把信息打在 stderr
+const sigInfo = spawnSync("/usr/bin/codesign", ["-dv", out], { encoding: "utf8" }).stderr;
+if (!sigInfo.includes(`Identifier=${SIGN_ID}`)) throw new Error(`重新签名后标识符不是 ${SIGN_ID}：\n${sigInfo}`);
+if (!execFileSync(out, ["--help"], { encoding: "utf8" }).includes("droidpier start")) throw new Error("重新签名后可执行文件跑不起来");
 
 // 可执行文件约 65 MiB，超过 Pages 上限。gzip -9 压完仍超 25 MiB；xz -9 约 18 MiB，
 // 且 macOS 自带的 /usr/bin/tar（libarchive + liblzma）能直接解，install.sh 不用额外装工具（2026-11-12 实测）
@@ -48,6 +59,8 @@ const bin = await stat(out);
 const packed = await Bun.file(xz).bytes();
 const sha = createHash("sha256").update(packed).digest("hex");
 await writeFile(`${xz}.sha256`, `${sha}  ${name}.tar.xz\n`);
+// 更新清单：后台网关只认签过名的清单（scripts/sign-update.ts 签，CI 里做）；.sha256 留给 install.sh
+await writeFile(join(dist, `${name}.update.json`), `${JSON.stringify({ name, version, sha256: sha })}\n`);
 
 const mib = (n: number) => `${(n / 2 ** 20).toFixed(1)} MiB`;
 console.log(`${out}：${mib(bin.size)}`);

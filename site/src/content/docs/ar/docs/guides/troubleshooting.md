@@ -1,7 +1,7 @@
 ---
 title: استكشاف الأخطاء وإصلاحها
 description: إصلاح المشكلات الشائعة - حظر Chrome للوصول إلى الشبكة المحلية، والمنفذ مستخدم بالفعل، وعدم العثور على محاكٍ، وعدم اتصال الصفحة، وعدم تطابق الإصدارات.
-sourceHash: d8eaddc9fa12
+sourceHash: 9b070d939282
 ---
 
 ## حظر Chrome الوصول إلى الشبكة المحلية {#chrome-blocked-local-network-access}
@@ -86,6 +86,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 - **البوابة قديمة:** شغّل أمر الترقية الذي تعرضه الصفحة. وهو نفس [أمر التثبيت](/ar/docs/getting-started/install/).
 - **الصفحة قديمة:** أعد تحميل الصفحة قسريًا باستخدام Cmd+Shift+R.
 
+عندما تحتاج الصفحة إلى بوابة أحدث من التي تعمل، تذكر ذلك فوق الشاشة. البوابة العاملة في الخلفية تحدّث نفسها وتعيد الصفحة الاتصال: راجع [التحديثات التلقائية](/ar/docs/reference/cli/#automatic-updates). أما البوابة التي تعمل في نافذة الطرفية، أو التي أُوقفت تحديثاتها التلقائية، فلا تفعل ذلك: تعرض الصفحة أمر التثبيت لنسخه. إذا فشل حذف جهاز أو إعادة تسميته لأن البوابة قديمة جدًا، فشغّل أمر التثبيت أيضًا.
+
 ## متصفح غير مناسب
 
 <!-- verify: phase 3 -->
@@ -107,7 +109,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

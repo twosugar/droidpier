@@ -1,12 +1,12 @@
 ---
 title: 命令行
 description: Droidpier 网关命令的选项和环境变量。
-sourceHash: 2510f26cb9be
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | 命令 | 作用 |
 |---|---|
-| `droidpier start` | 以 macOS LaunchAgent 的方式在后台运行网关。关闭终端后继续运行，登录时自动启动，崩溃后自动重启。已在运行时会重启它。会保存你给的选项；不带选项时沿用保存的选项。启动后打开一次页面，除非加 `--no-open`。 |
+| `droidpier start` | 以 macOS LaunchAgent 的方式在后台运行网关。关闭终端后继续运行，登录时自动启动，崩溃后自动重启。已在运行时会重启它。会保存你给的选项；不带选项时沿用保存的选项。启动后打开一次页面，除非加 `--no-open`。 它还会自动更新自己：见[自动更新](#automatic-updates)。 |
 | `droidpier stop` | 停止后台运行的网关，登录时也不再自动启动。 |
-| `droidpier status` | 显示后台网关是否在运行，以及它的进程 ID、端口、版本和日志文件。 |
+| `droidpier status` | 显示后台网关是否在运行，以及它的进程 ID、端口、版本和日志文件。 还会显示自动更新是否开启，以及上次检查的结果。 |
 | `droidpier logs` | 打印日志文件路径和最后 50 行。 |
 | `droidpier` | 在当前终端窗口中运行网关，直到你按 `Ctrl+C`。 |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | 关闭 | 打开网关自身提供的页面 `http://127.0.0.1:<port>/app/`，而非 `droid.devpier.dev` 上的公共页面。 |
 | `--no-open` | 关闭 | 启动时不打开浏览器。网关仍会打印地址。 |
+| `--no-auto-update` | 关闭 | 用于 `droidpier start`：不自动更新后台网关。在终端里运行时：有新版本也不打印提示。 |
 
 无论是否使用 `--no-open`，页面都会自行找到网关。请参阅[首次运行](/zh-cn/docs/getting-started/first-run/#3-open-the-page)。
 
@@ -106,13 +107,25 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | 后台网关的设置 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | 后台网关的日志 | `~/Library/Logs/Droidpier/droidpier.log` |
 
+## 自动更新 {#automatic-updates}
+
+后台网关会自动保持最新。它启动时以及之后大约每 30 分钟，会把已发布版本的校验和与已安装版本的校验和（`~/.local/share/droidpier/installed.sha256`）比较。发布了新版本时，它从 `droid.devpier.dev` 下载，解压前先核对校验和，替换 `~/.local/bin/droidpier` 后重启。打开着的页面会自己重新连上。正在安装 SDK、启动设备、删除设备、重启模拟器或传文件时，它会等这些操作结束。下载失败或校验和不符时，它继续运行现有版本，稍后再试。每一步都写在日志里（`droidpier logs`）。
+
+网关只换上用 Droidpier 发布密钥签过名、并且比正在运行的版本更新的版本。它把上一个版本留作 `~/.local/bin/droidpier.prev`。新版本连续三次没能启动时，网关换回上一个版本，并且不再换上那个版本。
+
+页面发现后台网关比页面旧时，会让网关立即检查一次，并显示网关正在更新。
+
+关闭自动更新：运行 `droidpier start --no-auto-update`。重新打开：带上其他选项、不带 `--no-auto-update` 运行 `droidpier start`，例如 `droidpier start --port 7300`。`droidpier status` 会显示它是否开启。
+
+在终端窗口里运行的网关（`droidpier`）不会替换自己。有新版本时它打印一行提示：运行 `droidpier start` 切换到会自动更新的后台网关，或者重新运行安装命令。
+
 ## 卸载 {#uninstall}
 
 先停止后台运行的网关，再删除它用到的文件：
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

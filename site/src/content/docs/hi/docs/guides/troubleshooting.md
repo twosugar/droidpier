@@ -1,7 +1,7 @@
 ---
 title: समस्या निवारण
 description: आम समस्याएँ ठीक करें - Chrome ने लोकल नेटवर्क एक्सेस ब्लॉक किया, पोर्ट पहले से इस्तेमाल में है, कोई एमुलेटर नहीं मिला, पेज कनेक्ट नहीं होता, वर्शन मेल नहीं खाता।
-sourceHash: d8eaddc9fa12
+sourceHash: 9b070d939282
 ---
 
 ## Chrome ने लोकल नेटवर्क एक्सेस ब्लॉक किया {#chrome-blocked-local-network-access}
@@ -86,6 +86,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 - **गेटवे पुराना है:** पेज जो अपग्रेड कमांड दिखाता है उसे चलाएँ। यह वही [इंस्टॉल कमांड](/hi/docs/getting-started/install/) है।
 - **पेज पुराना है:** Cmd+Shift+R से पेज को फ़ोर्स-रीलोड करें।
 
+जब पेज को चल रहे गेटवे से नए गेटवे की ज़रूरत होती है, तो वह स्क्रीन के ऊपर यह बताता है। बैकग्राउंड गेटवे खुद अपडेट होता है और पेज फिर से जुड़ जाता है: [अपने-आप अपडेट](/hi/docs/reference/cli/#automatic-updates) देखें। टर्मिनल विंडो में चलने वाला गेटवे, या जिसके अपने-आप अपडेट बंद हैं, ऐसा नहीं करता: पेज कॉपी करने के लिए इंस्टॉल कमांड दिखाता है। अगर गेटवे बहुत पुराना होने की वजह से डिवाइस हटाना या नाम बदलना विफल होता है, तो भी इंस्टॉल कमांड चलाएँ।
+
 ## ग़लत ब्राउज़र
 
 <!-- verify: phase 3 -->
@@ -107,7 +109,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

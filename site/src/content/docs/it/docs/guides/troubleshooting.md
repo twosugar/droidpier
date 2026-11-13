@@ -1,7 +1,7 @@
 ---
 title: Risoluzione dei problemi
 description: Risolvi i problemi comuni - Chrome ha bloccato l’accesso alla rete locale, porta già in uso, nessun emulatore trovato, la pagina non si connette, versioni non corrispondenti.
-sourceHash: d8eaddc9fa12
+sourceHash: 9b070d939282
 ---
 
 ## Chrome ha bloccato l’accesso alla rete locale {#chrome-blocked-local-network-access}
@@ -86,6 +86,8 @@ La pagina cerca il gateway una volta al secondo e si connette non appena rispond
 - **Gateway non aggiornato:** esegui il comando di aggiornamento mostrato dalla pagina. È lo stesso del [comando di installazione](/it/docs/getting-started/install/).
 - **Pagina non aggiornata:** forza il ricaricamento della pagina con Cmd+Shift+R.
 
+Quando la pagina ha bisogno di un gateway più recente di quello in esecuzione, lo indica sopra lo schermo. Un gateway in background si aggiorna da solo e la pagina si riconnette: vedi [Aggiornamenti automatici](/it/docs/reference/cli/#automatic-updates). Un gateway eseguito in una finestra del Terminale, o con gli aggiornamenti automatici disattivati, non lo fa: la pagina mostra il comando di installazione da copiare. Se eliminare o rinominare un dispositivo non riesce perché il gateway è troppo vecchio, esegui anche in quel caso il comando di installazione.
+
 ## Browser sbagliato
 
 <!-- verify: phase 3 -->
@@ -107,7 +109,7 @@ Arresta il gateway in background, poi elimina i file che usa:
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

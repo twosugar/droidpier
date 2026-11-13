@@ -1,12 +1,12 @@
 ---
 title: 命令列
 description: Droidpier 閘道命令的選項和環境變數。
-sourceHash: 2510f26cb9be
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | 命令 | 作用 |
 |---|---|
-| `droidpier start` | 以 macOS LaunchAgent 的方式在背景執行閘道。關閉終端機後繼續執行，登入時自動啟動，當機後自動重新啟動。已在執行時會重新啟動它。會儲存你給的選項；不帶選項時沿用儲存的選項。啟動後開啟一次頁面，除非加上 `--no-open`。 |
+| `droidpier start` | 以 macOS LaunchAgent 的方式在背景執行閘道。關閉終端機後繼續執行，登入時自動啟動，當機後自動重新啟動。已在執行時會重新啟動它。會儲存你給的選項；不帶選項時沿用儲存的選項。啟動後開啟一次頁面，除非加上 `--no-open`。 它也會自動更新自己：見[自動更新](#automatic-updates)。 |
 | `droidpier stop` | 停止在背景執行的閘道，登入時也不再自動啟動。 |
-| `droidpier status` | 顯示背景閘道是否在執行，以及它的程序 ID、連接埠、版本和記錄檔。 |
+| `droidpier status` | 顯示背景閘道是否在執行，以及它的程序 ID、連接埠、版本和記錄檔。 也會顯示自動更新是否開啟，以及上次檢查的結果。 |
 | `droidpier logs` | 列印記錄檔路徑和最後 50 行。 |
 | `droidpier` | 在目前的終端機視窗中執行閘道，直到你按 `Ctrl+C`。 |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | 關閉 | 開啟閘道自身提供的頁面 `http://127.0.0.1:<port>/app/`，而非 `droid.devpier.dev` 上的公共頁面。 |
 | `--no-open` | 關閉 | 啟動時不開啟瀏覽器。閘道仍會列印位址。 |
+| `--no-auto-update` | 關閉 | 用於 `droidpier start`：不自動更新背景閘道。在終端機裡執行時：有新版本也不列印提示。 |
 
 無論是否使用 `--no-open`，頁面都會自行找到閘道。請參閱[首次執行](/zh-tw/docs/getting-started/first-run/#3-open-the-page)。
 
@@ -106,13 +107,25 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | 背景閘道的設定 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | 背景閘道的記錄檔 | `~/Library/Logs/Droidpier/droidpier.log` |
 
+## 自動更新 {#automatic-updates}
+
+背景閘道會自動保持最新。它啟動時以及之後大約每 30 分鐘，會把已發布版本的校驗和與已安裝版本的校驗和（`~/.local/share/droidpier/installed.sha256`）比較。發布了新版本時，它從 `droid.devpier.dev` 下載，解壓前先核對校驗和，取代 `~/.local/bin/droidpier` 後重新啟動。開著的頁面會自己重新連上。正在安裝 SDK、啟動裝置、刪除裝置、重新啟動模擬器或傳送檔案時，它會等這些操作結束。下載失敗或校驗和不符時，它繼續執行現有版本，稍後再試。每一步都寫在記錄檔裡（`droidpier logs`）。
+
+閘道只換上用 Droidpier 發布金鑰簽過名、並且比正在執行的版本更新的版本。它把上一個版本留作 `~/.local/bin/droidpier.prev`。新版本連續三次沒能啟動時，閘道換回上一個版本，並且不再換上那個版本。
+
+頁面發現背景閘道比頁面舊時，會讓閘道立即檢查一次，並顯示閘道正在更新。
+
+關閉自動更新：執行 `droidpier start --no-auto-update`。重新開啟：帶上其他選項、不帶 `--no-auto-update` 執行 `droidpier start`，例如 `droidpier start --port 7300`。`droidpier status` 會顯示它是否開啟。
+
+在終端機視窗裡執行的閘道（`droidpier`）不會取代自己。有新版本時它會列印一行提示：執行 `droidpier start` 切換到會自動更新的背景閘道，或重新執行安裝指令。
+
 ## 解除安裝 {#uninstall}
 
 先停止在背景執行的閘道，再刪除它用到的檔案：
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

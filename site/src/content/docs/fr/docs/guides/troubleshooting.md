@@ -1,7 +1,7 @@
 ---
 title: Dépannage
 description: Résoudre les problèmes courants - Chrome a bloqué l’accès au réseau local, port déjà utilisé, aucun émulateur trouvé, la page ne se connecte pas, versions incompatibles.
-sourceHash: d8eaddc9fa12
+sourceHash: 9b070d939282
 ---
 
 ## Chrome a bloqué l’accès au réseau local {#chrome-blocked-local-network-access}
@@ -86,6 +86,8 @@ La page vérifie une fois par seconde si la passerelle est là et se connecte d�
 - **Passerelle pas à jour :** exécutez la commande de mise à niveau affichée par la page. C’est la même que la [commande d’installation](/fr/docs/getting-started/install/).
 - **Page pas à jour :** forcez le rechargement de la page avec Cmd+Shift+R.
 
+Quand la page a besoin d’une passerelle plus récente que celle qui tourne, elle l’indique au-dessus de l’écran. Une passerelle en arrière-plan se met à jour toute seule et la page se reconnecte : voir [Mises à jour automatiques](/fr/docs/reference/cli/#automatic-updates). Une passerelle lancée dans une fenêtre du Terminal, ou dont les mises à jour automatiques sont désactivées, ne le fait pas : la page affiche la commande d’installation à copier. Si la suppression ou le renommage d’un appareil échoue parce que la passerelle est trop ancienne, lancez aussi la commande d’installation.
+
 ## Mauvais navigateur
 
 <!-- verify: phase 3 -->
@@ -107,7 +109,7 @@ Arrêtez la passerelle en arrière-plan, puis supprimez les fichiers qu’elle u
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

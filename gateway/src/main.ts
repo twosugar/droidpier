@@ -17,14 +17,15 @@ import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
 import { adb, killAdbChildren } from "./adb.ts";
 import { waitForReboot } from "./reboot.ts";
-import { exitHandler } from "./exit.ts";
+import { cleanupAll, exitHandler } from "./exit.ts";
 import { allowedOrigins, PUBLIC_ORIGIN } from "./auth.ts";
 import { buildPageUrl } from "./page-url.ts";
 import { parseCli, USAGE, versionLine } from "./cli.ts";
 import { checkPortFirst, explainBusyPort } from "./already-running.ts";
 import { cleanStaleUploads } from "./upload-temp.ts";
-import { realRotateIo, realServiceDeps, rotateLog, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
+import { realRotateIo, realServiceDeps, rotateLog, SERVICE_LABEL, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
 import { tmpdir } from "node:os";
+import { checkPending, cleanStaleWork, confirmStable, createAutoUpdater, firstWithin, realCleanDeps, DOWNLOAD_BASE, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
 
 // scripts/build-binary.ts 打包时把 DROIDPIER_VERSION 替换成构建时间；直接用源码跑时没有
 declare const DROIDPIER_VERSION: string | undefined;
@@ -32,7 +33,8 @@ const VERSION = typeof DROIDPIER_VERSION === "string" ? DROIDPIER_VERSION : "";
 
 // `nsh package ui --target web` 在仓库根目录运行时，产物落在根目录的 .nsh/out，不在 ui/.nsh/out（实测）
 // 打成单个可执行文件后，scripts/build-binary.ts 用 --asset 把这个目录嵌在 import.meta.dir/Droidpier 下，node:fs 照常能读
-const STATIC_DIR = (globalThis as { Bun?: { isStandaloneExecutable: boolean } }).Bun?.isStandaloneExecutable
+const STANDALONE = (globalThis as { Bun?: { isStandaloneExecutable: boolean } }).Bun?.isStandaloneExecutable === true;
+const STATIC_DIR = STANDALONE
   ? join(import.meta.dirname, "Droidpier")
   : fileURLToPath(new URL("../../.nsh/out/Droidpier", import.meta.url));
 
@@ -64,11 +66,26 @@ if (cli.kind === "service") {
   const run = { start: () => serviceStart(d, { args: cli.args, noOpen: cli.noOpen }), stop: () => serviceStop(d), status: () => serviceStatus(d), logs: () => serviceLogs(d) };
   process.exit(await run[cli.command]());
 }
-const { port, noOpen, allowOrigins: extraOrigins, service } = cli.options;
-if (service) {
-  const l = serviceLabel(process.env);
-  if ("label" in l) await rotateLog(serviceLogPath(l.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
-}
+const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate } = cli.options;
+const label = serviceLabel(process.env);
+if (service && "label" in label) await rotateLog(serviceLogPath(label.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
+
+// 自动更新（gateway/src/updater.ts）：后台服务自己换上新版本；前台运行只在有新版本时打印一行
+const layout = autoUpdate ? installLayout(process.execPath, STANDALONE) : null;
+// DROIDPIER_DOWNLOAD 只给测试用：正式 label 的后台服务不认它，只从写死的地址更新
+const dl = downloadBase(process.env, !service || ("label" in label && label.label !== SERVICE_LABEL));
+if (service && !autoUpdate) console.log("自动更新已关闭（--no-auto-update）");
+else if (service && !layout) console.log("不是安装命令装的程序，不自动更新");
+if ("error" in dl) console.log(`${dl.error}，不检查更新`);
+let srv: Awaited<ReturnType<typeof startServer>> | undefined;
+// 新版本稳定运行一分钟后清掉启动计数的定时器（见下面 confirmStable）
+let stableTimer: ReturnType<typeof setTimeout> | undefined;
+const updaterDeps = layout
+  ? realUpdaterDeps({ base: "base" in dl ? dl.base : DOWNLOAD_BASE, ...layout, version: VERSION, busy: () => srv?.busy() ?? null, log: (s) => console.log(s) })
+  : null;
+// 刚换上的新版本：数启动次数，起不来就换回旧版本
+if (service && updaterDeps && (await checkPending(updaterDeps)) === "rolled-back") process.exit(RESTART_EXIT_CODE);
+if (service && layout) await cleanStaleWork(realCleanDeps({ bin: layout.bin, log: (s) => console.log(s) }));
 // 默认打开公网页面；--local 改为打开本机页面；--public 是兼容别名，不改行为（见 gateway/src/page-url.ts）
 
 /** 端口被占时打印判断、需要时打开页面，然后退出。后台服务一律按正常退出，launchd 不会每 10 秒重试一次。 */
@@ -84,6 +101,41 @@ function exitBusy(r: { code: 0 | 1; lines: string[] }, pageUrl: string): never {
   const r = await checkPortFirst({ port, pageUrl, ownVersion: VERSION });
   if (r) exitBusy(r, pageUrl);
 }
+
+let updatedEarly = false;
+const updater = updaterDeps && "base" in dl ? createAutoUpdater({
+  check: service
+    ? async () => {
+        const r = await updateOnce(updaterDeps);
+        if (r.kind === "updated") {
+          if (srv) restart();
+          else updatedEarly = true;
+        }
+        return toReport(r);
+      }
+    : newerNotice(updaterDeps),
+  abort: () => updaterDeps.abort?.(),
+  now: () => Date.now(),
+  setTimer: (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  },
+  random: Math.random,
+  intervalMs: 30 * 60_000,
+  jitterMs: 5 * 60_000,
+  pageGapMs: 60_000,
+}) : null;
+// 尽早查一次（在连模拟器、查 SDK 之前）：哪个版本在后面的启动步骤里崩溃，下载站上的修复版本也能换上
+// 最多等 10 秒：连不上（丢包）或下载慢时先把网关起起来，droidpier start 等的是网关应答；检查在后台接着做，
+// 换上了新版本就在网关起来后重启（见下面 restart）。启动更后面才崩溃的版本靠 checkPending 换回
+if (updater && service) {
+  const first = await firstWithin(updater.start(), 10_000, (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  });
+  if (updatedEarly) process.exit(RESTART_EXIT_CODE);
+  if (first === null) console.log("检查更新超过 10 秒，先启动网关，检查在后台接着做");
+} else if (updater) void updater.start();
 
 let lastNote = "";
 const note = (s: string) => {
@@ -131,10 +183,13 @@ const catalogDeps = realCatalogDeps({
   },
 });
 const first = await getSession();
-const srv = await startServer({
+
+
+srv = await startServer({
   port,
   version: VERSION,
   service,
+  update: { autoUpdate: service && updater !== null, request: () => updater!.request(), last: () => updater?.last() ?? null },
   allowedOrigins: allowedOrigins(PUBLIC_ORIGIN, port, extraOrigins),
   staticDir: STATIC_DIR,
   getSession,
@@ -174,6 +229,11 @@ const srv = await startServer({
   exitBusy(await explainBusyPort({ port, pageUrl, ownVersion: VERSION }), pageUrl);
 });
 const pageUrl = buildPageUrl(process.argv, srv.port);
+// 新版本稳定运行一分钟后不再数它的启动次数
+// 要重启时取消（restart、cleanup）：这一分钟里后台检查换上了更新的版本，计数属于那个版本，不能被这里删掉
+stableTimer = service && updaterDeps
+  ? setTimeout(() => void confirmStable(updaterDeps).catch((e: Error) => console.log(`记录新版本运行正常失败：${e.message}`)), 60_000)
+  : undefined;
 console.log(`droidpier: ${pageUrl}  (${first ? `emulator-${serial}` : "no emulator"})`);
 // 终端里只提示，不提问：安装要在页面上确认
 if (!env.ok) {
@@ -182,20 +242,37 @@ if (!env.ok) {
 }
 if (!noOpen) openBrowser(pageUrl, (e) => console.log(`打开浏览器失败：${e.message}`));
 
-const onSignal = exitHandler({
-  cleanup: async () => {
+// 收到退出信号和自动更新后重启共用一次清理
+let cleaning: Promise<void> | null = null;
+const cleanup = () => (cleaning ??= (async () => {
+  clearTimeout(stableTimer);
+  await cleanupAll({
+    // 中止进行中的下载，等它删掉临时目录
+    stopUpdater: updater ? () => updater.stop() : undefined,
     // 正在进行的下载和解压不能留在网关后面
-    installer.stop();
+    stopInstaller: () => installer.stop(),
     // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
-    await srv.close();
-    last?.close();
-    // 等取消订阅时异步删除 mmap 临时文件
-    await new Promise((r) => setTimeout(r, 200));
-  },
-  exit: (code) => process.exit(code),
-  timeoutMs: 3000,
-  log: (s) => console.log(s),
-});
+    closeServer: srv ? () => srv!.close() : undefined,
+  });
+  last?.close();
+  // 等取消订阅时异步删除 mmap 临时文件
+  await new Promise((r) => setTimeout(r, 200));
+})());
+const onSignal = exitHandler({ cleanup, exit: (code) => process.exit(code), timeoutMs: 3000, log: (s) => console.log(s) });
+// 新版本已经换上：清理后以非 0 退出，launchd（KeepAlive.SuccessfulExit=false）马上拉起新的可执行文件。
+// 不用 launchctl kickstart -k 自己杀自己：退出码不依赖 label、uid 和 launchctl，plist 是旧版本写的也一样
+const restartNow = exitHandler({ cleanup, exit: () => process.exit(RESTART_EXIT_CODE), timeoutMs: 3000, log: (s) => console.log(s) });
+let restarting = false;
+function restart() {
+  if (restarting) return;
+  restarting = true;
+  clearTimeout(stableTimer);
+  srv?.notifyUpdate({ state: "restarting" });
+  // 让 restarting 先发到页面
+  setTimeout(() => void restartNow(), 300);
+}
+// 网关起来之前后台的第一次检查已经换上了新版本
+if (updatedEarly) restart();
 // 清理超时被强制退出时也不留下卡住的 adb 进程
 process.on("exit", killAdbChildren);
 process.on("SIGINT", onSignal);

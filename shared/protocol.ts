@@ -3,6 +3,37 @@ import { avdNameError } from "./avd-spec.ts";
 /** 协议版本号。 */
 export const PROTOCOL_VERSION = 1;
 
+/**
+ * 网关功能级别：网关加了页面要用、旧网关不认的消息时加一。网关在 hello 之后的 gateway 消息里报出来，
+ * 页面拿它和自己的比，网关旧了就提示更新（后台服务会自己更新）。和 PROTOCOL_VERSION 不同，级别不同照常连接。
+ * 不发 gateway 消息的旧网关算 0。
+ * 1：gateway、update 消息；renameAvd、deleteAvd 一定支持。
+ */
+export const GATEWAY_LEVEL = 1;
+
+/**
+ * 网关自动更新一次检查的结果。off：不是后台服务或关了自动更新，不会自己更新；deferred：有新版本，等手上的操作结束
+ * （message 是 busy 的原因）；failed：message 是 UpdateFailure，只给类别，不带路径和原始错误。
+ */
+export type UpdateState = "checking" | "latest" | "restarting" | "deferred" | "failed" | "off";
+
+/** 自动更新失败的类别，和给用户看的话（页面和 droidpier status 共用）。 */
+export const UPDATE_FAILURES = {
+  network: "连不上下载站",
+  manifest: "下载站上的版本信息不对",
+  unsigned: "下载站上的版本没有签名",
+  signature: "下载站上的版本签名不对",
+  checksum: "下载的文件校验不通过",
+  unpack: "解压失败",
+  "bad-binary": "新版本运行不起来",
+  "not-writable": "没有权限写入安装目录",
+  install: "替换文件失败",
+} as const;
+export type UpdateFailure = keyof typeof UPDATE_FAILURES;
+
+/** failed 的 message 转成给人看的话；不认识的类别（更新的网关加的）原样给出。 */
+export const updateFailureText = (m: string | undefined) => (m && m in UPDATE_FAILURES ? UPDATE_FAILURES[m as UpdateFailure] : m ?? "未知原因");
+
 /** 升级网关的安装命令。 */
 export const INSTALL_CMD = "curl -fsSL https://droid.devpier.dev/install.sh | sh";
 
@@ -228,6 +259,8 @@ export type ClientMsg =
   | { t: "deleteAvd"; rid: number; name: string }
   /** 用户在页面确认框里确认过才发；ids 是要装的缺失项。 */
   | { t: "install"; ids: EnvItemId[] }
+  /** 页面发现网关比自己旧（gateway 消息里的 level）时发：后台服务马上检查一次更新。不带参数，下载地址只在网关里。 */
+  | { t: "update" }
   /** 要创建设备对话框的目录。 */
   | { t: "catalog" }
   /** 用户在确认框里确认过才发：建一台 AVD，镜像没装时先装镜像。image 是目录里的 pkg。 */
@@ -273,6 +306,10 @@ export type ServerMsg =
   | { t: "navigate"; rid: number; ok: boolean; href?: string; title?: string; bridge?: boolean; error?: string; code?: AdbErrorCode }
   | { t: "renameAvd"; rid: number; ok: boolean; error?: string }
   | { t: "deleteAvd"; rid: number; ok: boolean; error?: string }
+  /** hello 通过后最先发。level 见 GATEWAY_LEVEL；version 是构建时间（从源码运行时为空）；autoUpdate：后台服务且没关自动更新。 */
+  | { t: "gateway"; level: number; version: string; service: boolean; autoUpdate: boolean }
+  /** 回复 update；换上新版本、马上重启时（restarting）发给所有页面。message 是 deferred 的原因或 failed 的错误。 */
+  | { t: "update"; state: UpdateState; message?: string }
   /** hello 通过后（ready 之前）发一次，每次安装结束后再广播。 */
   | ({ t: "env" } & EnvReport)
   /** 每次安装进度更新都广播。 */
@@ -343,6 +380,8 @@ export function parseClientMsg(raw: string): ClientMsg | null {
       return o as ClientMsg;
     case "reboot":
       return { t: "reboot" };
+    case "update":
+      return { t: "update" };
     case "upload":
       if (!isNum(o.id) || !isStr(o.name) || !Number.isInteger(o.size) || (o.size as number) < 0) return null;
       return { t: "upload", id: o.id, name: o.name, size: o.size as number };

@@ -10,6 +10,7 @@ import type { CdpClient } from "../src/cdp.ts";
 import type { AvdCatalog, EnvMissing, WebViewPage } from "../../shared/protocol.ts";
 import { cachedSession } from "../src/session-cache.ts";
 import type { EmulatorSession } from "../src/emulator.ts";
+import { GATEWAY_LEVEL } from "../../shared/protocol.ts";
 import { BIN_SCREENSHOT, binKind, CLOSE_BAD_TOKEN, CLOSE_NO_HELLO, CLOSE_ORIGIN, CLOSE_VERSION, decodeFrameHeader, PROTOCOL_VERSION, type FrameHeader } from "../../shared/protocol.ts";
 import { allowedOrigins } from "../src/auth.ts";
 import { lsofSockets, type Snapshot } from "../src/peer.ts";
@@ -93,7 +94,8 @@ class FakeSession implements EmulatorSession {
   fireClosed() { for (const cb of this.closedCbs) cb(); }
 }
 
-type Client = { ws: WebSocket; msgs: any[]; frames: FrameHeader[]; binMsgs: ArrayBuffer[]; closed: Promise<number> };
+/** gateway 消息（hello 后最先发）单独收在 gateway 里，msgs 里是其余的文本消息。 */
+type Client = { ws: WebSocket; msgs: any[]; gateway: any[]; frames: FrameHeader[]; binMsgs: ArrayBuffer[]; closed: Promise<number> };
 
 const APPSPOT = "https://chrome-devtools-frontend.appspot.com";
 
@@ -127,14 +129,17 @@ async function setup(
   t.after(() => { for (const c of clients) c.ws.terminate(); });
   const connect = async (): Promise<Client> => {
     const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/`, { headers: { Origin: origin } });
-    const c: Client = { ws, msgs: [], frames: [], binMsgs: [], closed: new Promise((r) => ws.on("close", (code) => r(code))) };
+    const c: Client = { ws, msgs: [], gateway: [], frames: [], binMsgs: [], closed: new Promise((r) => ws.on("close", (code) => r(code))) };
     ws.on("message", (data, isBinary) => {
       if (isBinary) {
         const ab = (data as Buffer).buffer.slice((data as Buffer).byteOffset, (data as Buffer).byteOffset + (data as Buffer).byteLength);
         c.binMsgs.push(ab);
         if (binKind(ab) === 1) c.frames.push(decodeFrameHeader(new Uint8Array(ab)));
       }
-      else c.msgs.push(JSON.parse(data.toString()));
+      else {
+        const m = JSON.parse(data.toString());
+        (m.t === "gateway" ? c.gateway : c.msgs).push(m);
+      }
     });
     await new Promise((r) => ws.on("open", r));
     clients.push(c);
@@ -2129,4 +2134,109 @@ test("deleteAvd：失败原因带本机路径的细节只写日志，不发给�
   await until(() => c.msgs.some((m) => m.t === "deleteAvd"));
   assert.deepEqual(c.msgs.find((m) => m.t === "deleteAvd"), { t: "deleteAvd", rid: 11, ok: false, error: "删除 A 失败，详情见网关日志" });
   assert.ok(logs.some((l) => l.includes("删除设备 A 失败") && l.includes("/home/u/.android/avd/A.avd")), logs.join("\n"));
+});
+
+/** 假的自动更新：request 返回给定的结果并计数。 */
+function fakeUpdate(o: { autoUpdate: boolean; report?: { state: string; message?: string } }) {
+  let requests = 0;
+  return {
+    get requests() { return requests; },
+    opts: {
+      autoUpdate: o.autoUpdate,
+      request: async () => (requests++, (o.report ?? { state: "latest" }) as never),
+      last: () => ({ at: Date.UTC(2026, 10, 13, 2, 0), report: { state: "latest" as const } }),
+    },
+  };
+}
+
+test("hello 之后最先发 gateway：功能级别、版本、是不是后台服务、自动更新开没开", async (t) => {
+  const u = fakeUpdate({ autoUpdate: true });
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { version: "2026-11-13T00:00:00.000Z", service: true, update: u.opts });
+  const c = await connect();
+  const order: string[] = [];
+  c.ws.on("message", (d, isBinary) => { if (!isBinary) order.push(JSON.parse(d.toString()).t); });
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  assert.deepEqual(c.gateway, [{ t: "gateway", level: GATEWAY_LEVEL, version: "2026-11-13T00:00:00.000Z", service: true, autoUpdate: true }]);
+  assert.equal(order[0], "gateway");
+});
+
+test("update：hello 之前发的不算（连接被关掉），不会触发检查", async (t) => {
+  const u = fakeUpdate({ autoUpdate: true });
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { service: true, update: u.opts });
+  const c = await connect();
+  c.ws.send(JSON.stringify({ t: "update" }));
+  assert.equal(await c.closed, CLOSE_NO_HELLO);
+  assert.equal(u.requests, 0);
+});
+
+test("update：后台服务开着自动更新时马上检查一次，回复检查结果", async (t) => {
+  const u = fakeUpdate({ autoUpdate: true, report: { state: "deferred", message: "正在安装 SDK" } });
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { service: true, update: u.opts });
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "update", url: "https://evil.test/x.tar.xz" }));
+  await until(() => c.msgs.some((m) => m.t === "update" && m.state !== "checking"));
+  assert.deepEqual(c.msgs.filter((m) => m.t === "update"), [{ t: "update", state: "checking" }, { t: "update", state: "deferred", message: "正在安装 SDK" }]);
+  assert.equal(u.requests, 1);
+});
+
+test("update：关了自动更新（或前台运行）时回复 off，不检查", async (t) => {
+  const u = fakeUpdate({ autoUpdate: false });
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { update: u.opts });
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "update" }));
+  await until(() => c.msgs.some((m) => m.t === "update"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "update"), { t: "update", state: "off" });
+  assert.equal(u.requests, 0);
+});
+
+test("update：要重启时所有页面都收到 restarting", async (t) => {
+  const u = fakeUpdate({ autoUpdate: true, report: { state: "restarting" } });
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { service: true, update: u.opts });
+  const a = await connect();
+  const b = await connect();
+  hello(a);
+  hello(b);
+  await until(() => a.msgs.length > 0 && b.msgs.length > 0);
+  a.ws.send(JSON.stringify({ t: "update" }));
+  await until(() => b.msgs.some((m) => m.t === "update"));
+  assert.deepEqual(b.msgs.find((m) => m.t === "update"), { t: "update", state: "restarting" });
+});
+
+test("busy：删除设备期间报“正在删除设备”，删完恢复", async (t) => {
+  const f = fakeAvd({});
+  const release = f.hold();
+  const { srv, connect } = await setup(t, new FakeSession(), undefined, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  assert.equal(srv.busy(), null);
+  c.ws.send(JSON.stringify({ t: "deleteAvd", rid: 30, name: "A" }));
+  await until(() => f.calls.includes("delete A"));
+  assert.equal(srv.busy(), "正在删除设备");
+  release();
+  await until(() => c.msgs.some((m) => m.t === "deleteAvd"));
+  assert.equal(srv.busy(), null);
+});
+
+test("busy：开机任务进行中报“设备正在开机”", async (t) => {
+  const f = fakeAvd({});
+  const { srv, connect } = await setup(t, null, async () => null, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "start", name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "boot"));
+  assert.equal(srv.busy(), "设备正在开机");
+});
+
+test("/healthz 带上自动更新开没开和上次检查的结果", async (t) => {
+  const u = fakeUpdate({ autoUpdate: true });
+  const { srv } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { service: true, update: u.opts });
+  const body = await (await fetch(`http://127.0.0.1:${srv.port}/healthz`)).json();
+  assert.deepEqual(body.update, { auto: true, last: { at: "2026-11-13T02:00:00.000Z", state: "latest" } });
 });

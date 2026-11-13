@@ -19,6 +19,24 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 
 这条命令第一次运行时安装，有新版时更新，然后用 `droidpier start` 在后台启动（当前用户的 LaunchAgent `dev.devpier.droidpier`）：关闭终端不影响，开机后自动启动，已在运行时重启它换上新版本。停止：`droidpier stop`（开机也不再启动）；查看状态：`droidpier status`；日志：`droidpier logs`（`~/Library/Logs/Droidpier/droidpier.log`）。参数原样传给 `droidpier start` 并存进后台服务：`curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7306`；只装不启动：`curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_NO_START=1 sh`；像以前一样在这个终端里前台运行：`curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh`。
 
+后台服务会自己更新（`gateway/src/updater.ts`）：启动时（在连模拟器、查 SDK 之前；最多等 10 秒，超时先启动网关，检查在后台接着做，换上新版本后再重启）和之后大约每 30 分钟取一次 `/download/droidpier-darwin-arm64.update.json` 和它的签名 `.update.json.sig`，清单的 sha256 和装着的一样就算已是最新（不看签名，什么都不执行）；否则签名验过、版本比自己新、sha256 和 `~/.local/share/droidpier/installed.sha256` 不一样，才下载压缩包、先校验 sha256 再解压、验过新程序报的版本就是清单里的版本（`--version`），把旧的留成 `~/.local/bin/droidpier.prev`，原子地换掉 `~/.local/bin/droidpier`，然后以退出码 75 退出，launchd 拉起新版本。新版本连续启动 3 次都没撑过 60 秒，就换回 `.prev` 和旧的 stamp，把它的 sha256 记进 `update-bad`，不再换上它。正在装 SDK、开机、删设备、重启模拟器或传文件时推迟；失败后检查间隔加倍（最多 8 倍）。所以部署了签过名的新网关下载包后，开着后台服务的用户大约半小时内都会换上；页面发现网关的功能级别（`shared/protocol.ts` 的 `GATEWAY_LEVEL`）比自己低时会让它马上查一次。关掉：`droidpier start --no-auto-update`。前台运行的 `droidpier` 不换自己，只打印一行提示。
+
+### 更新的信任模型
+
+| | 安装命令（`install.sh`） | 后台网关自动更新 |
+| --- | --- | --- |
+| 从哪下载 | `https://droid.devpier.dev/download/`（https，重定向不许降级） | 同一个地址，写死在网关里；重定向后必须还是同协议同主机 |
+| 校验什么 | `.tar.xz.sha256`：和压缩包同域，只防下载损坏 | `.update.json` 的 ed25519 签名（公钥写死在 `gateway/src/updater.ts`），清单里的 sha256、版本 |
+| 防下载站被换 | 不防：用户自己决定运行这条命令 | 防：没有私钥签不出能验过的清单 |
+| 防换回旧版本 | 不防 | 防：只换比正在运行的新的版本，新程序报的版本必须和清单一致 |
+| 防停在旧版本 | 不防 | 不防：控制了下载站的人可以一直不发新清单（或发不了签名的），网关就一直用现在的版本 |
+
+签名私钥只在仓库密钥 `DROIDPIER_UPDATE_SIGNING_KEY` 里（PEM，ed25519），不进仓库。`.github/workflows/pages.yml` 里只有“给网关更新清单签名”这一步拿得到它：写进 0600 的临时文件，签完就删；签名脚本在 `env -i` 的干净环境里跑。这一步只在从 `main` 部署时（不在 PR 上，也不在别的分支上手动运行时）、且重建了网关下载包时运行，和 Cloudflare 的部署凭据不在同一步。沿用线上下载包时，线上的 `.sig` 只有 404 才不带，别的错误让任务失败。没配这个密钥时照常发布，但没有 `.sig`，后台网关不会更新到这个版本（日志里是 `unsigned`），用户要运行安装命令。本地手动签名：`node scripts/sign-update.ts <私钥.pem> dist/droidpier-darwin-arm64.update.json`。`build-pages.ts` 会用网关里的公钥验部署目录里的签名，私钥和公钥不是一对就不让部署。换密钥：生成新的一对，公钥写进 `UPDATE_PUBLIC_KEY`、私钥换进密钥；已经装好的旧网关只认旧公钥，要靠用户运行一次安装命令换上带新公钥的版本。
+
+下载包里的可执行文件按 LaunchAgent 的 label 重新 ad-hoc 签名（`scripts/build-binary.ts`，标识符 `dev.devpier.droidpier`），系统设置的“允许在后台”里不会显示成 `a.out`。
+
+`DROIDPIER_DOWNLOAD` 只给测试用：换下载站（只认 https 和 `http://127.0.0.1`）。安装脚本认它；网关只在前台运行或测试 label 的后台服务里认它，正式 label 的后台服务不认，`droidpier start` 也只在测试 label 下把它写进 plist。
+
 `DROIDPIER_SERVICE_LABEL` 只给测试用：换一个 label（plist 和日志文件名跟着换），在本机试后台服务时不碰正式的 `dev.devpier.droidpier`。
 
 在 Chrome 或 Edge 里打开 https://droid.devpier.dev/app/，Chrome 弹出访问本地网络的权限框时点"允许"。
@@ -46,7 +64,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 部署和登录都要维护者本人来做。
 
 1. 构建官网：在本仓库的 `site/` 里运行 `bun install` 和 `bun run build`，得到 `site/dist`。
-2. 构建网关和页面：在本仓库运行 `bun run build:bin`。它先跑 `build:ui`，再生成 `dist/droidpier-darwin-arm64.tar.xz` 和 `.sha256`。`build:ui` 需要 nsh：把 `NSH` 设成 nsh 可执行文件的路径，或把 `nsh` 放进 `PATH`；编 wasm 用的 llvm 默认在 `/opt/homebrew/opt/llvm/bin`，别处的话设 `LLVM_BIN`。
+2. 构建网关和页面：在本仓库运行 `bun run build:bin`。它先跑 `build:ui`，再生成 `dist/droidpier-darwin-arm64.tar.xz`、`.sha256` 和更新清单 `.update.json`（要后台网关自动更新到这个版本，再用 `scripts/sign-update.ts` 签名）。`build:ui` 需要 nsh：把 `NSH` 设成 nsh 可执行文件的路径，或把 `nsh` 放进 `PATH`；编 wasm 用的 llvm 默认在 `/opt/homebrew/opt/llvm/bin`，别处的话设 `LLVM_BIN`。
 3. 拼部署目录：
 
    ```sh

@@ -12,7 +12,11 @@ import { parseZoom, ZOOM_STEPS } from "../../shared/zoom.ts";
 import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
 import { registerTools } from "./webmcp.ts";
-import { INSTALL_CMD, INSTALL_IDS, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type Licence, type Rotation } from "../../shared/protocol.ts";
+import { gatewayBanner, shouldRequestUpdate, timeoutText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
+import { GATEWAY_LEVEL, INSTALL_CMD, INSTALL_IDS, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type Licence, type Rotation } from "../../shared/protocol.ts";
+
+// 从这个功能级别起网关一定认 renameAvd、deleteAvd（shared/protocol.ts 的 GATEWAY_LEVEL）
+const AVD_EDIT_LEVEL = 1;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -84,6 +88,10 @@ export async function createHost(player: Player) {
   let upgrade: string | null = null;
   // 每发一次 emu.status 事件加一；App 用它丢掉比已应用的旧的那份
   let rev = 0;
+  // 这次连接上网关报的功能级别（undefined：还没收到；null：旧网关）、它对 update 的最近回复，和据此给页面的提示
+  let gateway: GatewayInfo | null | undefined;
+  let updateReport: UpdateReport | null = null;
+  let gatewayNote: GatewayBanner | null = null;
   const paint = () => {
     // 没接上设备时旧画面变暗，避免看起来还连着
     const dim = state !== "connected";
@@ -157,6 +165,18 @@ export async function createHost(player: Player) {
   const supported = isSupportedBrowser((navigator as { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands);
   if (!supported) state = "unsupported-browser";
   const statusEvent = () => player.hostEvent("emu.status", { state, serial, upgrade, rev: ++rev });
+  const gatewayEvent = () => {
+    gatewayNote = gateway === undefined ? null : gatewayBanner(gateway, GATEWAY_LEVEL, updateReport);
+    player.hostEvent("emu.gateway", { banner: gatewayNote, rev: ++rev });
+  };
+  const requestUpdate = () => {
+    if (gateway !== undefined && shouldRequestUpdate(gateway, GATEWAY_LEVEL)) conn.control({ t: "update" });
+  };
+  // 推迟了、下载站还没新版本、失败了：每两分钟再让网关查一次（网关那边一分钟最多查一次）
+  setInterval(() => {
+    const s = updateReport?.state;
+    if (s === "deferred" || s === "latest" || s === "failed") requestUpdate();
+  }, 2 * 60_000);
   const conn = !supported ? idleConnection() : createConnection({
     url: `ws://127.0.0.1:${GATEWAY_PORT}`,
     hidden: () => document.hidden,
@@ -245,7 +265,24 @@ export async function createHost(player: Player) {
       setupEvent();
     },
     onUpload: (m) => uploads.onMsg(m),
-    onClose: () => uploads.disconnected(),
+    onClose: () => {
+      uploads.disconnected();
+      // 网关在更新后重启：留着“正在自动更新”，等它重新连上报新的级别
+      if (updateReport?.state === "restarting") return;
+      gateway = undefined;
+      updateReport = null;
+      gatewayEvent();
+    },
+    onGateway: (info) => {
+      gateway = info;
+      updateReport = null;
+      gatewayEvent();
+      requestUpdate();
+    },
+    onUpdate: (r) => {
+      updateReport = r;
+      gatewayEvent();
+    },
     onCatalog: (c) => {
       catalog = c;
       player.hostEvent("emu.catalog", { catalog, rev: ++rev });
@@ -640,19 +677,19 @@ export async function createHost(player: Player) {
         if (typeof displayName !== "string") throw new Error("emu.renameAvd 需要 displayName");
         return conn.request({ t: "renameAvd", name: needName(name, args), displayName }).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? `${e.message}，可能需要更新 droidpier` : e.message }),
+          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_EDIT_LEVEL, "改名", e.message) : e.message }),
         );
       }
       // 同上；删得慢（大目录、avdmanager 起 Java）时页面先超时，网关删完照样广播新列表
       if (name === "emu.deleteAvd") {
         return conn.request({ t: "deleteAvd", name: needName(name, args) }).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? `${e.message}：可能还在删，稍后看设备列表；也可能需要更新 droidpier` : e.message }),
+          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_EDIT_LEVEL, "删除设备", `${e.message}：可能还在删，稍后看设备列表`) : e.message }),
         );
       }
       if (name === "emu.status") {
         return {
-          state, serial, upgrade, rev, rotation, ...stats, avds, boots: [...boots.values()].map((b) => b.last),
+          state, serial, upgrade, rev, rotation, gateway: gatewayNote, ...stats, avds, boots: [...boots.values()].map((b) => b.last),
           env, installs, license, uploads: uploads.list(),
         };
       }

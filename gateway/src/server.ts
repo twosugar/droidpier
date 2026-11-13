@@ -28,6 +28,7 @@ import {
   CLOSE_VERSION,
   compatibility,
   encodeFrameHeader,
+  GATEWAY_LEVEL,
   INSTALL_CMD,
   parseClientMsg,
   PROTOCOL_VERSION,
@@ -38,6 +39,7 @@ import {
   type InstallProgress,
   type Licence,
   type ServerMsg,
+  type UpdateState,
   type UploadState,
   type WebViewPage,
 } from "../../shared/protocol.ts";
@@ -121,6 +123,15 @@ export type FileOps = {
   idleMs?: number;
 };
 
+/** 自动更新，由 main.ts 接到 updater.ts。autoUpdate 为 false（前台运行、关了自动更新）时页面的 update 一律回 off。 */
+export type UpdateOps = {
+  autoUpdate: boolean;
+  /** 马上查一次（限频在 updater.ts）；restarting 表示新版本已换上，main.ts 接着重启。 */
+  request(): Promise<{ state: UpdateState; message?: string }>;
+  /** 上次检查的时间（毫秒）和结果，/healthz 报给 droidpier status。 */
+  last(): { at: number; report: { state: UpdateState; message?: string } } | null;
+};
+
 /** 网页模拟器所在路径，staticDir 的内容在这下面提供。 */
 const APP_PATH = "/app/";
 
@@ -150,7 +161,15 @@ export async function startServer(opts: {
   peer?: { lookup?: SocketsLookup; platform?: string; maxPending?: number; allowAnyWsClient?: boolean };
   /** 由 launchd 拉起的后台服务；/healthz 报给前台再运行的 droidpier，让它说明怎么停（gateway/src/already-running.ts）。 */
   service?: boolean;
-}): Promise<{ port: number; close(): Promise<void> }> {
+  update?: UpdateOps;
+}): Promise<{
+  port: number;
+  close(): Promise<void>;
+  /** 有不能被重启打断的操作时返回原因，自动更新这时推迟。 */
+  busy(): string | null;
+  /** 给所有页面发一条更新状态（定时检查换上新版本、马上重启时）。 */
+  notifyUpdate(r: { state: UpdateState; message?: string }): void;
+}> {
   const log = opts.log ?? ((s: string) => console.log(s));
   const root = resolve(opts.staticDir);
   const conns = new Set<Conn>();
@@ -159,6 +178,8 @@ export async function startServer(opts: {
   // 正在删除的 AVD：删完之前同名的启动、切换、改名、再删都拒绝
   const deleting = new Set<string>();
   const DELETING = "正在删除这台设备";
+  // 收分片或正在 adb install / push 的传文件：重启会打断它们
+  const transfers = new Set<object>();
   let gatewayPort = opts.port;
   const tickets = opts.tickets ?? createTickets();
   const peerCheck = createPeerCheck({ ...opts.peer, log });
@@ -211,7 +232,9 @@ export async function startServer(opts: {
       return;
     }
     if (rel === "/healthz") {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ app: "droidpier", version: opts.version ?? "", service: opts.service === true, pid: process.pid }));
+      const last = opts.update?.last();
+      const update = { auto: opts.update?.autoUpdate === true, ...(last ? { last: { at: new Date(last.at).toISOString(), ...last.report } } : {}) };
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ app: "droidpier", version: opts.version ?? "", service: opts.service === true, pid: process.pid, update }));
       return;
     }
     if (rel === "/" || rel === APP_PATH.slice(0, -1)) {
@@ -664,10 +687,14 @@ export async function startServer(opts: {
     const uploadMsg = (id: number, state: UploadState, extra: { received?: number; error?: string } = {}) =>
       send(ws, { t: "upload", id, state, ...extra });
     const dropTemp = async (u: Upload) => {
-      await u.chain;
-      await u.fh?.close().catch(() => {});
-      u.fh = null;
-      if (u.dir) await rm(u.dir, { recursive: true, force: true }).catch((e: Error) => log(`删除临时文件失败：${e.message}`));
+      try {
+        await u.chain;
+        await u.fh?.close().catch(() => {});
+        u.fh = null;
+        if (u.dir) await rm(u.dir, { recursive: true, force: true }).catch((e: Error) => log(`删除临时文件失败：${e.message}`));
+      } finally {
+        transfers.delete(u);
+      }
     };
     // 收分片阶段结束：停掉空闲计时、让出位置
     const endReceiving = (u: Upload) => {
@@ -706,6 +733,7 @@ export async function startServer(opts: {
         arrived: 0, written: 0, dir: null, fh: null, chain: Promise.resolve(), ended: false, idle: null,
       };
       upload = u;
+      transfers.add(u);
       touchIdle(u);
       log(`页面传来 ${name}（${m.size} 字节），${k.kind === "apk" ? "安装到" : "放进"} ${s.id}`);
       u.chain = (async () => {
@@ -823,6 +851,7 @@ export async function startServer(opts: {
         }
         conn.helloSeen = true;
         size = { width: m.width, height: m.height };
+        send(ws, { t: "gateway", level: GATEWAY_LEVEL, version: opts.version ?? "", service: opts.service === true, autoUpdate: opts.update?.autoUpdate === true });
         if (opts.setup) {
           const env = await checkEnv();
           send(ws, { t: "env", ...env });
@@ -1014,6 +1043,18 @@ export async function startServer(opts: {
         case "reboot":
           void reboot();
           break;
+        case "update": {
+          const u = opts.update;
+          if (!u?.autoUpdate) {
+            send(ws, { t: "update", state: "off" });
+            break;
+          }
+          send(ws, { t: "update", state: "checking" });
+          const r = await u.request();
+          if (r.state === "restarting") broadcast({ t: "update", ...r });
+          else send(ws, { t: "update", ...r });
+          break;
+        }
         case "upload":
           startUpload(m);
           break;
@@ -1082,6 +1123,14 @@ export async function startServer(opts: {
   gatewayPort = typeof addr === "object" && addr ? addr.port : opts.port;
   return {
     port: gatewayPort,
+    busy: () =>
+      installing ? "正在安装 SDK"
+      : booting() ? "设备正在开机"
+      : deleting.size ? "正在删除设备"
+      : rebooting ? "模拟器正在重启"
+      : transfers.size ? "正在传文件"
+      : null,
+    notifyUpdate: (r) => broadcast({ t: "update", ...r }),
     close: async () => {
       clearInterval(debugTimer);
       clearInterval(ticker);

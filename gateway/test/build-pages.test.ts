@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { signManifest } from "../../scripts/sign-update.ts";
 import { mkdir, mkdtemp, readdir, rm, truncate, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,8 +15,13 @@ const GOOD_APP_CSP = SITE_APP_CSP.replace("; frame-ancestors", "; frame-src http
 const headersText = (appCsp: string) =>
   `/*\n  Content-Security-Policy: default-src 'self'\n  X-Content-Type-Options: nosniff\n/app/\n  ! Content-Security-Policy\n  Content-Security-Policy: ${appCsp}\n/app/*\n  ! Content-Security-Policy\n  Content-Security-Policy: ${appCsp}\n`;
 
-/** 假的官网 dist、nsh 产物、下载文件和安装脚本 */
-async function fixture(t: { after(fn: () => unknown): void }, opts: { appCsp?: string } = {}) {
+const keys = generateKeyPairSync("ed25519");
+const PUB = keys.publicKey.export({ type: "spki", format: "pem" }).toString();
+const PRIV = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+const MANIFEST = `${DOWNLOAD_NAME}.update.json`;
+
+/** 假的官网 dist、nsh 产物、下载文件（含更新清单，signed 时带签名）和安装脚本 */
+async function fixture(t: { after(fn: () => unknown): void }, opts: { appCsp?: string; signed?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "emu-pages-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const site = join(dir, "site");
@@ -36,7 +42,11 @@ async function fixture(t: { after(fn: () => unknown): void }, opts: { appCsp?: s
   await mkdir(download);
   const xz = Buffer.from("fake-xz");
   await writeFile(join(download, `${DOWNLOAD_NAME}.tar.xz`), xz);
-  await writeFile(join(download, `${DOWNLOAD_NAME}.tar.xz.sha256`), `${createHash("sha256").update(xz).digest("hex")}  ${DOWNLOAD_NAME}.tar.xz\n`);
+  const sha = createHash("sha256").update(xz).digest("hex");
+  await writeFile(join(download, `${DOWNLOAD_NAME}.tar.xz.sha256`), `${sha}  ${DOWNLOAD_NAME}.tar.xz\n`);
+  const manifest = Buffer.from(`${JSON.stringify({ name: DOWNLOAD_NAME, version: "2026-11-13T00:00:00.000Z", sha256: sha })}\n`);
+  await writeFile(join(download, MANIFEST), manifest);
+  if (opts.signed) await writeFile(join(download, `${MANIFEST}.sig`), signManifest(manifest, PRIV));
   const installSh = join(dir, "install.sh");
   await writeFile(installSh, "#!/bin/sh\n");
   const out = join(dir, "out");
@@ -51,9 +61,26 @@ test("buildPages：官网在根目录，nsh 产物换掉 /app/，下载文件进
   assert.ok(existsSync(join(f.out, "_headers")));
   assert.deepEqual((await readdir(join(f.out, "app"))).sort(), ["browser.x", "index.html", "nsh.wasm"]);
   assert.ok(existsSync(join(f.out, "app/browser.x/host.js")));
-  assert.deepEqual((await readdir(join(f.out, "download"))).sort(), [`${DOWNLOAD_NAME}.tar.xz`, `${DOWNLOAD_NAME}.tar.xz.sha256`]);
+  assert.deepEqual((await readdir(join(f.out, "download"))).sort(), [`${DOWNLOAD_NAME}.tar.xz`, `${DOWNLOAD_NAME}.tar.xz.sha256`, MANIFEST]);
   assert.ok(existsSync(join(f.out, "install.sh")));
-  assert.deepEqual(await checkPages(f.out), []);
+  assert.deepEqual(await checkPages(f.out, PUB), []);
+});
+
+test("buildPages：有签名时一起放进 download/；签名对时 checkPages 不报", async (t) => {
+  const f = await fixture(t, { signed: true });
+  await buildPages(f);
+  assert.ok(existsSync(join(f.out, `download/${MANIFEST}.sig`)));
+  assert.deepEqual(await checkPages(f.out, PUB), []);
+});
+
+test("checkPages：更新清单的 sha256 和压缩包对不上、签名不是这把公钥签的时报出来", async (t) => {
+  const f = await fixture(t, { signed: true });
+  await buildPages(f);
+  const other = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString();
+  assert.match((await checkPages(f.out, other)).join("\n"), /签名/);
+  await writeFile(join(f.out, `download/${MANIFEST}`), `${JSON.stringify({ name: DOWNLOAD_NAME, version: "2026-11-13T00:00:00.000Z", sha256: "0".repeat(64) })}\n`);
+  const problems = (await checkPages(f.out, PUB)).join("\n");
+  assert.match(problems, /update\.json/);
 });
 
 test("buildPages：重跑时先清空输出目录，不留上次的文件", async (t) => {
@@ -72,7 +99,7 @@ test("checkPages：缺文件、sha256 对不上、超过 25 MiB、/app/ 里有 .
   await writeFile(join(f.out, "app/extra.js.gz"), "gz");
   await writeFile(join(f.out, "big.bin"), "");
   await truncate(join(f.out, "big.bin"), 25 * 2 ** 20 + 1);
-  const problems = (await checkPages(f.out)).join("\n");
+  const problems = (await checkPages(f.out, PUB)).join("\n");
   assert.match(problems, /缺 install\.sh/);
   assert.match(problems, /sha256/);
   assert.match(problems, /big\.bin.*25 MiB/);

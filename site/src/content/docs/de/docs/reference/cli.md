@@ -1,12 +1,12 @@
 ---
 title: Befehlszeile
 description: Optionen und Umgebungsvariablen für den Befehl des Droidpier-Gateways.
-sourceHash: 2510f26cb9be
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | Befehl | Wirkung |
 |---|---|
-| `droidpier start` | Führt das Gateway als macOS-LaunchAgent im Hintergrund aus. Es läuft nach dem Schließen des Terminals weiter, startet bei der Anmeldung und wird nach einem Absturz neu gestartet. Läuft es bereits, wird es neu gestartet. Angegebene Optionen werden gespeichert; ohne Optionen bleiben die gespeicherten. Öffnet die Seite einmal, außer mit `--no-open`. |
+| `droidpier start` | Führt das Gateway als macOS-LaunchAgent im Hintergrund aus. Es läuft nach dem Schließen des Terminals weiter, startet bei der Anmeldung und wird nach einem Absturz neu gestartet. Läuft es bereits, wird es neu gestartet. Angegebene Optionen werden gespeichert; ohne Optionen bleiben die gespeicherten. Öffnet die Seite einmal, außer mit `--no-open`. Außerdem hält es sich selbst aktuell: siehe [Automatische Updates](#automatic-updates). |
 | `droidpier stop` | Stoppt das Gateway im Hintergrund. Es startet bei der Anmeldung nicht mehr. |
-| `droidpier status` | Zeigt, ob das Gateway im Hintergrund läuft, mit Prozess-ID, Port, Version und Logdatei. |
+| `droidpier status` | Zeigt, ob das Gateway im Hintergrund läuft, mit Prozess-ID, Port, Version und Logdatei. Außerdem zeigt es, ob automatische Updates aktiv sind, mit dem Ergebnis der letzten Prüfung. |
 | `droidpier logs` | Gibt den Pfad der Logdatei und ihre letzten 50 Zeilen aus. |
 | `droidpier` | Führt das Gateway in diesem Terminal-Fenster aus, bis Sie `Ctrl+C` drücken. |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | aus | Die Seite öffnen, die das Gateway selbst bereitstellt, `http://127.0.0.1:<port>/app/`, statt der öffentlichen Seite auf `droid.devpier.dev`. |
 | `--no-open` | aus | Beim Start keinen Browser öffnen. Das Gateway gibt die Adresse trotzdem aus. |
+| `--no-auto-update` | aus | Für `droidpier start`: das Gateway im Hintergrund nicht automatisch aktualisieren. Im Terminal: keine Zeile ausgeben, wenn es eine neue Version gibt. |
 
 Mit oder ohne `--no-open` findet die Seite das Gateway von selbst. Siehe [Erster Start](/de/docs/getting-started/first-run/#3-open-the-page).
 
@@ -106,13 +107,25 @@ Fehlen Teile des Android SDK, listet das Gateway jedes davon mit einem Befehl zu
 | Einstellungen des Gateways im Hintergrund | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Log des Gateways im Hintergrund | `~/Library/Logs/Droidpier/droidpier.log` |
 
+## Automatische Updates {#automatic-updates}
+
+Das Gateway im Hintergrund hält sich selbst aktuell. Beim Start und danach etwa alle 30 Minuten vergleicht es die Prüfsumme der veröffentlichten Version mit der der installierten Version (`~/.local/share/droidpier/installed.sha256`). Ist eine neue Version veröffentlicht, lädt es sie von `droid.devpier.dev` herunter, prüft die Prüfsumme vor dem Entpacken, ersetzt `~/.local/bin/droidpier` und startet neu. Offene Seiten verbinden sich von selbst wieder. Solange eine SDK-Installation, der Start eines Geräts, das Löschen eines Geräts, ein Neustart des Emulators oder eine Dateiübertragung läuft, wartet es. Schlägt der Download fehl oder stimmt die Prüfsumme nicht, läuft die vorhandene Version weiter und es versucht es später erneut. Jeder Schritt steht im Log (`droidpier logs`).
+
+Das Gateway übernimmt nur Versionen, die mit dem Release-Schlüssel von Droidpier signiert und neuer als die laufende sind. Die vorherige Version behält es als `~/.local/bin/droidpier.prev`. Startet eine neue Version dreimal hintereinander nicht, wechselt das Gateway zur vorherigen Version zurück und übernimmt diese Version nicht noch einmal.
+
+Stellt die Seite fest, dass das Gateway im Hintergrund älter ist als sie selbst, bittet sie es, sofort zu prüfen, und zeigt an, dass das Gateway aktualisiert wird.
+
+Automatische Updates abschalten: `droidpier start --no-auto-update`. Wieder einschalten: `droidpier start` mit Ihren übrigen Optionen und ohne `--no-auto-update` ausführen, zum Beispiel `droidpier start --port 7300`. `droidpier status` zeigt, ob sie aktiv sind.
+
+Ein Gateway, das in einem Terminalfenster läuft (`droidpier`), ersetzt sich nicht selbst. Gibt es eine neue Version, gibt es eine Zeile aus: Führen Sie `droidpier start` aus, um zum Gateway im Hintergrund zu wechseln, das sich selbst aktualisiert, oder führen Sie den Installationsbefehl erneut aus.
+
 ## Deinstallieren {#uninstall}
 
 Stoppen Sie das Gateway im Hintergrund und löschen Sie dann die Dateien, die es verwendet:
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

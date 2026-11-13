@@ -5,7 +5,7 @@ description: Options and environment variables for the Droidpier gateway command
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -14,9 +14,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | Command | Effect |
 |---|---|
-| `droidpier start` | Run the gateway in the background, as a macOS LaunchAgent. It keeps running after you close Terminal, starts again when you log in, and restarts if it crashes. If it is already running, it restarts. It saves the options you give; without options, it keeps the saved ones. It opens the page once unless you pass `--no-open`. |
+| `droidpier start` | Run the gateway in the background, as a macOS LaunchAgent. It keeps running after you close Terminal, starts again when you log in, and restarts if it crashes. If it is already running, it restarts. It saves the options you give; without options, it keeps the saved ones. It opens the page once unless you pass `--no-open`. It also keeps itself up to date: see [Automatic updates](#automatic-updates). |
 | `droidpier stop` | Stop the background gateway. It no longer starts when you log in. |
-| `droidpier status` | Show whether the background gateway runs, with its process ID, port, version and log file. |
+| `droidpier status` | Show whether the background gateway runs, with its process ID, port, version and log file. It also shows whether automatic updates are on, with the result of the last check. |
 | `droidpier logs` | Print the log file path and its last 50 lines. |
 | `droidpier` | Run the gateway in this Terminal window until you press `Ctrl+C`. |
 
@@ -53,6 +53,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | off | Open the page the gateway serves itself, `http://127.0.0.1:<port>/app/`, instead of the public page on `droid.devpier.dev`. |
 | `--no-open` | off | Do not open the browser on start. The gateway still prints the address. |
+| `--no-auto-update` | off | For `droidpier start`: do not update the background gateway automatically. In Terminal: do not print a line when a new version exists. |
 
 With or without `--no-open`, the page finds the gateway by itself. See [First run](/docs/getting-started/first-run/#3-open-the-page).
 
@@ -105,13 +106,25 @@ When Android SDK parts are missing, the gateway lists each one with a command to
 | Background gateway settings | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Background gateway log | `~/Library/Logs/Droidpier/droidpier.log` |
 
+## Automatic updates
+
+The background gateway keeps itself up to date. When it starts, and about every 30 minutes after that, it compares the checksum of the published version with the one of the installed version (`~/.local/share/droidpier/installed.sha256`). When a new version is published, it downloads it from `droid.devpier.dev`, checks the checksum before unpacking, replaces `~/.local/bin/droidpier` and restarts. Open pages reconnect by themselves. It waits while an SDK install, a device start, a device deletion, an emulator restart or a file transfer is in progress. If the download fails or the checksum does not match, it keeps running the version you have and tries again later. Each step is written to the log (`droidpier logs`).
+
+The gateway takes only versions signed with the Droidpier release key, and only versions newer than the one it runs. It keeps the previous version as `~/.local/bin/droidpier.prev`. If a new version fails to start three times in a row, the gateway switches back to the previous version and does not take that version again.
+
+When the page finds that the background gateway is older than the page, it asks the gateway to check at once and shows that the gateway is updating.
+
+To turn automatic updates off, run `droidpier start --no-auto-update`. To turn them on again, run `droidpier start` with your other options and without `--no-auto-update`, for example `droidpier start --port 7300`. `droidpier status` shows whether they are on.
+
+A gateway that runs in a Terminal window (`droidpier`) does not replace itself. When a new version exists, it prints one line: run `droidpier start` to switch to the background gateway, which updates itself, or run the install command again.
+
 ## Uninstall
 
 Stop the background gateway, then delete the files it uses:
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 
