@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { exitHandler } from "../src/exit.ts";
+import { cleanupAll, exitHandler } from "../src/exit.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -34,4 +34,27 @@ test("清理途中再收到信号：立即退出", async () => {
   await sleep(10);
   await onSignal();
   assert.deepEqual(codes, [1]);
+});
+
+test("cleanupAll：自动更新卡在不能中止的步骤时，照样马上停安装、关服务", async () => {
+  const calls: string[] = [];
+  const done = cleanupAll({
+    stopUpdater: () => new Promise(() => {}),
+    stopInstaller: () => void calls.push("installer"),
+    closeServer: async () => void calls.push("server"),
+  });
+  await sleep(10);
+  assert.deepEqual(calls, ["installer", "server"]);
+  void done;
+});
+
+test("cleanupAll：等自动更新和关服务都结束才返回", async () => {
+  let release: () => void = () => {};
+  let finished = false;
+  const done = cleanupAll({ stopUpdater: () => new Promise<void>((r) => (release = r)), stopInstaller: () => {}, closeServer: async () => {} }).then(() => (finished = true));
+  await sleep(10);
+  assert.equal(finished, false);
+  release();
+  await done;
+  assert.equal(finished, true);
 });

@@ -27,3 +27,13 @@ export function exitHandler(opts: {
     opts.exit(0);
   };
 }
+
+/**
+ * 退出时的清理顺序：自动更新可能正卡在中止不了的步骤（算 sha256、解压、跑新程序 --version，最长 30 秒），
+ * 不能让它挡住停安装和关服务，否则 exitHandler 的超时到点时这两样还没做；三样同时开始，一起等。
+ */
+export async function cleanupAll(o: { stopUpdater?: () => Promise<void>; stopInstaller: () => void; closeServer?: () => Promise<void> }): Promise<void> {
+  const updater = o.stopUpdater?.();
+  o.stopInstaller();
+  await Promise.all([updater, o.closeServer?.()]);
+}

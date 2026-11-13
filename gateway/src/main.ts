@@ -17,7 +17,7 @@ import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
 import { adb, killAdbChildren } from "./adb.ts";
 import { waitForReboot } from "./reboot.ts";
-import { exitHandler } from "./exit.ts";
+import { cleanupAll, exitHandler } from "./exit.ts";
 import { allowedOrigins, PUBLIC_ORIGIN } from "./auth.ts";
 import { buildPageUrl } from "./page-url.ts";
 import { parseCli, USAGE, versionLine } from "./cli.ts";
@@ -78,6 +78,8 @@ if (service && !autoUpdate) console.log("自动更新已关闭（--no-auto-updat
 else if (service && !layout) console.log("不是安装命令装的程序，不自动更新");
 if ("error" in dl) console.log(`${dl.error}，不检查更新`);
 let srv: Awaited<ReturnType<typeof startServer>> | undefined;
+// 新版本稳定运行一分钟后清掉启动计数的定时器（见下面 confirmStable）
+let stableTimer: ReturnType<typeof setTimeout> | undefined;
 const updaterDeps = layout
   ? realUpdaterDeps({ base: "base" in dl ? dl.base : DOWNLOAD_BASE, ...layout, version: VERSION, busy: () => srv?.busy() ?? null, log: (s) => console.log(s) })
   : null;
@@ -228,7 +230,10 @@ srv = await startServer({
 });
 const pageUrl = buildPageUrl(process.argv, srv.port);
 // 新版本稳定运行一分钟后不再数它的启动次数
-if (service && updaterDeps) setTimeout(() => void confirmStable(updaterDeps).catch((e: Error) => console.log(`记录新版本运行正常失败：${e.message}`)), 60_000);
+// 要重启时取消（restart、cleanup）：这一分钟里后台检查换上了更新的版本，计数属于那个版本，不能被这里删掉
+stableTimer = service && updaterDeps
+  ? setTimeout(() => void confirmStable(updaterDeps).catch((e: Error) => console.log(`记录新版本运行正常失败：${e.message}`)), 60_000)
+  : undefined;
 console.log(`droidpier: ${pageUrl}  (${first ? `emulator-${serial}` : "no emulator"})`);
 // 终端里只提示，不提问：安装要在页面上确认
 if (!env.ok) {
@@ -240,12 +245,15 @@ if (!noOpen) openBrowser(pageUrl, (e) => console.log(`打开浏览器失败：${
 // 收到退出信号和自动更新后重启共用一次清理
 let cleaning: Promise<void> | null = null;
 const cleanup = () => (cleaning ??= (async () => {
-  // 中止进行中的下载，等它删掉临时目录
-  await updater?.stop();
-  // 正在进行的下载和解压不能留在网关后面
-  installer.stop();
-  // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
-  await srv?.close();
+  clearTimeout(stableTimer);
+  await cleanupAll({
+    // 中止进行中的下载，等它删掉临时目录
+    stopUpdater: updater ? () => updater.stop() : undefined,
+    // 正在进行的下载和解压不能留在网关后面
+    stopInstaller: () => installer.stop(),
+    // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
+    closeServer: srv ? () => srv!.close() : undefined,
+  });
   last?.close();
   // 等取消订阅时异步删除 mmap 临时文件
   await new Promise((r) => setTimeout(r, 200));
@@ -258,6 +266,7 @@ let restarting = false;
 function restart() {
   if (restarting) return;
   restarting = true;
+  clearTimeout(stableTimer);
   srv?.notifyUpdate({ state: "restarting" });
   // 让 restarting 先发到页面
   setTimeout(() => void restartNow(), 300);
