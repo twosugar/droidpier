@@ -23,7 +23,8 @@ permissions:
 env:
   # 本地一直用的 nsh 是 v0.4.0 之前 32 个提交，选最接近的发行版；升级单独提 PR，PR 上的构建先验一遍
   NSH_VERSION: v0.4.0
-  DEPLOY: ${{ github.event_name != 'pull_request' }}
+  # 只从 main 部署、签名：手动运行在别的分支上时只构建
+  DEPLOY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
 jobs:
   build:
@@ -94,7 +95,8 @@ jobs:
           key="$(mktemp "$RUNNER_TEMP/update-key.XXXXXX")"
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$SIGNING_KEY" > "$key"
-          node scripts/sign-update.ts "$key" dist/droidpier-darwin-arm64.update.json
+          # 干净的环境跑签名：NODE_OPTIONS 之类注入不进来，密钥也不在子进程的环境变量里
+          env -i PATH="$PATH" HOME="$HOME" node scripts/sign-update.ts "$key" dist/droidpier-darwin-arm64.update.json
 
       - name: 沿用线上的网关下载包
         if: steps.binary.outputs.rebuild != 'true'
@@ -106,8 +108,13 @@ jobs:
           shasum -a 256 -c "$f.sha256"
           m=droidpier-darwin-arm64.update.json
           curl -fsSL --retry 3 --proto '=https' -o "$m" "https://droid.devpier.dev/download/$m"
-          # 线上那份可能没签名（当时没配密钥）：没有就不带，checkPages 验有的那份
-          curl -fsSL --retry 3 --proto '=https' -o "$m.sig" "https://droid.devpier.dev/download/$m.sig" || rm -f "$m.sig"
+          # 线上那份可能没签名（当时没配密钥）：只有 404 才不带；别的错误让任务失败，免得网络抖一下就把签过名的版本重新发成没签名的
+          code=$(curl -sS --retry 3 --proto '=https' -o "$m.sig" -w '%{http_code}' "https://droid.devpier.dev/download/$m.sig")
+          case "$code" in
+            200) ;;
+            404) rm -f "$m.sig" ;;
+            *) echo "取线上的 $m.sig 失败：HTTP $code"; exit 1 ;;
+          esac
 
       - name: 构建官网
         working-directory: site
