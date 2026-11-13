@@ -14,7 +14,8 @@ on:
         default: false
 
 concurrency:
-  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  # 只有 main 进部署组：别的分支（PR、手动运行）各自一组，不会挤掉排队中的 main 部署
+  group: pages-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'deploy' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
