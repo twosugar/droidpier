@@ -2,7 +2,7 @@
 // 用法：bun scripts/build-binary.ts（先跑 build:ui 生成 .nsh/out/Droidpier）
 import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { scrubDir } from "./scrub-paths.ts";
@@ -39,6 +39,15 @@ if (!r.success) {
   process.exit(1);
 }
 await rm(join(dist, "stage"), { recursive: true, force: true });
+
+// bun 编出来的文件是 ad-hoc 签名，标识符是 a.out；系统设置 → 登录项与扩展 →“允许在后台”里后台服务会显示成 a.out，
+// 用户认不出。按 LaunchAgent 的 label 重新 ad-hoc 签一次（2026-11-13 实测 bun 1.4.2）
+const SIGN_ID = "dev.devpier.droidpier";
+execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", SIGN_ID, out]);
+// codesign -dv 把信息打在 stderr
+const sigInfo = spawnSync("/usr/bin/codesign", ["-dv", out], { encoding: "utf8" }).stderr;
+if (!sigInfo.includes(`Identifier=${SIGN_ID}`)) throw new Error(`重新签名后标识符不是 ${SIGN_ID}：\n${sigInfo}`);
+if (!execFileSync(out, ["--help"], { encoding: "utf8" }).includes("droidpier start")) throw new Error("重新签名后可执行文件跑不起来");
 
 // 可执行文件约 65 MiB，超过 Pages 上限。gzip -9 压完仍超 25 MiB；xz -9 约 18 MiB，
 // 且 macOS 自带的 /usr/bin/tar（libarchive + liblzma）能直接解，install.sh 不用额外装工具（2026-11-12 实测）
