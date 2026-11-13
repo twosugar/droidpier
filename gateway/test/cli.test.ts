@@ -8,12 +8,12 @@ import { fileURLToPath } from "node:url";
 import { parseCli, USAGE, versionLine } from "../src/cli.ts";
 
 test("parseCli：没有参数时用默认端口，打开浏览器", () => {
-  assert.deepEqual(parseCli([]), { kind: "run", options: { port: 7300, noOpen: false, allowOrigins: [], service: false } });
+  assert.deepEqual(parseCli([]), { kind: "run", options: { port: 7300, noOpen: false, allowOrigins: [], service: false, autoUpdate: true } });
 });
 
 test("parseCli：认得的参数照旧生效", () => {
   const r = parseCli(["--port", "7306", "--local", "--no-open", "--public", "--allow-origin", "http://droid.test:7351"]);
-  assert.deepEqual(r, { kind: "run", options: { port: 7306, noOpen: true, allowOrigins: ["http://droid.test:7351"], service: false } });
+  assert.deepEqual(r, { kind: "run", options: { port: 7306, noOpen: true, allowOrigins: ["http://droid.test:7351"], service: false, autoUpdate: true } });
 });
 
 test("parseCli：打错的参数报错，不按默认端口启动", () => {
@@ -42,12 +42,18 @@ test("parseCli：--help / -h / --version 优先于其他参数", () => {
 });
 
 test("parseCli：--service 是后台服务自己用的参数，不打开浏览器", () => {
-  assert.deepEqual(parseCli(["--service", "--port", "7310"]), { kind: "run", options: { port: 7310, noOpen: true, allowOrigins: [], service: true } });
+  assert.deepEqual(parseCli(["--service", "--port", "7310"]), { kind: "run", options: { port: 7310, noOpen: true, allowOrigins: [], service: true, autoUpdate: true } });
 });
 
 test("parseCli：start 带上运行参数，--no-open 只管这一次，不存进后台服务的参数", () => {
   assert.deepEqual(parseCli(["start"]), { kind: "service", command: "start", args: [], noOpen: false });
   assert.deepEqual(parseCli(["start", "--port", "7310", "--local", "--no-open"]), { kind: "service", command: "start", args: ["--port", "7310", "--local"], noOpen: true });
+});
+
+test("parseCli：--no-auto-update 关掉自动更新；用在 start 上时存进后台服务的参数", () => {
+  assert.equal((parseCli(["--no-auto-update"]) as { options: { autoUpdate: boolean } }).options.autoUpdate, false);
+  assert.equal((parseCli(["--service", "--no-auto-update"]) as { options: { autoUpdate: boolean } }).options.autoUpdate, false);
+  assert.deepEqual(parseCli(["start", "--no-auto-update"]), { kind: "service", command: "start", args: ["--no-auto-update"], noOpen: false });
 });
 
 test("parseCli：start 的参数照样检查", () => {
@@ -73,7 +79,7 @@ test("parseCli：子命令只能放在第一个", () => {
 });
 
 test("帮助列出全部公开参数和子命令", () => {
-  for (const f of ["--port", "--local", "--no-open", "--version", "--help", "droidpier start", "droidpier stop", "droidpier status", "droidpier logs"]) assert.ok(USAGE.includes(f), f);
+  for (const f of ["--port", "--local", "--no-open", "--no-auto-update", "--version", "--help", "droidpier start", "droidpier stop", "droidpier status", "droidpier logs"]) assert.ok(USAGE.includes(f), f);
   assert.ok(!USAGE.includes("--service"));
 });
 

@@ -40,7 +40,7 @@ test("explainBusyPort：/healthz 报 service 时认出是后台服务", async (t
   t.after(() => srv.close());
   const r = await explainBusyPort({ port: srv.port, pageUrl: URL_, ownVersion: "2026-11-12T10:00:00Z" });
   assert.equal(r.lines[0], `droidpier 已经在后台运行（端口 ${srv.port}）`);
-  assert.deepEqual(await probePort(srv.port), { kind: "droidpier", version: "2026-11-12T10:00:00Z", service: true, pid: process.pid });
+  assert.deepEqual(await probePort(srv.port), { kind: "droidpier", version: "2026-11-12T10:00:00Z", service: true, pid: process.pid, update: { auto: false } });
 });
 
 test("busyPortReport：自己是开发版（没有版本）时不判断新旧", () => {

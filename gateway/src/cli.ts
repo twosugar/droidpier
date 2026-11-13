@@ -2,8 +2,11 @@
 import { isOrigin } from "./auth.ts";
 import { DEFAULT_PORT } from "./page-url.ts";
 
-/** 启动网关要用的参数。--local / --public 由 page-url.ts 直接看 argv。service 表示由 launchd 拉起（gateway/src/service.ts）。 */
-export type CliOptions = { port: number; noOpen: boolean; allowOrigins: string[]; service: boolean };
+/**
+ * 启动网关要用的参数。--local / --public 由 page-url.ts 直接看 argv。service 表示由 launchd 拉起（gateway/src/service.ts）。
+ * autoUpdate：后台服务自己更新，前台运行只提示有新版本（gateway/src/updater.ts）；--no-auto-update 关掉。
+ */
+export type CliOptions = { port: number; noOpen: boolean; allowOrigins: string[]; service: boolean; autoUpdate: boolean };
 
 export type ServiceCommand = "start" | "stop" | "status" | "logs";
 
@@ -19,8 +22,8 @@ const SERVICE_COMMANDS: readonly string[] = ["start", "stop", "status", "logs"];
 // --public 是兼容别名、--allow-origin 只在本地模拟公网页面时用、--service 只给 launchd 用，都不写进帮助
 export const USAGE = [
   "用法：",
-  "  droidpier start [--port <端口>] [--local] [--no-open]",
-  "                   在后台运行：关闭终端不影响，开机后自动启动；已在运行时重启它",
+  "  droidpier start [--port <端口>] [--local] [--no-open] [--no-auto-update]",
+  "                   在后台运行：关闭终端不影响，开机后自动启动，有新版本时自动更新；已在运行时重启它",
   "  droidpier stop    停止后台运行，开机也不再自动启动",
   "  droidpier status  查看后台运行的状态",
   "  droidpier logs    打印日志位置和最近的日志",
@@ -30,6 +33,7 @@ export const USAGE = [
   `  --port <端口>  在 127.0.0.1 的这个端口上监听，默认 ${DEFAULT_PORT}`,
   "  --local        打开网关自己托管的页面 http://127.0.0.1:<端口>/app/，不打开公网页面",
   "  --no-open      启动时不打开浏览器，只打印页面地址",
+  "  --no-auto-update  后台运行时不自动更新（前台运行时不提示新版本）",
   "  --version      打印版本后退出",
   "  -h, --help     打印这段说明后退出",
 ].join("\n");
@@ -54,7 +58,7 @@ export function parseCli(args: string[]): CliResult {
 }
 
 function parseRun(args: string[]): Extract<CliResult, { kind: "run" | "error" }> {
-  const options: CliOptions = { port: DEFAULT_PORT, noOpen: false, allowOrigins: [], service: false };
+  const options: CliOptions = { port: DEFAULT_PORT, noOpen: false, allowOrigins: [], service: false, autoUpdate: true };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--local" || a === "--public") continue;
@@ -63,6 +67,8 @@ function parseRun(args: string[]): Extract<CliResult, { kind: "run" | "error" }>
       options.noOpen = true;
     } else if (a === "--no-open") {
       options.noOpen = true;
+    } else if (a === "--no-auto-update") {
+      options.autoUpdate = false;
     } else if (a === "--port") {
       const v = args[++i];
       const port = Number(v);

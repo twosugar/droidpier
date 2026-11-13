@@ -25,6 +25,7 @@ import { checkPortFirst, explainBusyPort } from "./already-running.ts";
 import { cleanStaleUploads } from "./upload-temp.ts";
 import { realRotateIo, realServiceDeps, rotateLog, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
 import { tmpdir } from "node:os";
+import { createAutoUpdater, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
 
 // scripts/build-binary.ts 打包时把 DROIDPIER_VERSION 替换成构建时间；直接用源码跑时没有
 declare const DROIDPIER_VERSION: string | undefined;
@@ -32,7 +33,8 @@ const VERSION = typeof DROIDPIER_VERSION === "string" ? DROIDPIER_VERSION : "";
 
 // `nsh package ui --target web` 在仓库根目录运行时，产物落在根目录的 .nsh/out，不在 ui/.nsh/out（实测）
 // 打成单个可执行文件后，scripts/build-binary.ts 用 --asset 把这个目录嵌在 import.meta.dir/Droidpier 下，node:fs 照常能读
-const STATIC_DIR = (globalThis as { Bun?: { isStandaloneExecutable: boolean } }).Bun?.isStandaloneExecutable
+const STANDALONE = (globalThis as { Bun?: { isStandaloneExecutable: boolean } }).Bun?.isStandaloneExecutable === true;
+const STATIC_DIR = STANDALONE
   ? join(import.meta.dirname, "Droidpier")
   : fileURLToPath(new URL("../../.nsh/out/Droidpier", import.meta.url));
 
@@ -64,7 +66,7 @@ if (cli.kind === "service") {
   const run = { start: () => serviceStart(d, { args: cli.args, noOpen: cli.noOpen }), stop: () => serviceStop(d), status: () => serviceStatus(d), logs: () => serviceLogs(d) };
   process.exit(await run[cli.command]());
 }
-const { port, noOpen, allowOrigins: extraOrigins, service } = cli.options;
+const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate } = cli.options;
 if (service) {
   const l = serviceLabel(process.env);
   if ("label" in l) await rotateLog(serviceLogPath(l.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
@@ -131,10 +133,40 @@ const catalogDeps = realCatalogDeps({
   },
 });
 const first = await getSession();
+
+// 自动更新（gateway/src/updater.ts）：后台服务自己换上新版本；前台运行只在有新版本时打印一行
+const layout = autoUpdate ? installLayout(process.execPath, STANDALONE) : null;
+const dl = downloadBase(process.env);
+if (service && !autoUpdate) console.log("自动更新已关闭（--no-auto-update）");
+else if (service && !layout) console.log("不是安装命令装的程序，不自动更新");
+if ("error" in dl) console.log(`${dl.error}，不检查更新`);
+const updaterDeps = layout && "base" in dl
+  ? realUpdaterDeps({ base: dl.base, ...layout, busy: () => srv.busy(), log: (s) => console.log(s) })
+  : null;
+const updater = updaterDeps && createAutoUpdater({
+  check: service
+    ? async () => {
+        const r = await updateOnce(updaterDeps);
+        if (r.kind === "updated") restart();
+        return toReport(r);
+      }
+    : newerNotice(updaterDeps),
+  now: () => Date.now(),
+  setTimer: (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  },
+  random: Math.random,
+  intervalMs: 30 * 60_000,
+  jitterMs: 5 * 60_000,
+  pageGapMs: 60_000,
+});
+
 const srv = await startServer({
   port,
   version: VERSION,
   service,
+  update: { autoUpdate: service && updater !== null, request: () => updater!.request(), last: () => updater?.last() ?? null },
   allowedOrigins: allowedOrigins(PUBLIC_ORIGIN, port, extraOrigins),
   staticDir: STATIC_DIR,
   getSession,
@@ -182,20 +214,31 @@ if (!env.ok) {
 }
 if (!noOpen) openBrowser(pageUrl, (e) => console.log(`打开浏览器失败：${e.message}`));
 
-const onSignal = exitHandler({
-  cleanup: async () => {
-    // 正在进行的下载和解压不能留在网关后面
-    installer.stop();
-    // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
-    await srv.close();
-    last?.close();
-    // 等取消订阅时异步删除 mmap 临时文件
-    await new Promise((r) => setTimeout(r, 200));
-  },
-  exit: (code) => process.exit(code),
-  timeoutMs: 3000,
-  log: (s) => console.log(s),
-});
+// 收到退出信号和自动更新后重启共用一次清理
+let cleaning: Promise<void> | null = null;
+const cleanup = () => (cleaning ??= (async () => {
+  updater?.stop();
+  // 正在进行的下载和解压不能留在网关后面
+  installer.stop();
+  // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
+  await srv.close();
+  last?.close();
+  // 等取消订阅时异步删除 mmap 临时文件
+  await new Promise((r) => setTimeout(r, 200));
+})());
+const onSignal = exitHandler({ cleanup, exit: (code) => process.exit(code), timeoutMs: 3000, log: (s) => console.log(s) });
+// 新版本已经换上：清理后以非 0 退出，launchd（KeepAlive.SuccessfulExit=false）马上拉起新的可执行文件。
+// 不用 launchctl kickstart -k 自己杀自己：退出码不依赖 label、uid 和 launchctl，plist 是旧版本写的也一样
+const restartNow = exitHandler({ cleanup, exit: () => process.exit(RESTART_EXIT_CODE), timeoutMs: 3000, log: (s) => console.log(s) });
+let restarting = false;
+function restart() {
+  if (restarting) return;
+  restarting = true;
+  srv.notifyUpdate({ state: "restarting" });
+  // 让 restarting 先发到页面
+  setTimeout(() => void restartNow(), 300);
+}
+updater?.start();
 // 清理超时被强制退出时也不留下卡住的 adb 进程
 process.on("exit", killAdbChildren);
 process.on("SIGINT", onSignal);

@@ -10,7 +10,7 @@ const BIN = `${HOME}/.local/bin/droidpier`;
 type Holder = { kind: "droidpier"; version: string | null; service?: boolean } | { kind: "other" } | null;
 
 /** 假的 launchd + 文件系统 + 端口：bootstrap 读 plist 起一个新 pid，kickstart -k 换 pid，bootout 停掉。 */
-function fake(o: { files?: Record<string, string>; loaded?: boolean; pid?: number | null; holder?: Holder; startsOk?: boolean; env?: Record<string, string>; slowExit?: number; foreground?: boolean; kickstartFails?: boolean } = {}) {
+function fake(o: { files?: Record<string, string>; loaded?: boolean; pid?: number | null; holder?: Holder; startsOk?: boolean; env?: Record<string, string>; slowExit?: number; foreground?: boolean; kickstartFails?: boolean; update?: { auto: boolean; last?: { at: string; state: string; message?: string } } } = {}) {
   const files: Record<string, string> = { ...o.files };
   const calls: string[] = [];
   const out: string[] = [];
@@ -67,7 +67,7 @@ function fake(o: { files?: Record<string, string>; loaded?: boolean; pid?: numbe
     rm: async (p) => void delete files[p],
     holder: async () => o.holder ?? null,
     // foreground：端口上应答的是一个前台运行的 droidpier，不是 launchd 拉起的那个
-    health: async () => (o.foreground ? { version: "x", service: false, pid: 42 } : pid ? { version: "2026-11-13T00:00:00.000Z", service: true, pid } : null),
+    health: async () => (o.foreground ? { version: "x", service: false, pid: 42 } : pid ? { version: "2026-11-13T00:00:00.000Z", service: true, pid, ...(o.update ? { update: o.update } : {}) } : null),
     open: (url) => void opened.push(url),
     sleep: async () => {},
     log: (s) => void out.push(s),
@@ -230,6 +230,41 @@ test("status：运行中报 pid、端口、版本、页面和日志位置", asyn
   assert.match(text, /端口：7310/);
   assert.match(text, /版本：2026-11-13T00:00:00\.000Z/);
   assert.ok(text.includes(LOG));
+});
+
+test("status：说明自动更新开没开、上次检查的结果", async () => {
+  const f = fake({ update: { auto: true, last: { at: "2026-11-13T02:00:00.000Z", state: "failed", message: "HTTP 503" } } });
+  await serviceStart(f.deps, { args: [], noOpen: true });
+  f.out.length = 0;
+  await serviceStatus(f.deps);
+  assert.match(f.out.join("\n"), /自动更新：开/);
+  assert.match(f.out.join("\n"), /上次检查：.*检查失败：HTTP 503/);
+
+  const g = fake();
+  await serviceStart(g.deps, { args: ["--no-auto-update"], noOpen: true });
+  g.out.length = 0;
+  await serviceStatus(g.deps);
+  assert.match(g.out.join("\n"), /自动更新：关/);
+});
+
+test("start：说明自动更新开没开", async () => {
+  const f = fake();
+  await serviceStart(f.deps, { args: [], noOpen: true });
+  assert.match(f.out.join("\n"), /有新版本时自动更新/);
+  const g = fake();
+  await serviceStart(g.deps, { args: ["--no-auto-update"], noOpen: true });
+  assert.match(g.out.join("\n"), /自动更新已关闭/);
+});
+
+test("测试用的 label 才把 DROIDPIER_DOWNLOAD 带进 plist；正式服务只用写死的下载地址", async () => {
+  const env = { DROIDPIER_DOWNLOAD: "http://127.0.0.1:7399" };
+  const f = fake({ env });
+  await serviceStart(f.deps, { args: [], noOpen: true });
+  assert.doesNotMatch(f.files[PLIST], /DROIDPIER_DOWNLOAD/);
+  const g = fake({ env });
+  g.deps.label = "dev.devpier.droidpier.test";
+  await serviceStart(g.deps, { args: [], noOpen: true });
+  assert.match(g.files[`${HOME}/Library/LaunchAgents/dev.devpier.droidpier.test.plist`], /<key>DROIDPIER_DOWNLOAD<\/key>\s*<string>http:\/\/127\.0\.0\.1:7399<\/string>/);
 });
 
 test("status：没在后台运行时退出码 1；端口上有前台运行的 droidpier 时说明一下", async () => {

@@ -4,7 +4,7 @@ import { copyFile, mkdir, readFile, rm, stat, truncate, writeFile } from "node:f
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { parseCli } from "./cli.ts";
-import { portHolder, probePort, type PortHolder } from "./already-running.ts";
+import { portHolder, probePort, type HealthUpdate, type PortHolder } from "./already-running.ts";
 import { buildPageUrl } from "./page-url.ts";
 import { launchAgentPath, openBrowser, SERVICE_LABEL, serviceLogPath } from "./platform.ts";
 
@@ -36,7 +36,7 @@ export type ServiceDeps = {
   /** 端口空着返回 null；会试着绑一下端口，服务可能正在启动时不要用。 */
   holder(port: number): Promise<PortHolder | null>;
   /** 只问 /healthz，不碰端口；没有 droidpier 应答时返回 null。pid 为 null 表示对方没报（旧版本）。 */
-  health(port: number): Promise<{ version: string | null; service: boolean; pid: number | null } | null>;
+  health(port: number): Promise<{ version: string | null; service: boolean; pid: number | null; update?: HealthUpdate } | null>;
   open(url: string): void;
   sleep(ms: number): Promise<void>;
   log(s: string): void;
@@ -163,6 +163,8 @@ export async function serviceStart(d: ServiceDeps, o: { args: string[]; noOpen: 
   }
   // 后台进程靠它找到自己的日志去轮转（rotateLog）；正式 label 不用写
   if (d.label !== SERVICE_LABEL) env.DROIDPIER_SERVICE_LABEL = d.label;
+  // 测试用的下载站（gateway/src/updater.ts）只跟着测试 label 走：正式服务只从写死的地址更新
+  if (d.label !== SERVICE_LABEL && d.env.DROIDPIER_DOWNLOAD) env.DROIDPIER_DOWNLOAD = d.env.DROIDPIER_DOWNLOAD;
   const xml = plistXml({ label: d.label, program: d.program, args, logPath: p.log, env });
 
   const before = await state(d);
@@ -225,12 +227,37 @@ export async function serviceStart(d: ServiceDeps, o: { args: string[]; noOpen: 
     return 1;
   }
   d.log("droidpier 已在后台运行，关闭终端不影响；开机后自动启动");
+  d.log(autoUpdateOff(args) ? `  自动更新已关闭；打开：droidpier start --port ${port}（不带 --no-auto-update）` : "  有新版本时自动更新；关掉：droidpier start --no-auto-update");
   d.log(`  页面：${pageUrl}`);
   d.log("  停止：droidpier stop");
   d.log("  查看状态：droidpier status");
   d.log(`  日志：${p.log}`);
   if (!o.noOpen) d.open(pageUrl);
   return 0;
+}
+
+const autoUpdateOff = (args: string[]) => args.includes("--no-auto-update");
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const localTime = (iso: string) => {
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? iso : `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+};
+const RESULT: Record<string, (m?: string) => string> = {
+  latest: () => "已是最新",
+  restarting: () => "已更新，正在重启",
+  deferred: (m) => `有新版本，${m ?? "有操作在进行"}，结束后再更新`,
+  failed: (m) => `检查失败：${m ?? "未知原因"}`,
+  checking: () => "正在检查",
+};
+
+/** status 里自动更新那一行：运行中的网关说了算（它知道自己能不能换掉自己），没应答时看 plist 里的参数。 */
+function autoUpdateLine(args: string[], u: HealthUpdate | undefined): string {
+  if (autoUpdateOff(args)) return "  自动更新：关（droidpier start --no-auto-update）";
+  if (!u) return "  自动更新：开";
+  if (!u.auto) return "  自动更新：关（不是安装命令装的程序，不自动更新）";
+  const last = u.last ? `（上次检查：${localTime(u.last.at)}，${(RESULT[u.last.state] ?? (() => u.last!.state))(u.last.message)}）` : "（还没检查过）";
+  return `  自动更新：开${last}`;
 }
 
 /** 停掉后台服务并删掉 plist：开机也不再启动，droidpier start 重新打开。 */
@@ -278,6 +305,7 @@ export async function serviceStatus(d: ServiceDeps): Promise<number> {
     d.log(`  pid：${s.pid}`);
     d.log(`  端口：${port}${h ? "" : "（没有应答，可能还在启动）"}`);
     if (h?.version) d.log(`  版本：${h.version}`);
+    d.log(autoUpdateLine(args, h?.update));
     d.log(`  页面：${buildPageUrl(args, port)}`);
     d.log(`  日志：${p.log}`);
     return 0;
@@ -353,7 +381,7 @@ export function realServiceDeps(label: string): ServiceDeps {
     holder: (port) => portHolder(port),
     health: async (port) => {
       const h = await probePort(port, 1000);
-      return h.kind === "droidpier" ? { version: h.version, service: h.service === true, pid: h.pid ?? null } : null;
+      return h.kind === "droidpier" ? { version: h.version, service: h.service === true, pid: h.pid ?? null, ...(h.update ? { update: h.update } : {}) } : null;
     },
     open: (url) => openBrowser(url, (e) => console.log(`打开浏览器失败：${e.message}`)),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
