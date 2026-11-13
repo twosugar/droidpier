@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import {
-  checkPending, confirmStable, createAutoUpdater, downloadBase, installLayout, newerNotice, remoteNewer, updateOnce,
+  checkPending, cleanStaleWork, confirmStable, createAutoUpdater, downloadBase, firstWithin, installLayout, newerNotice, remoteNewer, updateOnce,
   DOWNLOAD_BASE, NEWER_LINE, UPDATE_PUBLIC_KEY, type UpdaterDeps,
 } from "../src/updater.ts";
 import { signManifest } from "../../scripts/sign-update.ts";
@@ -113,8 +113,16 @@ const unchanged = (f: ReturnType<typeof fake>) => {
 test("updateOnce：清单里的版本和装过的一样（sha256 相同）时不下载、不动可执行文件", async () => {
   const f = fake({ remote: manifest({ sha256: OLD }) });
   assert.deepEqual(await updateOnce(f.d), { kind: "latest" });
-  assert.deepEqual(f.urls, [MANIFEST, `${MANIFEST}.sig`]);
+  assert.deepEqual(f.urls, [MANIFEST]);
   unchanged(f);
+});
+
+test("updateOnce：清单和装过的一样时，没签名也报已是最新（什么都不执行，不算失败、不退避）", async () => {
+  for (const sig of [null, "garbage"]) {
+    const f = fake({ remote: manifest({ sha256: OLD }), sig });
+    assert.deepEqual(await updateOnce(f.d), { kind: "latest" });
+    unchanged(f);
+  }
 });
 
 test("updateOnce：有签名对、版本更新的新版本时下载、先校验再解压、验过新程序，留一份旧的再换上", async () => {
@@ -247,6 +255,45 @@ test("checkPending：刚换上新版本后每次启动加一，超过 3 次就�
   assert.equal(f.files.has(PENDING), false);
   // 退回后不会再换上同一个坏版本
   assert.deepEqual(await updateOnce(f.d), { kind: "latest" });
+});
+
+test("checkPending：第一次装（没有旧 stamp）的退回时删掉 stamp，安装命令会重新下载", async () => {
+  const f = fake({ stamp: null });
+  await updateOnce(f.d);
+  assert.equal(f.files.has(`${STAMP}.prev`), false);
+  for (let i = 0; i < 3; i++) await checkPending(f.d);
+  assert.equal(await checkPending(f.d), "rolled-back");
+  assert.equal(f.files.get(BIN), "old-binary");
+  assert.equal(f.files.has(STAMP), false);
+  assert.equal(f.files.get(BAD)?.trim(), NEW);
+});
+
+test("cleanStaleWork：删掉可执行文件旁边超过一小时的 .droidpier-update-* 临时目录，不碰新的和别的文件", async () => {
+  const f = fake();
+  const now = 10 * 3600_000;
+  const ages: Record<string, number> = { ".droidpier-update-old": now - 2 * 3600_000, ".droidpier-update-new": now - 60_000, "droidpier": now - 5 * 3600_000, "droidpier.prev": now - 5 * 3600_000 };
+  const removed: string[] = [];
+  await cleanStaleWork({
+    bin: BIN,
+    now: () => now,
+    readdir: async () => Object.keys(ages),
+    mtimeMs: async (p) => ages[p.split("/").pop()!] ?? null,
+    rm: async (p) => void removed.push(p),
+    log: () => {},
+  });
+  assert.deepEqual(removed, ["/Users/someone/.local/bin/.droidpier-update-old"]);
+  void f;
+});
+
+test("firstWithin：第一次检查超过时限就先返回 null，检查在后台接着跑", async () => {
+  let release: (v: { state: "latest" }) => void = () => {};
+  const slow = new Promise<{ state: "latest" }>((r) => (release = r));
+  let fire: () => void = () => {};
+  const r = firstWithin(slow, 10_000, (fn) => ((fire = fn), () => {}));
+  fire();
+  assert.equal(await r, null);
+  release({ state: "latest" });
+  assert.deepEqual(await firstWithin(Promise.resolve({ state: "latest" as const }), 10_000, () => () => {}), { state: "latest" });
 });
 
 test("checkPending / confirmStable：新版本稳定运行后删掉计数，之后的重启不算", async () => {
@@ -383,6 +430,26 @@ test("createAutoUpdater：页面触发的检查一分钟最多一次，期间返
   release();
   await d;
   assert.equal(runs, 2);
+});
+
+test("createAutoUpdater：stop 中止进行中的检查（下载）并等它收拾完", async () => {
+  const c = clock();
+  let aborted = false;
+  let cleaned = false;
+  let fail: (e: Error) => void = () => {};
+  const u = createAutoUpdater({
+    check: () => new Promise((_, rej) => (fail = rej)).finally(() => (cleaned = true)) as Promise<never>,
+    abort: () => {
+      aborted = true;
+      fail(new Error("aborted"));
+    },
+    now: c.now, setTimer: c.setTimer, random: () => 0, intervalMs: 1000, jitterMs: 0, pageGapMs: 0,
+  });
+  void u.start();
+  await u.stop();
+  assert.equal(aborted, true);
+  assert.equal(cleaned, true);
+  assert.equal(c.pending(), 0);
 });
 
 test("createAutoUpdater：检查本身抛错时记成 failed（不带原始错误），定时检查继续", async () => {

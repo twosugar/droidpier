@@ -25,7 +25,7 @@ import { checkPortFirst, explainBusyPort } from "./already-running.ts";
 import { cleanStaleUploads } from "./upload-temp.ts";
 import { realRotateIo, realServiceDeps, rotateLog, SERVICE_LABEL, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
 import { tmpdir } from "node:os";
-import { checkPending, confirmStable, createAutoUpdater, DOWNLOAD_BASE, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
+import { checkPending, cleanStaleWork, confirmStable, createAutoUpdater, firstWithin, realCleanDeps, DOWNLOAD_BASE, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
 
 // scripts/build-binary.ts 打包时把 DROIDPIER_VERSION 替换成构建时间；直接用源码跑时没有
 declare const DROIDPIER_VERSION: string | undefined;
@@ -83,6 +83,7 @@ const updaterDeps = layout
   : null;
 // 刚换上的新版本：数启动次数，起不来就换回旧版本
 if (service && updaterDeps && (await checkPending(updaterDeps)) === "rolled-back") process.exit(RESTART_EXIT_CODE);
+if (service && layout) await cleanStaleWork(realCleanDeps({ bin: layout.bin, log: (s) => console.log(s) }));
 // 默认打开公网页面；--local 改为打开本机页面；--public 是兼容别名，不改行为（见 gateway/src/page-url.ts）
 
 /** 端口被占时打印判断、需要时打开页面，然后退出。后台服务一律按正常退出，launchd 不会每 10 秒重试一次。 */
@@ -111,6 +112,7 @@ const updater = updaterDeps && "base" in dl ? createAutoUpdater({
         return toReport(r);
       }
     : newerNotice(updaterDeps),
+  abort: () => updaterDeps.abort?.(),
   now: () => Date.now(),
   setTimer: (fn, ms) => {
     const t = setTimeout(fn, ms);
@@ -122,9 +124,15 @@ const updater = updaterDeps && "base" in dl ? createAutoUpdater({
   pageGapMs: 60_000,
 }) : null;
 // 尽早查一次（在连模拟器、查 SDK 之前）：哪个版本在后面的启动步骤里崩溃，下载站上的修复版本也能换上
+// 最多等 10 秒：连不上（丢包）或下载慢时先把网关起起来，droidpier start 等的是网关应答；检查在后台接着做，
+// 换上了新版本就在网关起来后重启（见下面 restart）。启动更后面才崩溃的版本靠 checkPending 换回
 if (updater && service) {
-  await updater.start();
+  const first = await firstWithin(updater.start(), 10_000, (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  });
   if (updatedEarly) process.exit(RESTART_EXIT_CODE);
+  if (first === null) console.log("检查更新超过 10 秒，先启动网关，检查在后台接着做");
 } else if (updater) void updater.start();
 
 let lastNote = "";
@@ -232,7 +240,8 @@ if (!noOpen) openBrowser(pageUrl, (e) => console.log(`打开浏览器失败：${
 // 收到退出信号和自动更新后重启共用一次清理
 let cleaning: Promise<void> | null = null;
 const cleanup = () => (cleaning ??= (async () => {
-  updater?.stop();
+  // 中止进行中的下载，等它删掉临时目录
+  await updater?.stop();
   // 正在进行的下载和解压不能留在网关后面
   installer.stop();
   // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
@@ -253,6 +262,8 @@ function restart() {
   // 让 restarting 先发到页面
   setTimeout(() => void restartNow(), 300);
 }
+// 网关起来之前后台的第一次检查已经换上了新版本
+if (updatedEarly) restart();
 // 清理超时被强制退出时也不留下卡住的 adb 进程
 process.on("exit", killAdbChildren);
 process.on("SIGINT", onSignal);

@@ -19,7 +19,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 
 这条命令第一次运行时安装，有新版时更新，然后用 `droidpier start` 在后台启动（当前用户的 LaunchAgent `dev.devpier.droidpier`）：关闭终端不影响，开机后自动启动，已在运行时重启它换上新版本。停止：`droidpier stop`（开机也不再启动）；查看状态：`droidpier status`；日志：`droidpier logs`（`~/Library/Logs/Droidpier/droidpier.log`）。参数原样传给 `droidpier start` 并存进后台服务：`curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7306`；只装不启动：`curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_NO_START=1 sh`；像以前一样在这个终端里前台运行：`curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh`。
 
-后台服务会自己更新（`gateway/src/updater.ts`）：启动时（在连模拟器、查 SDK 之前）和之后大约每 30 分钟取一次 `/download/droidpier-darwin-arm64.update.json` 和它的签名 `.update.json.sig`，签名验过、版本比自己新、sha256 和 `~/.local/share/droidpier/installed.sha256` 不一样，才下载压缩包、先校验 sha256 再解压、验过新程序报的版本就是清单里的版本（`--version`），把旧的留成 `~/.local/bin/droidpier.prev`，原子地换掉 `~/.local/bin/droidpier`，然后以退出码 75 退出，launchd 拉起新版本。新版本连续启动 3 次都没撑过 60 秒，就换回 `.prev` 和旧的 stamp，把它的 sha256 记进 `update-bad`，不再换上它。正在装 SDK、开机、删设备、重启模拟器或传文件时推迟；失败后检查间隔加倍（最多 8 倍）。所以部署了签过名的新网关下载包后，开着后台服务的用户大约半小时内都会换上；页面发现网关的功能级别（`shared/protocol.ts` 的 `GATEWAY_LEVEL`）比自己低时会让它马上查一次。关掉：`droidpier start --no-auto-update`。前台运行的 `droidpier` 不换自己，只打印一行提示。
+后台服务会自己更新（`gateway/src/updater.ts`）：启动时（在连模拟器、查 SDK 之前；最多等 10 秒，超时先启动网关，检查在后台接着做，换上新版本后再重启）和之后大约每 30 分钟取一次 `/download/droidpier-darwin-arm64.update.json` 和它的签名 `.update.json.sig`，清单的 sha256 和装着的一样就算已是最新（不看签名，什么都不执行）；否则签名验过、版本比自己新、sha256 和 `~/.local/share/droidpier/installed.sha256` 不一样，才下载压缩包、先校验 sha256 再解压、验过新程序报的版本就是清单里的版本（`--version`），把旧的留成 `~/.local/bin/droidpier.prev`，原子地换掉 `~/.local/bin/droidpier`，然后以退出码 75 退出，launchd 拉起新版本。新版本连续启动 3 次都没撑过 60 秒，就换回 `.prev` 和旧的 stamp，把它的 sha256 记进 `update-bad`，不再换上它。正在装 SDK、开机、删设备、重启模拟器或传文件时推迟；失败后检查间隔加倍（最多 8 倍）。所以部署了签过名的新网关下载包后，开着后台服务的用户大约半小时内都会换上；页面发现网关的功能级别（`shared/protocol.ts` 的 `GATEWAY_LEVEL`）比自己低时会让它马上查一次。关掉：`droidpier start --no-auto-update`。前台运行的 `droidpier` 不换自己，只打印一行提示。
 
 ### 更新的信任模型
 
@@ -30,7 +30,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 | 防下载站被换 | 不防：用户自己决定运行这条命令 | 防：没有私钥签不出能验过的清单 |
 | 防换回旧版本 | 不防 | 防：只换比正在运行的新的版本，新程序报的版本必须和清单一致 |
 
-签名私钥只在仓库密钥 `DROIDPIER_UPDATE_SIGNING_KEY` 里（PEM，ed25519），不进仓库。`.github/workflows/pages.yml` 里只有“给网关更新清单签名”这一步拿得到它：写进 0600 的临时文件，签完就删；这一步只在部署时（不在 PR 上）、且重建了网关下载包时运行，和 Cloudflare 的部署凭据不在同一步。没配这个密钥时照常发布，但没有 `.sig`，后台网关不会更新到这个版本（日志里是 `unsigned`），用户要运行安装命令。本地手动签名：`node scripts/sign-update.ts <私钥.pem> dist/droidpier-darwin-arm64.update.json`。`build-pages.ts` 会用网关里的公钥验部署目录里的签名，私钥和公钥不是一对就不让部署。换密钥：生成新的一对，公钥写进 `UPDATE_PUBLIC_KEY`、私钥换进密钥；已经装好的旧网关只认旧公钥，要靠用户运行一次安装命令换上带新公钥的版本。
+签名私钥只在仓库密钥 `DROIDPIER_UPDATE_SIGNING_KEY` 里（PEM，ed25519），不进仓库。`.github/workflows/pages.yml` 里只有“给网关更新清单签名”这一步拿得到它：写进 0600 的临时文件，签完就删；签名脚本在 `env -i` 的干净环境里跑。这一步只在从 `main` 部署时（不在 PR 上，也不在别的分支上手动运行时）、且重建了网关下载包时运行，和 Cloudflare 的部署凭据不在同一步。沿用线上下载包时，线上的 `.sig` 只有 404 才不带，别的错误让任务失败。没配这个密钥时照常发布，但没有 `.sig`，后台网关不会更新到这个版本（日志里是 `unsigned`），用户要运行安装命令。本地手动签名：`node scripts/sign-update.ts <私钥.pem> dist/droidpier-darwin-arm64.update.json`。`build-pages.ts` 会用网关里的公钥验部署目录里的签名，私钥和公钥不是一对就不让部署。换密钥：生成新的一对，公钥写进 `UPDATE_PUBLIC_KEY`、私钥换进密钥；已经装好的旧网关只认旧公钥，要靠用户运行一次安装命令换上带新公钥的版本。
 
 下载包里的可执行文件按 LaunchAgent 的 label 重新 ad-hoc 签名（`scripts/build-binary.ts`，标识符 `dev.devpier.droidpier`），系统设置的“允许在后台”里不会显示成 `a.out`。
 

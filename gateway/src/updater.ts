@@ -6,7 +6,7 @@
 // install.sh 只校验同域的 sha256（防损坏），自动更新另外要签名（防下载站被换）：见 docs/deploy.md。
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
-import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -74,6 +74,8 @@ export type UpdaterDeps = {
   /** 有不能被重启打断的操作时返回原因（装 SDK、开机、删设备……），否则 null。 */
   busy(): string | null;
   log(s: string): void;
+  /** 中止进行中的下载（网关退出时）；之后 busy() 报“网关正在退出”，不再换文件。 */
+  abort?(): void;
 };
 
 class UpdateError extends Error {
@@ -148,8 +150,14 @@ export async function remoteNewer(d: Pick<UpdaterDeps, "base" | "bin" | "stamp" 
   const url = `${d.base}/${NAME}.update.json`;
   const bytes = await d.getSmall(url, MANIFEST_MAX);
   if (!bytes) throw new UpdateError("manifest", "下载站上没有更新清单");
+  // 和装着的是同一个包：不下载、不执行任何东西，签名不用看。没签名的发布不会让已是最新的网关报失败、退避
+  const installed = (await d.readFile(d.stamp))?.trim();
+  try {
+    if (installed && (JSON.parse(bytes.toString("utf8")) as { sha256?: unknown })?.sha256 === installed) return null;
+  } catch {
+    // 不是 JSON：下面 readManifest 报 manifest
+  }
   const m = readManifest(bytes, await d.getSmall(`${url}.sig`, SIG_MAX), d.publicKey);
-  if (m.sha256 === (await d.readFile(d.stamp))?.trim()) return null;
   if (m.version <= d.version) {
     if (m.version < d.version) d.log(`下载站上的版本 ${m.version} 比正在运行的 ${d.version} 旧，不换`);
     return null;
@@ -259,10 +267,38 @@ export async function checkPending(d: Pick<UpdaterDeps, "bin" | "stamp" | "readF
   }
   const bad = (await d.readFile(d.stamp))?.trim();
   await d.rename(f.prev, d.bin);
+  // 第一次装时没有旧 stamp：删掉新的，安装命令下次会重新下载
   if ((await d.readFile(f.stampPrev)) !== null) await d.rename(f.stampPrev, d.stamp);
+  else await d.rm(d.stamp);
   if (bad) await d.writeFile(f.bad, `${bad}\n`);
   d.log(`新版本启动了 ${MAX_PENDING_STARTS} 次都没能稳定运行，已换回旧版本，重启网关`);
   return "rolled-back";
+}
+
+/** 删掉可执行文件旁边超过一小时的 .droidpier-update-* 临时目录（上次更新时网关被杀，没来得及删）。 */
+export async function cleanStaleWork(d: {
+  bin: string; now(): number; readdir(dir: string): Promise<string[]>; mtimeMs(path: string): Promise<number | null>; rm(path: string): Promise<void>; log(s: string): void;
+}): Promise<void> {
+  const dir = dirname(d.bin);
+  for (const name of await d.readdir(dir).catch(() => [] as string[])) {
+    if (!name.startsWith(".droidpier-update-")) continue;
+    const p = join(dir, name);
+    const t = await d.mtimeMs(p);
+    if (t === null || d.now() - t < 3600_000) continue;
+    await d.rm(p).catch(() => {});
+    d.log(`删掉上次没删的更新临时目录 ${name}`);
+  }
+}
+
+/** 等第一次检查最多 ms 毫秒：超时返回 null，检查在后台接着跑。 */
+export function firstWithin<T>(first: Promise<T>, ms: number, setTimer: (fn: () => void, ms: number) => () => void): Promise<T | null> {
+  return new Promise((res) => {
+    const cancel = setTimer(() => res(null), ms);
+    void first.then((v) => {
+      cancel();
+      res(v);
+    });
+  });
 }
 
 /** 新版本稳定运行了一阵：不再算它的启动次数。 */
@@ -299,6 +335,8 @@ export const toReport = (r: CheckResult): UpdateReport =>
  */
 export function createAutoUpdater(o: {
   check(): Promise<UpdateReport>;
+  /** 中止进行中的检查（下载）；stop 时调用。 */
+  abort?(): void;
   now(): number;
   /** 返回取消函数。 */
   setTimer(fn: () => void, ms: number): () => void;
@@ -340,18 +378,31 @@ export function createAutoUpdater(o: {
       return run();
     },
     last: () => last,
-    stop() {
+    /** 停掉定时检查，中止进行中的下载，等它删完临时目录。 */
+    stop(): Promise<void> {
       stopped = true;
       cancel?.();
+      o.abort?.();
+      return running ? running.then(() => {}) : Promise.resolve();
     },
   };
 }
 
+/** cleanStaleWork 的真实依赖。 */
+export const realCleanDeps = (o: { bin: string; log(s: string): void }) => ({
+  ...o,
+  now: () => Date.now(),
+  readdir: (dir: string) => readdir(dir),
+  mtimeMs: (p: string) => stat(p).then((s) => s.mtimeMs, () => null),
+  rm: (p: string) => rm(p, { recursive: true, force: true }),
+});
+
 /** 真实的依赖。取文件跟随重定向，但最后的地址必须和 base 同协议、同主机。 */
 export function realUpdaterDeps(o: { base: string; bin: string; stamp: string; version: string; busy(): string | null; log(s: string): void }): UpdaterDeps {
   const want = new URL(o.base);
+  const stopping = new AbortController();
   const get = async (url: string, timeoutMs: number) => {
-    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
+    const r = await fetch(url, { signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stopping.signal]), redirect: "follow" });
     const got = new URL(r.url || url);
     if (got.protocol !== want.protocol || got.host !== want.host) throw new Error(`下载地址被重定向到了别的地方：${got.origin}`);
     return r;
@@ -367,6 +418,8 @@ export function realUpdaterDeps(o: { base: string; bin: string; stamp: string; v
   };
   return {
     ...o,
+    busy: () => (stopping.signal.aborted ? "网关正在退出" : o.busy()),
+    abort: () => stopping.abort(new Error("网关正在退出")),
     publicKey: UPDATE_PUBLIC_KEY,
     getSmall: async (url, max) => {
       const r = await get(url, 10_000);
@@ -380,7 +433,7 @@ export function realUpdaterDeps(o: { base: string; bin: string; stamp: string; v
     download: async (url, dest) => {
       const r = await get(url, 10 * 60_000);
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}：${url}`);
-      await pipeline(limited(r.body, MAX_BYTES), createWriteStream(dest, { flags: "wx", mode: 0o600 }));
+      await pipeline(limited(r.body, MAX_BYTES), createWriteStream(dest, { flags: "wx", mode: 0o600 }), { signal: stopping.signal });
     },
     sha256File: async (p) => {
       const h = createHash("sha256");
