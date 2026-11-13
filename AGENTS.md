@@ -82,7 +82,9 @@ The gateway serves its own copy of the page (`--local`, `http://127.0.0.1:<port>
 ## Rules
 
 - **The page and the gateway are released separately.** The public page updates when it is deployed; each user's
-  gateway updates when they rerun the install script. The page sends its `PROTOCOL_VERSION` in `hello`; the gateway
+  gateway updates when they rerun the install script, and a background gateway also updates itself within about 30
+  minutes (`gateway/src/updater.ts`). A new message an older gateway would ignore bumps `GATEWAY_LEVEL`
+  (`shared/protocol.ts`): the page compares it with the gateway's and asks an outdated gateway to update. The page sends its `PROTOCOL_VERSION` in `hello`; the gateway
   checks it with `compatibility()` and, on a mismatch, answers with an error saying whether the gateway or the page is
   out of date (`gateway/src/server.ts`). A change that an older page or an
   older gateway cannot handle bumps `PROTOCOL_VERSION`. Any difference in the version makes the two refuse to work

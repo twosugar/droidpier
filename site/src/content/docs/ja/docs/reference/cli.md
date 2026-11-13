@@ -1,12 +1,12 @@
 ---
 title: コマンドライン
 description: Droidpier ゲートウェイコマンドのオプションと環境変数。
-sourceHash: 2510f26cb9be
+sourceHash: 90409d583761
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | コマンド | 動作 |
 |---|---|
-| `droidpier start` | ゲートウェイを macOS の LaunchAgent としてバックグラウンドで動かします。ターミナルを閉じても動き続け、ログイン時に起動し、クラッシュしたら再起動します。すでに動いている場合は再起動します。指定したオプションは保存され、オプションなしなら保存済みのものを使います。`--no-open` を付けない限り、ページを 1 回開きます。 |
+| `droidpier start` | ゲートウェイを macOS の LaunchAgent としてバックグラウンドで動かします。ターミナルを閉じても動き続け、ログイン時に起動し、クラッシュしたら再起動します。すでに動いている場合は再起動します。指定したオプションは保存され、オプションなしなら保存済みのものを使います。`--no-open` を付けない限り、ページを 1 回開きます。 また、自動で最新に保たれます。[自動更新](#automatic-updates)を参照してください。 |
 | `droidpier stop` | バックグラウンドのゲートウェイを止めます。ログイン時にも起動しなくなります。 |
-| `droidpier status` | バックグラウンドのゲートウェイが動いているかを、プロセス ID、ポート、バージョン、ログファイルとともに表示します。 |
+| `droidpier status` | バックグラウンドのゲートウェイが動いているかを、プロセス ID、ポート、バージョン、ログファイルとともに表示します。 自動更新が有効かどうかと、前回のチェック結果も表示します。 |
 | `droidpier logs` | ログファイルのパスと最後の 50 行を表示します。 |
 | `droidpier` | `Ctrl+C` を押すまで、このターミナルウィンドウでゲートウェイを動かします。 |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | オフ | `droid.devpier.dev` 上の公開ページではなく、ゲートウェイ自身が提供するページ `http://127.0.0.1:<port>/app/` を開く。 |
 | `--no-open` | オフ | 起動時にブラウザを開かない。ゲートウェイは引き続きアドレスを表示します。 |
+| `--no-auto-update` | オフ | `droidpier start` で使うと、バックグラウンドのゲートウェイを自動更新しません。ターミナルで使うと、新しいバージョンがあっても 1 行の案内を表示しません。 |
 
 `--no-open` の有無にかかわらず、ページは自動でゲートウェイを見つけます。[初回起動](/ja/docs/getting-started/first-run/#3-open-the-page)を参照してください。
 
@@ -105,6 +106,16 @@ Android SDK のコンポーネントが不足している場合、ゲートウ�
 | インストール済みバージョンのチェックサム | `~/.local/share/droidpier/installed.sha256` |
 | バックグラウンドのゲートウェイの設定 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | バックグラウンドのゲートウェイのログ | `~/Library/Logs/Droidpier/droidpier.log` |
+
+## 自動更新 {#automatic-updates}
+
+バックグラウンドのゲートウェイは自分を最新に保ちます。起動時と、その後およそ 30 分ごとに、公開されているバージョンのチェックサムとインストール済みバージョンのチェックサム（`~/.local/share/droidpier/installed.sha256`）を比べます。新しいバージョンが公開されていれば `droid.devpier.dev` からダウンロードし、展開する前にチェックサムを確かめ、`~/.local/bin/droidpier` を置き換えて再起動します。開いているページは自動で再接続します。SDK のインストール、デバイスの起動、デバイスの削除、エミュレーターの再起動、ファイルの転送が進行中の間は待ちます。ダウンロードに失敗した場合やチェックサムが一致しない場合は、今のバージョンのまま動き続け、後でもう一度試します。各ステップはログに記録されます（`droidpier logs`）。
+
+ページがバックグラウンドのゲートウェイのほうが古いと判断すると、すぐにチェックするようゲートウェイに頼み、更新中であることを表示します。
+
+自動更新をオフにするには `droidpier start --no-auto-update` を実行します。オンに戻すには、ほかのオプションを付け、`--no-auto-update` を付けずに `droidpier start` を実行します（例：`droidpier start --port 7300`）。オンかどうかは `droidpier status` で確認できます。
+
+ターミナルのウィンドウで動かしているゲートウェイ（`droidpier`）は自分を置き換えません。新しいバージョンがあると 1 行表示します。`droidpier start` を実行して自動更新されるバックグラウンドのゲートウェイに切り替えるか、インストールコマンドをもう一度実行してください。
 
 ## アンインストール {#uninstall}
 

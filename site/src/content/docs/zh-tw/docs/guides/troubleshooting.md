@@ -1,7 +1,7 @@
 ---
 title: 疑難排解
 description: 解決常見問題——Chrome 封鎖本機網路存取、連接埠被佔用、未找到模擬器、頁面無法連線、版本不符。
-sourceHash: d8eaddc9fa12
+sourceHash: 6efd24d9b5da
 ---
 
 ## Chrome 封鎖了本機網路存取 {#chrome-blocked-local-network-access}
@@ -85,6 +85,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 <!-- verify: phase 3 -->
 - **閘道已過期：** 執行頁面顯示的升級命令。與[安裝命令](/zh-tw/docs/getting-started/install/)相同。
 - **頁面已過期：** 用 Cmd+Shift+R 強制重新整理頁面。
+
+頁面需要比目前執行的閘道更新的版本時，會在畫面上方說明。背景閘道會自己更新，頁面隨後自動重新連線：見[自動更新](/zh-tw/docs/reference/cli/#automatic-updates)。在終端機視窗裡執行的閘道，或關閉了自動更新的閘道不會自己更新：頁面會顯示可複製的安裝指令。如果刪除或重新命名裝置因為閘道太舊而失敗，也請執行安裝指令。
 
 ## 瀏覽器不正確
 

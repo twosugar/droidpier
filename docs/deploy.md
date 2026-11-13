@@ -19,6 +19,12 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 
 这条命令第一次运行时安装，有新版时更新，然后用 `droidpier start` 在后台启动（当前用户的 LaunchAgent `dev.devpier.droidpier`）：关闭终端不影响，开机后自动启动，已在运行时重启它换上新版本。停止：`droidpier stop`（开机也不再启动）；查看状态：`droidpier status`；日志：`droidpier logs`（`~/Library/Logs/Droidpier/droidpier.log`）。参数原样传给 `droidpier start` 并存进后台服务：`curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7306`；只装不启动：`curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_NO_START=1 sh`；像以前一样在这个终端里前台运行：`curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh`。
 
+后台服务会自己更新（`gateway/src/updater.ts`）：启动时和之后大约每 30 分钟取一次 `/download/droidpier-darwin-arm64.tar.xz.sha256`，和 `~/.local/share/droidpier/installed.sha256` 不一样就下载压缩包、先校验 sha256 再解压、验过新程序能跑（`--version`），原子地换掉 `~/.local/bin/droidpier`，然后以退出码 75 退出，launchd 拉起新版本。正在装 SDK、开机、删设备、重启模拟器或传文件时推迟。所以部署了新的网关下载包后，开着后台服务的用户大约半小时内都会换上；页面发现网关的功能级别（`shared/protocol.ts` 的 `GATEWAY_LEVEL`）比自己低时会让它马上查一次。关掉：`droidpier start --no-auto-update`。前台运行的 `droidpier` 不换自己，只打印一行提示。
+
+下载包里的可执行文件按 LaunchAgent 的 label 重新 ad-hoc 签名（`scripts/build-binary.ts`，标识符 `dev.devpier.droidpier`），系统设置的“允许在后台”里不会显示成 `a.out`。
+
+`DROIDPIER_DOWNLOAD` 只给测试用：换下载站（只认 https 和 `http://127.0.0.1`），安装脚本和自动更新都认；`droidpier start` 只在测试 label 下把它写进 plist。
+
 `DROIDPIER_SERVICE_LABEL` 只给测试用：换一个 label（plist 和日志文件名跟着换），在本机试后台服务时不碰正式的 `dev.devpier.droidpier`。
 
 在 Chrome 或 Edge 里打开 https://droid.devpier.dev/app/，Chrome 弹出访问本地网络的权限框时点"允许"。

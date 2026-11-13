@@ -25,7 +25,7 @@ Requirements: an Apple Silicon Mac, Chrome or Edge.
 curl -fsSL https://droid.devpier.dev/install.sh | sh
 ```
 
-The command installs the gateway the first time, updates it when there is a new version, and then starts it in the background with `droidpier start`. You can close the terminal: the gateway keeps running and starts again when you log in. `droidpier stop` stops it, `droidpier status` shows whether it runs.
+The command installs the gateway the first time, updates it when there is a new version, and then starts it in the background with `droidpier start`. You can close the terminal: the gateway keeps running and starts again when you log in. `droidpier stop` stops it, `droidpier status` shows whether it runs. The background gateway also updates itself: it checks for a new version at start and about every 30 minutes, verifies the download and restarts on it (`droidpier start --no-auto-update` turns this off).
 
 Then open https://droid.devpier.dev/app/ (the gateway opens it for you). The first time, Chrome asks whether the site may access your local network: click **Allow**. An open page connects by itself as soon as the gateway is running.
 

@@ -1,7 +1,7 @@
 ---
 title: Solução de problemas
 description: Corrija problemas comuns - o Chrome bloqueou o acesso à rede local, porta já em uso, nenhum emulador encontrado, a página não se conecta, versões incompatíveis.
-sourceHash: d8eaddc9fa12
+sourceHash: 6efd24d9b5da
 ---
 
 ## O Chrome bloqueou o acesso à rede local {#chrome-blocked-local-network-access}
@@ -85,6 +85,8 @@ A página procura o gateway uma vez por segundo e se conecta assim que ele respo
 <!-- verify: phase 3 -->
 - **Gateway desatualizado:** execute o comando de atualização que a página mostra. É o mesmo [comando de instalação](/pt-br/docs/getting-started/install/).
 - **Página desatualizada:** force o recarregamento da página com Cmd+Shift+R.
+
+Quando a página precisa de um gateway mais novo que o que está rodando, ela avisa acima da tela. Um gateway em segundo plano se atualiza sozinho e a página se reconecta: veja [Atualizações automáticas](/pt-br/docs/reference/cli/#automatic-updates). Um gateway rodando em uma janela do Terminal, ou com as atualizações automáticas desativadas, não faz isso: a página mostra o comando de instalação para copiar. Se excluir ou renomear um dispositivo falhar porque o gateway é antigo demais, execute também o comando de instalação.
 
 ## Navegador errado
 

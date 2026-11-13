@@ -1,12 +1,12 @@
 ---
 title: Ligne de commande
 description: Options et variables d’environnement de la commande de la passerelle Droidpier.
-sourceHash: 2510f26cb9be
+sourceHash: 90409d583761
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | Commande | Effet |
 |---|---|
-| `droidpier start` | Fait tourner la passerelle en arrière-plan, comme LaunchAgent macOS. Elle continue après la fermeture de Terminal, démarre à l’ouverture de session et redémarre si elle plante. Si elle tourne déjà, elle redémarre. Les options données sont enregistrées ; sans option, les options enregistrées sont conservées. Ouvre la page une fois, sauf avec `--no-open`. |
+| `droidpier start` | Fait tourner la passerelle en arrière-plan, comme LaunchAgent macOS. Elle continue après la fermeture de Terminal, démarre à l’ouverture de session et redémarre si elle plante. Si elle tourne déjà, elle redémarre. Les options données sont enregistrées ; sans option, les options enregistrées sont conservées. Ouvre la page une fois, sauf avec `--no-open`. Il se tient aussi à jour tout seul : voir [Mises à jour automatiques](#automatic-updates). |
 | `droidpier stop` | Arrête la passerelle en arrière-plan. Elle ne démarre plus à l’ouverture de session. |
-| `droidpier status` | Indique si la passerelle en arrière-plan tourne, avec son ID de processus, son port, sa version et son fichier journal. |
+| `droidpier status` | Indique si la passerelle en arrière-plan tourne, avec son ID de processus, son port, sa version et son fichier journal. Elle indique aussi si les mises à jour automatiques sont activées, avec le résultat de la dernière vérification. |
 | `droidpier logs` | Affiche le chemin du fichier journal et ses 50 dernières lignes. |
 | `droidpier` | Fait tourner la passerelle dans cette fenêtre Terminal jusqu’à ce que vous appuyiez sur `Ctrl+C`. |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | désactivé | Ouvre la page que la passerelle sert elle-même, `http://127.0.0.1:<port>/app/`, au lieu de la page publique sur `droid.devpier.dev`. |
 | `--no-open` | désactivé | N’ouvre pas le navigateur au démarrage. La passerelle affiche quand même l’adresse. |
+| `--no-auto-update` | désactivé | Avec `droidpier start` : ne met pas à jour automatiquement la passerelle en arrière-plan. Dans le Terminal : n’affiche pas de ligne quand une nouvelle version existe. |
 
 Avec ou sans `--no-open`, la page trouve la passerelle d’elle-même. Voir [Premier lancement](/fr/docs/getting-started/first-run/#3-open-the-page).
 
@@ -105,6 +106,16 @@ Quand des parties de l’Android SDK manquent, la passerelle liste chacune avec 
 | Somme de contrôle de la version installée | `~/.local/share/droidpier/installed.sha256` |
 | Réglages de la passerelle en arrière-plan | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Journal de la passerelle en arrière-plan | `~/Library/Logs/Droidpier/droidpier.log` |
+
+## Mises à jour automatiques {#automatic-updates}
+
+La passerelle en arrière-plan se tient à jour toute seule. Au démarrage, puis environ toutes les 30 minutes, elle compare la somme de contrôle de la version publiée avec celle de la version installée (`~/.local/share/droidpier/installed.sha256`). Quand une nouvelle version est publiée, elle la télécharge depuis `droid.devpier.dev`, vérifie la somme de contrôle avant de la décompresser, remplace `~/.local/bin/droidpier` et redémarre. Les pages ouvertes se reconnectent d’elles-mêmes. Elle attend tant qu’une installation du SDK, le démarrage d’un appareil, la suppression d’un appareil, le redémarrage de l’émulateur ou un transfert de fichier est en cours. Si le téléchargement échoue ou si la somme de contrôle ne correspond pas, elle continue avec la version que vous avez et réessaie plus tard. Chaque étape est écrite dans le journal (`droidpier logs`).
+
+Quand la page constate que la passerelle en arrière-plan est plus ancienne qu’elle, elle lui demande de vérifier tout de suite et indique que la passerelle se met à jour.
+
+Pour désactiver les mises à jour automatiques, lancez `droidpier start --no-auto-update`. Pour les réactiver, lancez `droidpier start` avec vos autres options et sans `--no-auto-update`, par exemple `droidpier start --port 7300`. `droidpier status` indique si elles sont activées.
+
+Une passerelle lancée dans une fenêtre du Terminal (`droidpier`) ne se remplace pas elle-même. Quand une nouvelle version existe, elle affiche une ligne : lancez `droidpier start` pour passer à la passerelle en arrière-plan, qui se met à jour toute seule, ou relancez la commande d’installation.
 
 ## Désinstaller {#uninstall}
 

@@ -1,7 +1,7 @@
 ---
 title: 故障排除
 description: 解决常见问题——Chrome 阻止本地网络访问、端口被占用、未找到模拟器、页面无法连接、版本不匹配。
-sourceHash: d8eaddc9fa12
+sourceHash: 6efd24d9b5da
 ---
 
 ## Chrome 阻止了本地网络访问 {#chrome-blocked-local-network-access}
@@ -85,6 +85,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 <!-- verify: phase 3 -->
 - **网关已过期：** 运行页面显示的升级命令。与[安装命令](/zh-cn/docs/getting-started/install/)相同。
 - **页面已过期：** 用 Cmd+Shift+R 强制刷新页面。
+
+页面需要比当前运行的网关更新的版本时，会在画面上方说明。后台网关会自己更新，页面随后自动重连：见[自动更新](/zh-cn/docs/reference/cli/#automatic-updates)。在终端窗口里运行的网关，或关闭了自动更新的网关不会自己更新：页面会显示可复制的安装命令。如果删除或重命名设备因为网关太旧而失败，也请运行安装命令。
 
 ## 浏览器不正确
 

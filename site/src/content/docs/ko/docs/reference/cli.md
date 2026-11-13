@@ -1,12 +1,12 @@
 ---
 title: 명령줄
 description: Droidpier 게이트웨이 명령의 옵션과 환경 변수.
-sourceHash: 2510f26cb9be
+sourceHash: 90409d583761
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | 명령 | 동작 |
 |---|---|
-| `droidpier start` | 게이트웨이를 macOS LaunchAgent로 백그라운드에서 실행합니다. 터미널을 닫아도 계속 실행되고, 로그인할 때 시작되며, 비정상 종료되면 다시 시작됩니다. 이미 실행 중이면 다시 시작합니다. 지정한 옵션을 저장하고, 옵션이 없으면 저장된 옵션을 씁니다. `--no-open`을 주지 않으면 페이지를 한 번 엽니다. |
+| `droidpier start` | 게이트웨이를 macOS LaunchAgent로 백그라운드에서 실행합니다. 터미널을 닫아도 계속 실행되고, 로그인할 때 시작되며, 비정상 종료되면 다시 시작됩니다. 이미 실행 중이면 다시 시작합니다. 지정한 옵션을 저장하고, 옵션이 없으면 저장된 옵션을 씁니다. `--no-open`을 주지 않으면 페이지를 한 번 엽니다. 또한 스스로 최신 상태를 유지합니다. [자동 업데이트](#automatic-updates)를 참고하세요. |
 | `droidpier stop` | 백그라운드 게이트웨이를 중지합니다. 로그인할 때도 더 이상 시작되지 않습니다. |
-| `droidpier status` | 백그라운드 게이트웨이가 실행 중인지 프로세스 ID, 포트, 버전, 로그 파일과 함께 보여 줍니다. |
+| `droidpier status` | 백그라운드 게이트웨이가 실행 중인지 프로세스 ID, 포트, 버전, 로그 파일과 함께 보여 줍니다. 자동 업데이트가 켜져 있는지와 마지막 확인 결과도 보여 줍니다. |
 | `droidpier logs` | 로그 파일 경로와 마지막 50줄을 출력합니다. |
 | `droidpier` | `Ctrl+C`를 누를 때까지 이 터미널 창에서 게이트웨이를 실행합니다. |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | 꺼짐 | `droid.devpier.dev`의 공개 페이지 대신 게이트웨이가 직접 제공하는 페이지(`http://127.0.0.1:<port>/app/`)를 엽니다. |
 | `--no-open` | 꺼짐 | 시작할 때 브라우저를 열지 않습니다. 게이트웨이는 주소를 여전히 출력합니다. |
+| `--no-auto-update` | 꺼짐 | `droidpier start`에서: 백그라운드 게이트웨이를 자동으로 업데이트하지 않습니다. 터미널에서: 새 버전이 있어도 안내 한 줄을 출력하지 않습니다. |
 
 `--no-open`을 지정하든 지정하지 않든, 페이지는 알아서 게이트웨이를 찾습니다. [첫 실행](/ko/docs/getting-started/first-run/#3-open-the-page)을 참고하세요.
 
@@ -105,6 +106,16 @@ Android SDK 구성 요소가 빠져 있으면 게이트웨이는 항목마다 �
 | 설치된 버전의 체크섬 | `~/.local/share/droidpier/installed.sha256` |
 | 백그라운드 게이트웨이 설정 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | 백그라운드 게이트웨이 로그 | `~/Library/Logs/Droidpier/droidpier.log` |
+
+## 자동 업데이트 {#automatic-updates}
+
+백그라운드 게이트웨이는 스스로 최신 상태를 유지합니다. 시작할 때와 그 뒤 약 30분마다 게시된 버전의 체크섬을 설치된 버전의 체크섬(`~/.local/share/droidpier/installed.sha256`)과 비교합니다. 새 버전이 게시되면 `droid.devpier.dev`에서 내려받아 압축을 풀기 전에 체크섬을 확인하고, `~/.local/bin/droidpier`를 교체한 뒤 다시 시작합니다. 열려 있는 페이지는 알아서 다시 연결됩니다. SDK 설치, 기기 시작, 기기 삭제, 에뮬레이터 재시작, 파일 전송이 진행 중이면 끝날 때까지 기다립니다. 다운로드에 실패하거나 체크섬이 맞지 않으면 지금 버전으로 계속 실행하고 나중에 다시 시도합니다. 각 단계는 로그(`droidpier logs`)에 기록됩니다.
+
+페이지가 백그라운드 게이트웨이가 자신보다 오래된 것을 발견하면 게이트웨이에 바로 확인하도록 요청하고 업데이트 중임을 표시합니다.
+
+자동 업데이트를 끄려면 `droidpier start --no-auto-update`를 실행합니다. 다시 켜려면 다른 옵션과 함께 `--no-auto-update` 없이 `droidpier start`를 실행합니다(예: `droidpier start --port 7300`). 켜져 있는지는 `droidpier status`에서 볼 수 있습니다.
+
+터미널 창에서 실행하는 게이트웨이(`droidpier`)는 스스로를 교체하지 않습니다. 새 버전이 있으면 한 줄을 출력합니다. `droidpier start`를 실행해 스스로 업데이트되는 백그라운드 게이트웨이로 바꾸거나, 설치 명령을 다시 실행하세요.
 
 ## 제거 {#uninstall}
 

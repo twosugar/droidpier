@@ -1,12 +1,12 @@
 ---
 title: Linha de comando
 description: Opções e variáveis de ambiente do comando do gateway Droidpier.
-sourceHash: 2510f26cb9be
+sourceHash: 90409d583761
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | Comando | Efeito |
 |---|---|
-| `droidpier start` | Roda o gateway em segundo plano, como LaunchAgent do macOS. Continua rodando depois que você fecha o Terminal, inicia no login e reinicia se travar. Se já estiver rodando, reinicia. Salva as opções que você passar; sem opções, mantém as salvas. Abre a página uma vez, a menos que você passe `--no-open`. |
+| `droidpier start` | Roda o gateway em segundo plano, como LaunchAgent do macOS. Continua rodando depois que você fecha o Terminal, inicia no login e reinicia se travar. Se já estiver rodando, reinicia. Salva as opções que você passar; sem opções, mantém as salvas. Abre a página uma vez, a menos que você passe `--no-open`. Ele também se mantém atualizado: veja [Atualizações automáticas](#automatic-updates). |
 | `droidpier stop` | Para o gateway em segundo plano. Ele não inicia mais no login. |
-| `droidpier status` | Mostra se o gateway em segundo plano está rodando, com ID do processo, porta, versão e arquivo de log. |
+| `droidpier status` | Mostra se o gateway em segundo plano está rodando, com ID do processo, porta, versão e arquivo de log. Também mostra se as atualizações automáticas estão ativadas e o resultado da última verificação. |
 | `droidpier logs` | Imprime o caminho do arquivo de log e as últimas 50 linhas. |
 | `droidpier` | Roda o gateway nesta janela do Terminal até você pressionar `Ctrl+C`. |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | desativado | Abre a página que o próprio gateway serve, `http://127.0.0.1:<port>/app/`, em vez da página pública em `droid.devpier.dev`. |
 | `--no-open` | desativado | Não abre o navegador ao iniciar. O gateway ainda mostra o endereço. |
+| `--no-auto-update` | desativado | Com `droidpier start`: não atualiza automaticamente o gateway em segundo plano. No Terminal: não mostra aviso quando há uma versão nova. |
 
 Com ou sem `--no-open`, a página encontra o gateway sozinha. Veja [Primeira execução](/pt-br/docs/getting-started/first-run/#3-open-the-page).
 
@@ -105,6 +106,16 @@ Quando faltam partes do Android SDK, o gateway lista cada uma com um comando par
 | Checksum da versão instalada | `~/.local/share/droidpier/installed.sha256` |
 | Configuração do gateway em segundo plano | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Log do gateway em segundo plano | `~/Library/Logs/Droidpier/droidpier.log` |
+
+## Atualizações automáticas {#automatic-updates}
+
+O gateway em segundo plano se mantém atualizado. Ao iniciar, e depois a cada 30 minutos aproximadamente, ele compara o checksum da versão publicada com o da versão instalada (`~/.local/share/droidpier/installed.sha256`). Quando uma versão nova é publicada, ele a baixa de `droid.devpier.dev`, confere o checksum antes de descompactar, substitui `~/.local/bin/droidpier` e reinicia. As páginas abertas se reconectam sozinhas. Ele espera enquanto houver em andamento uma instalação do SDK, a inicialização de um dispositivo, a exclusão de um dispositivo, a reinicialização do emulador ou uma transferência de arquivo. Se o download falhar ou o checksum não bater, ele continua rodando a versão que você tem e tenta de novo mais tarde. Cada etapa fica no log (`droidpier logs`).
+
+Quando a página percebe que o gateway em segundo plano é mais antigo que ela, pede que ele verifique na hora e mostra que o gateway está sendo atualizado.
+
+Para desativar as atualizações automáticas, execute `droidpier start --no-auto-update`. Para ativá-las de novo, execute `droidpier start` com suas outras opções e sem `--no-auto-update`, por exemplo `droidpier start --port 7300`. `droidpier status` mostra se estão ativadas.
+
+Um gateway rodando em uma janela do Terminal (`droidpier`) não se substitui. Quando há uma versão nova, ele mostra uma linha: execute `droidpier start` para passar para o gateway em segundo plano, que se atualiza sozinho, ou execute o comando de instalação de novo.
 
 ## Desinstalar {#uninstall}
 

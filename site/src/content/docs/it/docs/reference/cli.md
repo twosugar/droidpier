@@ -1,12 +1,12 @@
 ---
 title: Riga di comando
 description: Opzioni e variabili d’ambiente del comando del gateway Droidpier.
-sourceHash: 2510f26cb9be
+sourceHash: 90409d583761
 ---
 
 <!-- verify: phase 3 -->
 ```sh
-droidpier start [--port <port>] [--local] [--no-open]
+droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
@@ -15,9 +15,9 @@ droidpier [--port <port>] [--local] [--no-open]
 
 | Comando | Effetto |
 |---|---|
-| `droidpier start` | Esegue il gateway in background, come LaunchAgent di macOS. Continua dopo la chiusura del Terminale, si avvia all’accesso e si riavvia se va in crash. Se è già in esecuzione, lo riavvia. Salva le opzioni indicate; senza opzioni, mantiene quelle salvate. Apre la pagina una volta, a meno di `--no-open`. |
+| `droidpier start` | Esegue il gateway in background, come LaunchAgent di macOS. Continua dopo la chiusura del Terminale, si avvia all’accesso e si riavvia se va in crash. Se è già in esecuzione, lo riavvia. Salva le opzioni indicate; senza opzioni, mantiene quelle salvate. Apre la pagina una volta, a meno di `--no-open`. Inoltre si mantiene aggiornato da solo: vedi [Aggiornamenti automatici](#automatic-updates). |
 | `droidpier stop` | Arresta il gateway in background. Non si avvia più all’accesso. |
-| `droidpier status` | Mostra se il gateway in background è in esecuzione, con ID di processo, porta, versione e file di log. |
+| `droidpier status` | Mostra se il gateway in background è in esecuzione, con ID di processo, porta, versione e file di log. Indica anche se gli aggiornamenti automatici sono attivi, con l’esito dell’ultimo controllo. |
 | `droidpier logs` | Stampa il percorso del file di log e le sue ultime 50 righe. |
 | `droidpier` | Esegue il gateway in questa finestra del Terminale finché non premi `Ctrl+C`. |
 
@@ -54,6 +54,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 |---|---|---|
 | `--local` | disattivato | Apre la pagina servita dal gateway stesso, `http://127.0.0.1:<port>/app/`, invece della pagina pubblica su `droid.devpier.dev`. |
 | `--no-open` | disattivato | Non apre il browser all’avvio. Il gateway stampa comunque l’indirizzo. |
+| `--no-auto-update` | disattivato | Con `droidpier start`: non aggiorna automaticamente il gateway in background. Nel Terminale: non stampa alcuna riga quando esiste una nuova versione. |
 
 Con o senza `--no-open`, la pagina trova il gateway da sola. Vedi [Primo avvio](/it/docs/getting-started/first-run/#3-open-the-page).
 
@@ -105,6 +106,16 @@ Quando mancano parti dell’Android SDK, il gateway elenca ciascuna con un coman
 | Checksum della versione installata | `~/.local/share/droidpier/installed.sha256` |
 | Impostazioni del gateway in background | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Log del gateway in background | `~/Library/Logs/Droidpier/droidpier.log` |
+
+## Aggiornamenti automatici {#automatic-updates}
+
+Il gateway in background si mantiene aggiornato da solo. All’avvio, e poi circa ogni 30 minuti, confronta il checksum della versione pubblicata con quello della versione installata (`~/.local/share/droidpier/installed.sha256`). Quando viene pubblicata una nuova versione, la scarica da `droid.devpier.dev`, verifica il checksum prima di estrarla, sostituisce `~/.local/bin/droidpier` e si riavvia. Le pagine aperte si riconnettono da sole. Aspetta finché è in corso un’installazione dell’SDK, l’avvio di un dispositivo, l’eliminazione di un dispositivo, il riavvio dell’emulatore o un trasferimento di file. Se il download fallisce o il checksum non corrisponde, continua con la versione che hai e riprova più tardi. Ogni passaggio viene scritto nel log (`droidpier logs`).
+
+Quando la pagina vede che il gateway in background è più vecchio di lei, gli chiede di controllare subito e mostra che il gateway si sta aggiornando.
+
+Per disattivare gli aggiornamenti automatici, esegui `droidpier start --no-auto-update`. Per riattivarli, esegui `droidpier start` con le altre opzioni e senza `--no-auto-update`, per esempio `droidpier start --port 7300`. `droidpier status` mostra se sono attivi.
+
+Un gateway eseguito in una finestra del Terminale (`droidpier`) non si sostituisce da solo. Quando esiste una nuova versione stampa una riga: esegui `droidpier start` per passare al gateway in background, che si aggiorna da solo, oppure esegui di nuovo il comando di installazione.
 
 ## Disinstallare {#uninstall}
 
