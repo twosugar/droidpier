@@ -79,6 +79,23 @@ jobs:
         if: steps.binary.outputs.rebuild == 'true'
         run: bun scripts/build-binary.ts
 
+      # 后台网关只换上签名验得过的版本（gateway/src/updater.ts）。私钥只在这一步的环境变量里，写进 0600 的临时文件，
+      # 用完就删，后面的步骤拿不到。没配密钥（或在 PR 上）时不签名：照常发布，后台网关只是不会自动更新到这个版本
+      - name: 给网关更新清单签名
+        if: steps.binary.outputs.rebuild == 'true' && env.DEPLOY == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.DROIDPIER_UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::warning::没有配置 DROIDPIER_UPDATE_SIGNING_KEY：更新清单不签名，后台网关不会自动更新到这个版本"
+            exit 0
+          fi
+          umask 077
+          key="$(mktemp "$RUNNER_TEMP/update-key.XXXXXX")"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          node scripts/sign-update.ts "$key" dist/droidpier-darwin-arm64.update.json
+
       - name: 沿用线上的网关下载包
         if: steps.binary.outputs.rebuild != 'true'
         run: |
@@ -87,6 +104,10 @@ jobs:
           curl -fsSL --retry 3 --proto '=https' -o "$f" "https://droid.devpier.dev/download/$f"
           curl -fsSL --retry 3 --proto '=https' -o "$f.sha256" "https://droid.devpier.dev/download/$f.sha256"
           shasum -a 256 -c "$f.sha256"
+          m=droidpier-darwin-arm64.update.json
+          curl -fsSL --retry 3 --proto '=https' -o "$m" "https://droid.devpier.dev/download/$m"
+          # 线上那份可能没签名（当时没配密钥）：没有就不带，checkPages 验有的那份
+          curl -fsSL --retry 3 --proto '=https' -o "$m.sig" "https://droid.devpier.dev/download/$m.sig" || rm -f "$m.sig"
 
       - name: 构建官网
         working-directory: site

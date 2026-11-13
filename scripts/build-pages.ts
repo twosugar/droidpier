@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { headersFor, parseHeaders } from "./serve-pages.ts";
+import { readManifest, UPDATE_PUBLIC_KEY } from "../gateway/src/updater.ts";
 
 export const DOWNLOAD_NAME = "droidpier-darwin-arm64";
 const DEVTOOLS_ORIGIN = "https://chrome-devtools-frontend.appspot.com";
@@ -28,7 +29,10 @@ export async function buildPages(p: PagesInput): Promise<void> {
   // 页面产物里编译进了本机 home 路径，公开发布前抹掉（见 scripts/scrub-paths.ts）
   await scrubDir(join(p.out, "app"), homedir());
   await mkdir(join(p.out, "download"));
-  for (const f of [`${DOWNLOAD_NAME}.tar.xz`, `${DOWNLOAD_NAME}.tar.xz.sha256`]) await cp(join(p.downloadDir, f), join(p.out, "download", f));
+  for (const f of [`${DOWNLOAD_NAME}.tar.xz`, `${DOWNLOAD_NAME}.tar.xz.sha256`, `${DOWNLOAD_NAME}.update.json`]) await cp(join(p.downloadDir, f), join(p.out, "download", f));
+  // 签名只在 CI 有私钥时才有（scripts/sign-update.ts）；没有签名时后台网关不会自动更新到这个版本
+  const sig = `${DOWNLOAD_NAME}.update.json.sig`;
+  if (existsSync(join(p.downloadDir, sig))) await cp(join(p.downloadDir, sig), join(p.out, "download", sig));
   await cp(p.installSh, join(p.out, "install.sh"));
 }
 
@@ -62,17 +66,35 @@ async function* walk(dir: string): AsyncGenerator<string> {
   }
 }
 
-/** 部署目录有问题就逐条返回，空数组表示可以部署。 */
-export async function checkPages(out: string): Promise<string[]> {
+/** 部署目录有问题就逐条返回，空数组表示可以部署。publicKey 用来验更新清单的签名（有签名时）。 */
+export async function checkPages(out: string, publicKey = UPDATE_PUBLIC_KEY): Promise<string[]> {
   const problems: string[] = [];
   const xz = `download/${DOWNLOAD_NAME}.tar.xz`;
-  for (const f of ["index.html", "_headers", "app/index.html", xz, `${xz}.sha256`, "install.sh"]) {
+  const manifest = `download/${DOWNLOAD_NAME}.update.json`;
+  for (const f of ["index.html", "_headers", "app/index.html", xz, `${xz}.sha256`, manifest, "install.sh"]) {
     if (!existsSync(join(out, f))) problems.push(`缺 ${f}`);
   }
   if (existsSync(join(out, xz)) && existsSync(join(out, `${xz}.sha256`))) {
     const want = (await readFile(join(out, `${xz}.sha256`), "utf8")).split(/\s+/)[0];
     const got = createHash("sha256").update(await readFile(join(out, xz))).digest("hex");
     if (want !== got) problems.push(`${xz} 的 sha256 是 ${got}，.sha256 文件里写的是 ${want}`);
+    if (existsSync(join(out, manifest))) {
+      const bytes = await readFile(join(out, manifest));
+      let m: { sha256?: unknown } = {};
+      try {
+        m = JSON.parse(bytes.toString("utf8"));
+      } catch {
+        problems.push(`${manifest} 不是 JSON`);
+      }
+      if (m.sha256 !== got) problems.push(`${manifest} 里的 sha256 和 ${xz} 对不上`);
+      if (existsSync(join(out, `${manifest}.sig`))) {
+        try {
+          readManifest(bytes, await readFile(join(out, `${manifest}.sig`)), publicKey);
+        } catch (e) {
+          problems.push(`${manifest}.sig：${(e as Error).message}（签名私钥和网关里的公钥不是一对？）`);
+        }
+      }
+    }
   }
   for await (const f of walk(out)) {
     const rel = relative(out, f);

@@ -26,13 +26,15 @@ await cp(ui, stage, { recursive: true, filter: (src) => !/\.(br|gz)$/.test(src) 
 // 页面产物（nsh 的 wasm）里编译进了本机 home 路径；先抹掉再嵌入，build-pages 也会对 /app/ 做同样处理
 for (const f of await scrubDir(stage, homedir())) console.log(`抹掉本机路径：${f}`);
 
+const version = new Date().toISOString();
 // --asset 嵌入的目录在运行时位于 import.meta.dir/<目录名>，main.ts 按这个路径找页面
 const r = await Bun.build({
   entrypoints: [join(root, "gateway/src/main.ts")],
   compile: { target: "bun-darwin-arm64", outfile: out, assets: [stage] },
   minify: true,
-  // 网关版本 = 构建时间，/healthz 报出去，另一个 droidpier 启动时按它比新旧（gateway/src/already-running.ts）
-  define: { DROIDPIER_VERSION: JSON.stringify(new Date().toISOString()) },
+  // 网关版本 = 构建时间，/healthz 报出去，另一个 droidpier 启动时按它比新旧（gateway/src/already-running.ts）；
+  // 也写进更新清单，后台网关只换比自己新的（gateway/src/updater.ts）
+  define: { DROIDPIER_VERSION: JSON.stringify(version) },
 });
 if (!r.success) {
   for (const l of r.logs) console.error(l);
@@ -57,6 +59,8 @@ const bin = await stat(out);
 const packed = await Bun.file(xz).bytes();
 const sha = createHash("sha256").update(packed).digest("hex");
 await writeFile(`${xz}.sha256`, `${sha}  ${name}.tar.xz\n`);
+// 更新清单：后台网关只认签过名的清单（scripts/sign-update.ts 签，CI 里做）；.sha256 留给 install.sh
+await writeFile(join(dist, `${name}.update.json`), `${JSON.stringify({ name, version, sha256: sha })}\n`);
 
 const mib = (n: number) => `${(n / 2 ** 20).toFixed(1)} MiB`;
 console.log(`${out}：${mib(bin.size)}`);
