@@ -11,8 +11,28 @@ export const PROTOCOL_VERSION = 1;
  */
 export const GATEWAY_LEVEL = 1;
 
-/** 网关自动更新一次检查的结果。off：不是后台服务或关了自动更新，不会自己更新；deferred：有新版本，等手上的操作结束。 */
+/**
+ * 网关自动更新一次检查的结果。off：不是后台服务或关了自动更新，不会自己更新；deferred：有新版本，等手上的操作结束
+ * （message 是 busy 的原因）；failed：message 是 UpdateFailure，只给类别，不带路径和原始错误。
+ */
 export type UpdateState = "checking" | "latest" | "restarting" | "deferred" | "failed" | "off";
+
+/** 自动更新失败的类别，和给用户看的话（页面和 droidpier status 共用）。 */
+export const UPDATE_FAILURES = {
+  network: "连不上下载站",
+  manifest: "下载站上的版本信息不对",
+  unsigned: "下载站上的版本没有签名",
+  signature: "下载站上的版本签名不对",
+  checksum: "下载的文件校验不通过",
+  unpack: "解压失败",
+  "bad-binary": "新版本运行不起来",
+  "not-writable": "没有权限写入安装目录",
+  install: "替换文件失败",
+} as const;
+export type UpdateFailure = keyof typeof UPDATE_FAILURES;
+
+/** failed 的 message 转成给人看的话；不认识的类别（更新的网关加的）原样给出。 */
+export const updateFailureText = (m: string | undefined) => (m && m in UPDATE_FAILURES ? UPDATE_FAILURES[m as UpdateFailure] : m ?? "未知原因");
 
 /** 升级网关的安装命令。 */
 export const INSTALL_CMD = "curl -fsSL https://droid.devpier.dev/install.sh | sh";

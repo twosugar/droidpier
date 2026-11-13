@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { parseCli } from "./cli.ts";
 import { portHolder, probePort, type HealthUpdate, type PortHolder } from "./already-running.ts";
 import { buildPageUrl } from "./page-url.ts";
+import { updateFailureText } from "../../shared/protocol.ts";
 import { launchAgentPath, openBrowser, SERVICE_LABEL, serviceLogPath } from "./platform.ts";
 
 export { SERVICE_LABEL };
@@ -247,7 +248,7 @@ const RESULT: Record<string, (m?: string) => string> = {
   latest: () => "已是最新",
   restarting: () => "已更新，正在重启",
   deferred: (m) => `有新版本，${m ?? "有操作在进行"}，结束后再更新`,
-  failed: (m) => `检查失败：${m ?? "未知原因"}`,
+  failed: (m) => `检查失败：${updateFailureText(m)}`,
   checking: () => "正在检查",
 };
 

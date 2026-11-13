@@ -23,9 +23,9 @@ import { buildPageUrl } from "./page-url.ts";
 import { parseCli, USAGE, versionLine } from "./cli.ts";
 import { checkPortFirst, explainBusyPort } from "./already-running.ts";
 import { cleanStaleUploads } from "./upload-temp.ts";
-import { realRotateIo, realServiceDeps, rotateLog, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
+import { realRotateIo, realServiceDeps, rotateLog, SERVICE_LABEL, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
 import { tmpdir } from "node:os";
-import { createAutoUpdater, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
+import { checkPending, confirmStable, createAutoUpdater, DOWNLOAD_BASE, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
 
 // scripts/build-binary.ts 打包时把 DROIDPIER_VERSION 替换成构建时间；直接用源码跑时没有
 declare const DROIDPIER_VERSION: string | undefined;
@@ -67,10 +67,22 @@ if (cli.kind === "service") {
   process.exit(await run[cli.command]());
 }
 const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate } = cli.options;
-if (service) {
-  const l = serviceLabel(process.env);
-  if ("label" in l) await rotateLog(serviceLogPath(l.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
-}
+const label = serviceLabel(process.env);
+if (service && "label" in label) await rotateLog(serviceLogPath(label.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
+
+// 自动更新（gateway/src/updater.ts）：后台服务自己换上新版本；前台运行只在有新版本时打印一行
+const layout = autoUpdate ? installLayout(process.execPath, STANDALONE) : null;
+// DROIDPIER_DOWNLOAD 只给测试用：正式 label 的后台服务不认它，只从写死的地址更新
+const dl = downloadBase(process.env, !service || ("label" in label && label.label !== SERVICE_LABEL));
+if (service && !autoUpdate) console.log("自动更新已关闭（--no-auto-update）");
+else if (service && !layout) console.log("不是安装命令装的程序，不自动更新");
+if ("error" in dl) console.log(`${dl.error}，不检查更新`);
+let srv: Awaited<ReturnType<typeof startServer>> | undefined;
+const updaterDeps = layout
+  ? realUpdaterDeps({ base: "base" in dl ? dl.base : DOWNLOAD_BASE, ...layout, version: VERSION, busy: () => srv?.busy() ?? null, log: (s) => console.log(s) })
+  : null;
+// 刚换上的新版本：数启动次数，起不来就换回旧版本
+if (service && updaterDeps && (await checkPending(updaterDeps)) === "rolled-back") process.exit(RESTART_EXIT_CODE);
 // 默认打开公网页面；--local 改为打开本机页面；--public 是兼容别名，不改行为（见 gateway/src/page-url.ts）
 
 /** 端口被占时打印判断、需要时打开页面，然后退出。后台服务一律按正常退出，launchd 不会每 10 秒重试一次。 */
@@ -86,6 +98,34 @@ function exitBusy(r: { code: 0 | 1; lines: string[] }, pageUrl: string): never {
   const r = await checkPortFirst({ port, pageUrl, ownVersion: VERSION });
   if (r) exitBusy(r, pageUrl);
 }
+
+let updatedEarly = false;
+const updater = updaterDeps && "base" in dl ? createAutoUpdater({
+  check: service
+    ? async () => {
+        const r = await updateOnce(updaterDeps);
+        if (r.kind === "updated") {
+          if (srv) restart();
+          else updatedEarly = true;
+        }
+        return toReport(r);
+      }
+    : newerNotice(updaterDeps),
+  now: () => Date.now(),
+  setTimer: (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  },
+  random: Math.random,
+  intervalMs: 30 * 60_000,
+  jitterMs: 5 * 60_000,
+  pageGapMs: 60_000,
+}) : null;
+// 尽早查一次（在连模拟器、查 SDK 之前）：哪个版本在后面的启动步骤里崩溃，下载站上的修复版本也能换上
+if (updater && service) {
+  await updater.start();
+  if (updatedEarly) process.exit(RESTART_EXIT_CODE);
+} else if (updater) void updater.start();
 
 let lastNote = "";
 const note = (s: string) => {
@@ -134,35 +174,8 @@ const catalogDeps = realCatalogDeps({
 });
 const first = await getSession();
 
-// 自动更新（gateway/src/updater.ts）：后台服务自己换上新版本；前台运行只在有新版本时打印一行
-const layout = autoUpdate ? installLayout(process.execPath, STANDALONE) : null;
-const dl = downloadBase(process.env);
-if (service && !autoUpdate) console.log("自动更新已关闭（--no-auto-update）");
-else if (service && !layout) console.log("不是安装命令装的程序，不自动更新");
-if ("error" in dl) console.log(`${dl.error}，不检查更新`);
-const updaterDeps = layout && "base" in dl
-  ? realUpdaterDeps({ base: dl.base, ...layout, busy: () => srv.busy(), log: (s) => console.log(s) })
-  : null;
-const updater = updaterDeps && createAutoUpdater({
-  check: service
-    ? async () => {
-        const r = await updateOnce(updaterDeps);
-        if (r.kind === "updated") restart();
-        return toReport(r);
-      }
-    : newerNotice(updaterDeps),
-  now: () => Date.now(),
-  setTimer: (fn, ms) => {
-    const t = setTimeout(fn, ms);
-    return () => clearTimeout(t);
-  },
-  random: Math.random,
-  intervalMs: 30 * 60_000,
-  jitterMs: 5 * 60_000,
-  pageGapMs: 60_000,
-});
 
-const srv = await startServer({
+srv = await startServer({
   port,
   version: VERSION,
   service,
@@ -206,6 +219,8 @@ const srv = await startServer({
   exitBusy(await explainBusyPort({ port, pageUrl, ownVersion: VERSION }), pageUrl);
 });
 const pageUrl = buildPageUrl(process.argv, srv.port);
+// 新版本稳定运行一分钟后不再数它的启动次数
+if (service && updaterDeps) setTimeout(() => void confirmStable(updaterDeps).catch((e: Error) => console.log(`记录新版本运行正常失败：${e.message}`)), 60_000);
 console.log(`droidpier: ${pageUrl}  (${first ? `emulator-${serial}` : "no emulator"})`);
 // 终端里只提示，不提问：安装要在页面上确认
 if (!env.ok) {
@@ -221,7 +236,7 @@ const cleanup = () => (cleaning ??= (async () => {
   // 正在进行的下载和解压不能留在网关后面
   installer.stop();
   // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
-  await srv.close();
+  await srv?.close();
   last?.close();
   // 等取消订阅时异步删除 mmap 临时文件
   await new Promise((r) => setTimeout(r, 200));
@@ -234,11 +249,10 @@ let restarting = false;
 function restart() {
   if (restarting) return;
   restarting = true;
-  srv.notifyUpdate({ state: "restarting" });
+  srv?.notifyUpdate({ state: "restarting" });
   // 让 restarting 先发到页面
   setTimeout(() => void restartNow(), 300);
 }
-updater?.start();
 // 清理超时被强制退出时也不留下卡住的 adb 进程
 process.on("exit", killAdbChildren);
 process.on("SIGINT", onSignal);

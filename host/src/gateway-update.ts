@@ -1,5 +1,5 @@
 // 网关比页面旧时页面上显示什么、要不要让网关马上检查更新。网关在 hello 后的 gateway 消息里报功能级别（shared/protocol.ts 的 GATEWAY_LEVEL）。
-import { INSTALL_CMD, type UpdateState } from "../../shared/protocol.ts";
+import { INSTALL_CMD, updateFailureText, type UpdateState } from "../../shared/protocol.ts";
 
 /** gateway 消息的内容；null 表示旧网关（hello 后没发 gateway 就发了别的）。 */
 export type GatewayInfo = { level: number; version: string; service: boolean; autoUpdate: boolean };
@@ -31,7 +31,7 @@ export function gatewayBanner(info: GatewayInfo | null, pageLevel: number, repor
     case "latest":
       return manual("网关版本较旧，下载站上暂时还没有新版本，稍后会自动再试；也可以运行安装命令更新");
     case "failed":
-      return manual(`网关自动更新失败：${report.message ?? "未知原因"}。请运行安装命令更新`);
+      return manual(`网关自动更新失败：${updateFailureText(report.message)}。请运行安装命令更新`);
     case "off":
       return manual("网关版本较旧，请运行安装命令更新");
   }

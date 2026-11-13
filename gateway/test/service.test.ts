@@ -233,12 +233,12 @@ test("status：运行中报 pid、端口、版本、页面和日志位置", asyn
 });
 
 test("status：说明自动更新开没开、上次检查的结果", async () => {
-  const f = fake({ update: { auto: true, last: { at: "2026-11-13T02:00:00.000Z", state: "failed", message: "HTTP 503" } } });
+  const f = fake({ update: { auto: true, last: { at: "2026-11-13T02:00:00.000Z", state: "failed", message: "network" } } });
   await serviceStart(f.deps, { args: [], noOpen: true });
   f.out.length = 0;
   await serviceStatus(f.deps);
   assert.match(f.out.join("\n"), /自动更新：开/);
-  assert.match(f.out.join("\n"), /上次检查：.*检查失败：HTTP 503/);
+  assert.match(f.out.join("\n"), /上次检查：.*检查失败：连不上下载站/);
 
   const g = fake();
   await serviceStart(g.deps, { args: ["--no-auto-update"], noOpen: true });

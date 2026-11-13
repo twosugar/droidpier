@@ -32,9 +32,9 @@ test("前台运行、关了自动更新、旧到没有 gateway 消息：给安�
 
 test("自动更新没成（下载站还没新版本、失败）时改成给安装命令", () => {
   assert.equal(gatewayBanner(svc(1), 2, { state: "latest" })?.kind, "manual");
-  const b = gatewayBanner(svc(1), 2, { state: "failed", message: "HTTP 503" });
+  const b = gatewayBanner(svc(1), 2, { state: "failed", message: "signature" });
   assert.equal(b?.kind, "manual");
-  assert.match(b!.text, /HTTP 503/);
+  assert.match(b!.text, /下载站上的版本签名不对/);
 });
 
 test("timeoutText：网关级别不够时说太旧不支持；够或还不知道时用原来的说明", () => {
