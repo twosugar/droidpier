@@ -1,7 +1,7 @@
 ---
 title: 命令行
 description: Droidpier 网关命令的选项和环境变量。
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 后台网关会自动保持最新。它启动时以及之后大约每 30 分钟，会把已发布版本的校验和与已安装版本的校验和（`~/.local/share/droidpier/installed.sha256`）比较。发布了新版本时，它从 `droid.devpier.dev` 下载，解压前先核对校验和，替换 `~/.local/bin/droidpier` 后重启。打开着的页面会自己重新连上。正在安装 SDK、启动设备、删除设备、重启模拟器或传文件时，它会等这些操作结束。下载失败或校验和不符时，它继续运行现有版本，稍后再试。每一步都写在日志里（`droidpier logs`）。
 
+网关只换上用 Droidpier 发布密钥签过名、并且比正在运行的版本更新的版本。它把上一个版本留作 `~/.local/bin/droidpier.prev`。新版本连续三次没能启动时，网关换回上一个版本，并且不再换上那个版本。
+
 页面发现后台网关比页面旧时，会让网关立即检查一次，并显示网关正在更新。
 
 关闭自动更新：运行 `droidpier start --no-auto-update`。重新打开：带上其他选项、不带 `--no-auto-update` 运行 `droidpier start`，例如 `droidpier start --port 7300`。`droidpier status` 会显示它是否开启。
@@ -123,7 +125,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

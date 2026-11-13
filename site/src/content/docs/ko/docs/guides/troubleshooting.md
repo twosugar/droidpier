@@ -1,7 +1,7 @@
 ---
 title: 문제 해결
 description: 자주 발생하는 문제 해결 - Chrome의 로컬 네트워크 접근 차단, 이미 사용 중인 포트, 에뮬레이터를 찾을 수 없음, 페이지가 연결되지 않음, 버전 불일치.
-sourceHash: 6efd24d9b5da
+sourceHash: 9b070d939282
 ---
 
 ## Chrome이 로컬 네트워크 접근을 차단함 {#chrome-blocked-local-network-access}
@@ -109,7 +109,7 @@ Android Studio 등에서 시스템 이미지를 삭제하면 그 이미지를 �
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

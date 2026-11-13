@@ -1,7 +1,7 @@
 ---
 title: سطر الأوامر
 description: الخيارات ومتغيرات البيئة لأمر بوابة Droidpier.
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 تُبقي البوابة العاملة في الخلفية نفسها محدّثة. عند بدء تشغيلها، ثم كل 30 دقيقة تقريبًا، تقارن المجموع الاختباري للإصدار المنشور بالمجموع الاختباري للإصدار المثبّت (`~/.local/share/droidpier/installed.sha256`). عند نشر إصدار جديد تنزّله من `droid.devpier.dev`، وتتحقق من المجموع الاختباري قبل فك ضغطه، وتستبدل `~/.local/bin/droidpier` ثم تعيد التشغيل. تعيد الصفحات المفتوحة الاتصال من تلقاء نفسها. تنتظر ما دام هناك تثبيت لـ SDK أو تشغيل جهاز أو حذف جهاز أو إعادة تشغيل للمحاكي أو نقل ملف قيد التنفيذ. إذا فشل التنزيل أو لم يتطابق المجموع الاختباري، تستمر في تشغيل الإصدار الموجود لديك وتحاول مرة أخرى لاحقًا. تُكتب كل خطوة في السجل (`droidpier logs`).
 
+لا تقبل البوابة إلا الإصدارات الموقّعة بمفتاح إصدارات Droidpier والأحدث من الإصدار الذي يعمل. وتحتفظ بالإصدار السابق باسم `~/.local/bin/droidpier.prev`. إذا فشل إصدار جديد في البدء ثلاث مرات متتالية، تعود البوابة إلى الإصدار السابق ولا تثبّت ذلك الإصدار مرة أخرى.
+
 عندما تجد الصفحة أن البوابة العاملة في الخلفية أقدم منها، تطلب منها الفحص فورًا وتعرض أن البوابة قيد التحديث.
 
 لإيقاف التحديثات التلقائية شغّل `droidpier start --no-auto-update`. لتفعيلها مرة أخرى شغّل `droidpier start` مع خياراتك الأخرى ودون `--no-auto-update`، مثلًا `droidpier start --port 7300`. يعرض `droidpier status` هل هي مفعّلة.
@@ -123,7 +125,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

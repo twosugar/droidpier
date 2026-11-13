@@ -1,7 +1,7 @@
 ---
 title: Befehlszeile
 description: Optionen und Umgebungsvariablen für den Befehl des Droidpier-Gateways.
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ Fehlen Teile des Android SDK, listet das Gateway jedes davon mit einem Befehl zu
 
 Das Gateway im Hintergrund hält sich selbst aktuell. Beim Start und danach etwa alle 30 Minuten vergleicht es die Prüfsumme der veröffentlichten Version mit der der installierten Version (`~/.local/share/droidpier/installed.sha256`). Ist eine neue Version veröffentlicht, lädt es sie von `droid.devpier.dev` herunter, prüft die Prüfsumme vor dem Entpacken, ersetzt `~/.local/bin/droidpier` und startet neu. Offene Seiten verbinden sich von selbst wieder. Solange eine SDK-Installation, der Start eines Geräts, das Löschen eines Geräts, ein Neustart des Emulators oder eine Dateiübertragung läuft, wartet es. Schlägt der Download fehl oder stimmt die Prüfsumme nicht, läuft die vorhandene Version weiter und es versucht es später erneut. Jeder Schritt steht im Log (`droidpier logs`).
 
+Das Gateway übernimmt nur Versionen, die mit dem Release-Schlüssel von Droidpier signiert und neuer als die laufende sind. Die vorherige Version behält es als `~/.local/bin/droidpier.prev`. Startet eine neue Version dreimal hintereinander nicht, wechselt das Gateway zur vorherigen Version zurück und übernimmt diese Version nicht noch einmal.
+
 Stellt die Seite fest, dass das Gateway im Hintergrund älter ist als sie selbst, bittet sie es, sofort zu prüfen, und zeigt an, dass das Gateway aktualisiert wird.
 
 Automatische Updates abschalten: `droidpier start --no-auto-update`. Wieder einschalten: `droidpier start` mit Ihren übrigen Optionen und ohne `--no-auto-update` ausführen, zum Beispiel `droidpier start --port 7300`. `droidpier status` zeigt, ob sie aktiv sind.
@@ -123,7 +125,7 @@ Stoppen Sie das Gateway im Hintergrund und löschen Sie dann die Dateien, die es
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

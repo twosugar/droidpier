@@ -1,7 +1,7 @@
 ---
 title: कमांड लाइन
 description: Droidpier गेटवे कमांड के विकल्प और environment variables।
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 बैकग्राउंड गेटवे खुद को अपडेट रखता है। शुरू होने पर, और उसके बाद लगभग हर 30 मिनट पर, यह प्रकाशित वर्शन के चेकसम की तुलना इंस्टॉल किए गए वर्शन के चेकसम (`~/.local/share/droidpier/installed.sha256`) से करता है। नया वर्शन प्रकाशित होने पर यह उसे `droid.devpier.dev` से डाउनलोड करता है, खोलने से पहले चेकसम जाँचता है, `~/.local/bin/droidpier` को बदलता है और फिर से शुरू होता है। खुले पेज अपने-आप फिर से जुड़ जाते हैं। जब तक SDK इंस्टॉल, डिवाइस शुरू करना, डिवाइस हटाना, एमुलेटर रीस्टार्ट या फ़ाइल ट्रांसफ़र चल रहा हो, यह इंतज़ार करता है। डाउनलोड विफल होने या चेकसम न मिलने पर यह आपके मौजूदा वर्शन पर चलता रहता है और बाद में फिर कोशिश करता है। हर कदम लॉग (`droidpier logs`) में लिखा जाता है।
 
+गेटवे सिर्फ़ वे वर्शन लेता है जो Droidpier की रिलीज़ कुंजी से साइन किए गए हों और चल रहे वर्शन से नए हों। पिछला वर्शन वह `~/.local/bin/droidpier.prev` के रूप में रखता है। अगर नया वर्शन लगातार तीन बार शुरू नहीं हो पाता, तो गेटवे पिछले वर्शन पर लौट आता है और उस वर्शन को दोबारा नहीं लेता।
+
 जब पेज देखता है कि बैकग्राउंड गेटवे पेज से पुराना है, तो वह गेटवे से तुरंत जाँच करने को कहता है और दिखाता है कि गेटवे अपडेट हो रहा है।
 
 अपने-आप अपडेट बंद करने के लिए `droidpier start --no-auto-update` चलाएँ। फिर से चालू करने के लिए अपने बाकी विकल्पों के साथ, `--no-auto-update` के बिना `droidpier start` चलाएँ, जैसे `droidpier start --port 7300`। ये चालू हैं या नहीं, यह `droidpier status` दिखाता है।
@@ -123,7 +125,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

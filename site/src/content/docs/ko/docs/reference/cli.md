@@ -1,7 +1,7 @@
 ---
 title: 명령줄
 description: Droidpier 게이트웨이 명령의 옵션과 환경 변수.
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ Android SDK 구성 요소가 빠져 있으면 게이트웨이는 항목마다 �
 
 백그라운드 게이트웨이는 스스로 최신 상태를 유지합니다. 시작할 때와 그 뒤 약 30분마다 게시된 버전의 체크섬을 설치된 버전의 체크섬(`~/.local/share/droidpier/installed.sha256`)과 비교합니다. 새 버전이 게시되면 `droid.devpier.dev`에서 내려받아 압축을 풀기 전에 체크섬을 확인하고, `~/.local/bin/droidpier`를 교체한 뒤 다시 시작합니다. 열려 있는 페이지는 알아서 다시 연결됩니다. SDK 설치, 기기 시작, 기기 삭제, 에뮬레이터 재시작, 파일 전송이 진행 중이면 끝날 때까지 기다립니다. 다운로드에 실패하거나 체크섬이 맞지 않으면 지금 버전으로 계속 실행하고 나중에 다시 시도합니다. 각 단계는 로그(`droidpier logs`)에 기록됩니다.
 
+게이트웨이는 Droidpier 릴리스 키로 서명되었고 지금 실행 중인 것보다 새로운 버전만 받아들입니다. 이전 버전은 `~/.local/bin/droidpier.prev`로 남겨 둡니다. 새 버전이 세 번 연속 시작하지 못하면 게이트웨이는 이전 버전으로 되돌리고, 그 버전은 다시 설치하지 않습니다.
+
 페이지가 백그라운드 게이트웨이가 자신보다 오래된 것을 발견하면 게이트웨이에 바로 확인하도록 요청하고 업데이트 중임을 표시합니다.
 
 자동 업데이트를 끄려면 `droidpier start --no-auto-update`를 실행합니다. 다시 켜려면 다른 옵션과 함께 `--no-auto-update` 없이 `droidpier start`를 실행합니다(예: `droidpier start --port 7300`). 켜져 있는지는 `droidpier status`에서 볼 수 있습니다.
@@ -123,7 +125,7 @@ Android SDK 구성 요소가 빠져 있으면 게이트웨이는 항목마다 �
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

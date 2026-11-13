@@ -110,6 +110,8 @@ When Android SDK parts are missing, the gateway lists each one with a command to
 
 The background gateway keeps itself up to date. When it starts, and about every 30 minutes after that, it compares the checksum of the published version with the one of the installed version (`~/.local/share/droidpier/installed.sha256`). When a new version is published, it downloads it from `droid.devpier.dev`, checks the checksum before unpacking, replaces `~/.local/bin/droidpier` and restarts. Open pages reconnect by themselves. It waits while an SDK install, a device start, a device deletion, an emulator restart or a file transfer is in progress. If the download fails or the checksum does not match, it keeps running the version you have and tries again later. Each step is written to the log (`droidpier logs`).
 
+The gateway takes only versions signed with the Droidpier release key, and only versions newer than the one it runs. It keeps the previous version as `~/.local/bin/droidpier.prev`. If a new version fails to start three times in a row, the gateway switches back to the previous version and does not take that version again.
+
 When the page finds that the background gateway is older than the page, it asks the gateway to check at once and shows that the gateway is updating.
 
 To turn automatic updates off, run `droidpier start --no-auto-update`. To turn them on again, run `droidpier start` with your other options and without `--no-auto-update`, for example `droidpier start --port 7300`. `droidpier status` shows whether they are on.
@@ -122,7 +124,7 @@ Stop the background gateway, then delete the files it uses:
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

@@ -1,7 +1,7 @@
 ---
 title: 命令列
 description: Droidpier 閘道命令的選項和環境變數。
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 背景閘道會自動保持最新。它啟動時以及之後大約每 30 分鐘，會把已發布版本的校驗和與已安裝版本的校驗和（`~/.local/share/droidpier/installed.sha256`）比較。發布了新版本時，它從 `droid.devpier.dev` 下載，解壓前先核對校驗和，取代 `~/.local/bin/droidpier` 後重新啟動。開著的頁面會自己重新連上。正在安裝 SDK、啟動裝置、刪除裝置、重新啟動模擬器或傳送檔案時，它會等這些操作結束。下載失敗或校驗和不符時，它繼續執行現有版本，稍後再試。每一步都寫在記錄檔裡（`droidpier logs`）。
 
+閘道只換上用 Droidpier 發布金鑰簽過名、並且比正在執行的版本更新的版本。它把上一個版本留作 `~/.local/bin/droidpier.prev`。新版本連續三次沒能啟動時，閘道換回上一個版本，並且不再換上那個版本。
+
 頁面發現背景閘道比頁面舊時，會讓閘道立即檢查一次，並顯示閘道正在更新。
 
 關閉自動更新：執行 `droidpier start --no-auto-update`。重新開啟：帶上其他選項、不帶 `--no-auto-update` 執行 `droidpier start`，例如 `droidpier start --port 7300`。`droidpier status` 會顯示它是否開啟。
@@ -123,7 +125,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

@@ -1,7 +1,7 @@
 ---
 title: コマンドライン
 description: Droidpier ゲートウェイコマンドのオプションと環境変数。
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ Android SDK のコンポーネントが不足している場合、ゲートウ�
 
 バックグラウンドのゲートウェイは自分を最新に保ちます。起動時と、その後およそ 30 分ごとに、公開されているバージョンのチェックサムとインストール済みバージョンのチェックサム（`~/.local/share/droidpier/installed.sha256`）を比べます。新しいバージョンが公開されていれば `droid.devpier.dev` からダウンロードし、展開する前にチェックサムを確かめ、`~/.local/bin/droidpier` を置き換えて再起動します。開いているページは自動で再接続します。SDK のインストール、デバイスの起動、デバイスの削除、エミュレーターの再起動、ファイルの転送が進行中の間は待ちます。ダウンロードに失敗した場合やチェックサムが一致しない場合は、今のバージョンのまま動き続け、後でもう一度試します。各ステップはログに記録されます（`droidpier logs`）。
 
+ゲートウェイが受け入れるのは、Droidpier のリリース鍵で署名され、しかも動作中のものより新しいバージョンだけです。直前のバージョンは `~/.local/bin/droidpier.prev` として残します。新しいバージョンが 3 回続けて起動できなかった場合は、直前のバージョンに戻し、そのバージョンには二度と更新しません。
+
 ページがバックグラウンドのゲートウェイのほうが古いと判断すると、すぐにチェックするようゲートウェイに頼み、更新中であることを表示します。
 
 自動更新をオフにするには `droidpier start --no-auto-update` を実行します。オンに戻すには、ほかのオプションを付け、`--no-auto-update` を付けずに `droidpier start` を実行します（例：`droidpier start --port 7300`）。オンかどうかは `droidpier status` で確認できます。
@@ -123,7 +125,7 @@ Android SDK のコンポーネントが不足している場合、ゲートウ�
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

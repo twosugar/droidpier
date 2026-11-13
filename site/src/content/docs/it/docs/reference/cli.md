@@ -1,7 +1,7 @@
 ---
 title: Riga di comando
 description: Opzioni e variabili d’ambiente del comando del gateway Droidpier.
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ Quando mancano parti dell’Android SDK, il gateway elenca ciascuna con un coman
 
 Il gateway in background si mantiene aggiornato da solo. All’avvio, e poi circa ogni 30 minuti, confronta il checksum della versione pubblicata con quello della versione installata (`~/.local/share/droidpier/installed.sha256`). Quando viene pubblicata una nuova versione, la scarica da `droid.devpier.dev`, verifica il checksum prima di estrarla, sostituisce `~/.local/bin/droidpier` e si riavvia. Le pagine aperte si riconnettono da sole. Aspetta finché è in corso un’installazione dell’SDK, l’avvio di un dispositivo, l’eliminazione di un dispositivo, il riavvio dell’emulatore o un trasferimento di file. Se il download fallisce o il checksum non corrisponde, continua con la versione che hai e riprova più tardi. Ogni passaggio viene scritto nel log (`droidpier logs`).
 
+Il gateway accetta solo versioni firmate con la chiave di rilascio di Droidpier e più recenti di quella in esecuzione. Conserva la versione precedente come `~/.local/bin/droidpier.prev`. Se una nuova versione non riesce ad avviarsi tre volte di fila, il gateway torna alla versione precedente e non installa più quella versione.
+
 Quando la pagina vede che il gateway in background è più vecchio di lei, gli chiede di controllare subito e mostra che il gateway si sta aggiornando.
 
 Per disattivare gli aggiornamenti automatici, esegui `droidpier start --no-auto-update`. Per riattivarli, esegui `droidpier start` con le altre opzioni e senza `--no-auto-update`, per esempio `droidpier start --port 7300`. `droidpier status` mostra se sono attivi.
@@ -123,7 +125,7 @@ Arresta il gateway in background, poi elimina i file che usa:
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

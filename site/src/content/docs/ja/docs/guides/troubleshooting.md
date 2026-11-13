@@ -1,7 +1,7 @@
 ---
 title: トラブルシューティング
 description: よくある問題の解決——Chrome がローカルネットワークアクセスをブロック・ポートが使用中・エミュレーターが見つからない・ページが接続しない・バージョン不一致。
-sourceHash: 6efd24d9b5da
+sourceHash: 9b070d939282
 ---
 
 ## Chrome がローカルネットワークアクセスをブロックした {#chrome-blocked-local-network-access}
@@ -109,7 +109,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

@@ -1,7 +1,7 @@
 ---
 title: समस्या निवारण
 description: आम समस्याएँ ठीक करें - Chrome ने लोकल नेटवर्क एक्सेस ब्लॉक किया, पोर्ट पहले से इस्तेमाल में है, कोई एमुलेटर नहीं मिला, पेज कनेक्ट नहीं होता, वर्शन मेल नहीं खाता।
-sourceHash: 6efd24d9b5da
+sourceHash: 9b070d939282
 ---
 
 ## Chrome ने लोकल नेटवर्क एक्सेस ब्लॉक किया {#chrome-blocked-local-network-access}
@@ -109,7 +109,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

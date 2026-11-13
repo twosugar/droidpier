@@ -1,7 +1,7 @@
 ---
 title: Устранение неполадок
 description: Решение типичных проблем - Chrome заблокировал доступ к локальной сети, порт уже занят, эмулятор не найден, страница не подключается, несовпадение версий.
-sourceHash: 6efd24d9b5da
+sourceHash: 9b070d939282
 ---
 
 ## Chrome заблокировал доступ к локальной сети {#chrome-blocked-local-network-access}
@@ -109,7 +109,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 

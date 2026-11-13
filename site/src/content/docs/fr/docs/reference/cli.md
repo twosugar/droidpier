@@ -1,7 +1,7 @@
 ---
 title: Ligne de commande
 description: Options et variables d’environnement de la commande de la passerelle Droidpier.
-sourceHash: 90409d583761
+sourceHash: e4588fa7564a
 ---
 
 <!-- verify: phase 3 -->
@@ -111,6 +111,8 @@ Quand des parties de l’Android SDK manquent, la passerelle liste chacune avec 
 
 La passerelle en arrière-plan se tient à jour toute seule. Au démarrage, puis environ toutes les 30 minutes, elle compare la somme de contrôle de la version publiée avec celle de la version installée (`~/.local/share/droidpier/installed.sha256`). Quand une nouvelle version est publiée, elle la télécharge depuis `droid.devpier.dev`, vérifie la somme de contrôle avant de la décompresser, remplace `~/.local/bin/droidpier` et redémarre. Les pages ouvertes se reconnectent d’elles-mêmes. Elle attend tant qu’une installation du SDK, le démarrage d’un appareil, la suppression d’un appareil, le redémarrage de l’émulateur ou un transfert de fichier est en cours. Si le téléchargement échoue ou si la somme de contrôle ne correspond pas, elle continue avec la version que vous avez et réessaie plus tard. Chaque étape est écrite dans le journal (`droidpier logs`).
 
+La passerelle n’accepte que les versions signées avec la clé de publication de Droidpier, et plus récentes que celle qui tourne. Elle garde la version précédente sous `~/.local/bin/droidpier.prev`. Si une nouvelle version échoue à démarrer trois fois de suite, la passerelle revient à la version précédente et ne reprend plus cette version.
+
 Quand la page constate que la passerelle en arrière-plan est plus ancienne qu’elle, elle lui demande de vérifier tout de suite et indique que la passerelle se met à jour.
 
 Pour désactiver les mises à jour automatiques, lancez `droidpier start --no-auto-update`. Pour les réactiver, lancez `droidpier start` avec vos autres options et sans `--no-auto-update`, par exemple `droidpier start --port 7300`. `droidpier status` indique si elles sont activées.
@@ -123,7 +125,7 @@ Arrêtez la passerelle en arrière-plan, puis supprimez les fichiers qu’elle u
 
 ```sh
 droidpier stop
-rm ~/.local/bin/droidpier
+rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 
