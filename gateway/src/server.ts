@@ -29,7 +29,6 @@ import {
   compatibility,
   encodeFrameHeader,
   GATEWAY_LEVEL,
-  INSTALL_CMD,
   parseClientMsg,
   PROTOCOL_VERSION,
   type AvdCatalog,
@@ -43,6 +42,7 @@ import {
   type UploadState,
   type WebViewPage,
 } from "../../shared/protocol.ts";
+import { INSTALL_CMD } from "./page-url.ts";
 
 /** 生成截图文件名：screenshot-<设备名>-<yyyyMMdd-HHmmss>.png，使用本地时间。 */
 export function screenshotName(device: string, now: Date = new Date()): string {
@@ -1062,13 +1062,15 @@ export async function startServer(opts: {
           cancelUpload(m.id);
           break;
         case "screenshot": {
-          if (!conn.session) {
+          // 截图返回前会话可能已退出或换了一台：按发起时的会话命名
+          const s = conn.session;
+          if (!s) {
             send(ws, { t: "error", message: "截图失败：没有连接设备" });
             break;
           }
-          conn.session.screenshot().then(
+          s.screenshot().then(
             (png) => {
-              const device = conn.session!.avdName ?? conn.session!.id;
+              const device = s.avdName ?? s.id;
               const name = screenshotName(device);
               send(ws, { t: "screenshot", name, size: png.byteLength });
               // 4 字节 kind + PNG 数据

@@ -34,8 +34,13 @@ export type UpdateFailure = keyof typeof UPDATE_FAILURES;
 /** failed 的 message 转成给人看的话；不认识的类别（更新的网关加的）原样给出。 */
 export const updateFailureText = (m: string | undefined) => (m && m in UPDATE_FAILURES ? UPDATE_FAILURES[m as UpdateFailure] : m ?? "未知原因");
 
-/** 升级网关的安装命令。 */
-export const INSTALL_CMD = "curl -fsSL https://droid.devpier.dev/install.sh | sh";
+/** 官方公网页面的来源。部署自己的一套时，构建用环境变量 PUBLIC_ORIGIN 换掉它（docs/deploy.md）。 */
+export const OFFICIAL_ORIGIN = "https://droid.devpier.dev";
+
+/** 从 origin 安装（或升级）并启动网关的命令。 */
+export function installCmd(origin: string): string {
+  return `curl -fsSL ${origin}/install.sh | sh`;
+}
 
 /** 设备里的 adb 没有响应时，页面上统一显示的话。 */
 export const ADB_UNRESPONSIVE = "模拟器里的 adb 没有响应（常见于模拟器长时间运行后）。可以点「重启模拟器」恢复。";

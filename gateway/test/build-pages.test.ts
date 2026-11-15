@@ -2,11 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { signManifest } from "../../scripts/sign-update.ts";
-import { mkdir, mkdtemp, readdir, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appCspProblems, buildPages, checkPages, DOWNLOAD_NAME } from "../../scripts/build-pages.ts";
+import { appCspProblems, buildPages, checkPages, DOWNLOAD_NAME, replaceOrigin } from "../../scripts/build-pages.ts";
+import { OFFICIAL_ORIGIN } from "../../shared/protocol.ts";
 import { headersFor, parseHeaders } from "../../scripts/serve-pages.ts";
 
 const LOCAL = "http://127.0.0.1:* https://127.0.0.1:* ws://127.0.0.1:* wss://127.0.0.1:* http://localhost:* https://localhost:* ws://localhost:* wss://localhost:*";
@@ -21,7 +22,7 @@ const PRIV = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString()
 const MANIFEST = `${DOWNLOAD_NAME}.update.json`;
 
 /** 假的官网 dist、nsh 产物、下载文件（含更新清单，signed 时带签名）和安装脚本 */
-async function fixture(t: { after(fn: () => unknown): void }, opts: { appCsp?: string; signed?: boolean } = {}) {
+async function fixture(t: { after(fn: () => unknown): void }, opts: { appCsp?: string; signed?: boolean; origin?: string } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "emu-pages-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const site = join(dir, "site");
@@ -48,9 +49,9 @@ async function fixture(t: { after(fn: () => unknown): void }, opts: { appCsp?: s
   await writeFile(join(download, MANIFEST), manifest);
   if (opts.signed) await writeFile(join(download, `${MANIFEST}.sig`), signManifest(manifest, PRIV));
   const installSh = join(dir, "install.sh");
-  await writeFile(installSh, "#!/bin/sh\n");
+  await writeFile(installSh, '#!/bin/sh\nbase="${DROIDPIER_DOWNLOAD:-https://droid.devpier.dev/download}"\n');
   const out = join(dir, "out");
-  return { siteDist: site, appDir: app, downloadDir: download, installSh, out };
+  return { siteDist: site, appDir: app, downloadDir: download, installSh, out, origin: opts.origin ?? OFFICIAL_ORIGIN };
 }
 
 test("buildPages：官网在根目录，nsh 产物换掉 /app/，下载文件进 download/，install.sh 在根目录", async (t) => {
@@ -63,24 +64,66 @@ test("buildPages：官网在根目录，nsh 产物换掉 /app/，下载文件进
   assert.ok(existsSync(join(f.out, "app/browser.x/host.js")));
   assert.deepEqual((await readdir(join(f.out, "download"))).sort(), [`${DOWNLOAD_NAME}.tar.xz`, `${DOWNLOAD_NAME}.tar.xz.sha256`, MANIFEST]);
   assert.ok(existsSync(join(f.out, "install.sh")));
-  assert.deepEqual(await checkPages(f.out, PUB), []);
+  assert.deepEqual(await checkPages(f.out, f.origin, PUB), []);
 });
 
 test("buildPages：有签名时一起放进 download/；签名对时 checkPages 不报", async (t) => {
   const f = await fixture(t, { signed: true });
   await buildPages(f);
   assert.ok(existsSync(join(f.out, `download/${MANIFEST}.sig`)));
-  assert.deepEqual(await checkPages(f.out, PUB), []);
+  assert.deepEqual(await checkPages(f.out, f.origin, PUB), []);
 });
 
 test("checkPages：更新清单的 sha256 和压缩包对不上、签名不是这把公钥签的时报出来", async (t) => {
   const f = await fixture(t, { signed: true });
   await buildPages(f);
   const other = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString();
-  assert.match((await checkPages(f.out, other)).join("\n"), /签名/);
+  assert.match((await checkPages(f.out, f.origin, other)).join("\n"), /签名/);
   await writeFile(join(f.out, `download/${MANIFEST}`), `${JSON.stringify({ name: DOWNLOAD_NAME, version: "2026-11-13T00:00:00.000Z", sha256: "0".repeat(64) })}\n`);
-  const problems = (await checkPages(f.out, PUB)).join("\n");
+  const problems = (await checkPages(f.out, f.origin, PUB)).join("\n");
   assert.match(problems, /update\.json/);
+});
+
+test("buildPages：部署自己的一套时，官网和 install.sh 里的官方地址换成自己的，/app/ 和下载包不动", async (t) => {
+  const f = await fixture(t, { origin: "https://emu.example.dev" });
+  await writeFile(join(f.siteDist, "sitemap-index.xml"), "<loc>https://droid.devpier.dev/docs/</loc>");
+  await writeFile(join(f.siteDist, "docs/index.html"), "<p>页面在 droid.devpier.dev，安装：curl -fsSL https://droid.devpier.dev/install.sh | sh</p>");
+  await writeFile(join(f.appDir, "index.html"), "https://droid.devpier.dev");
+  await buildPages(f);
+  assert.equal(await readFile(join(f.out, "sitemap-index.xml"), "utf8"), "<loc>https://emu.example.dev/docs/</loc>");
+  assert.equal(await readFile(join(f.out, "docs/index.html"), "utf8"), "<p>页面在 emu.example.dev，安装：curl -fsSL https://emu.example.dev/install.sh | sh</p>");
+  assert.match(await readFile(join(f.out, "install.sh"), "utf8"), /https:\/\/emu\.example\.dev\/download/);
+  assert.equal(await readFile(join(f.out, "app/index.html"), "utf8"), "https://droid.devpier.dev");
+  assert.deepEqual(await checkPages(f.out, f.origin), []);
+});
+
+test("checkPages：部署在官方地址的子域名上时，替换后的文字不算留着官方地址", async (t) => {
+  const f = await fixture(t, { origin: "https://beta.droid.devpier.dev" });
+  await writeFile(join(f.siteDist, "llms.txt"), "https://droid.devpier.dev/docs/");
+  await buildPages(f);
+  assert.equal(await readFile(join(f.out, "llms.txt"), "utf8"), "https://beta.droid.devpier.dev/docs/");
+  assert.deepEqual(await checkPages(f.out, f.origin), []);
+});
+
+test("checkPages：install.sh 不从这一套的地址下载、官网里还留着官方地址都报出来", async (t) => {
+  const f = await fixture(t, { origin: "https://emu.example.dev" });
+  await buildPages(f);
+  await writeFile(join(f.out, "install.sh"), '#!/bin/sh\nbase="https://droid.devpier.dev/download"\n');
+  await writeFile(join(f.out, "llms.txt"), "https://droid.devpier.dev/");
+  const problems = (await checkPages(f.out, f.origin)).join("\n");
+  assert.match(problems, /install\.sh 不是从 https:\/\/emu\.example\.dev\/download/);
+  assert.match(problems, /llms\.txt 里还有官方地址/);
+});
+
+test("replaceOrigin：带 https:// 的整个换，只写主机名的换主机名，名字相近的不动", () => {
+  assert.equal(replaceOrigin("https://droid.devpier.dev/app/", "http://droid.test:7351"), "http://droid.test:7351/app/");
+  assert.equal(replaceOrigin("`droid.devpier.dev`", "https://emu.example.dev"), "`emu.example.dev`");
+  assert.equal(replaceOrigin("droidXdevpierXdev", "https://emu.example.dev"), "droidXdevpierXdev");
+  for (const s of ["beta.droid.devpier.dev", "https://beta.droid.devpier.dev/", "droid.devpier.dev.example", "my-droid.devpier.dev"]) {
+    assert.equal(replaceOrigin(s, "https://emu.example.dev"), s);
+  }
+  assert.equal(replaceOrigin("见 droid.devpier.dev。", "https://emu.example.dev"), "见 emu.example.dev。");
+  assert.equal(replaceOrigin('base="${DROIDPIER_DOWNLOAD:-https://droid.devpier.dev/download}"', "https://emu.example.dev"), 'base="${DROIDPIER_DOWNLOAD:-https://emu.example.dev/download}"');
 });
 
 test("buildPages：重跑时先清空输出目录，不留上次的文件", async (t) => {
@@ -99,7 +142,7 @@ test("checkPages：缺文件、sha256 对不上、超过 25 MiB、/app/ 里有 .
   await writeFile(join(f.out, "app/extra.js.gz"), "gz");
   await writeFile(join(f.out, "big.bin"), "");
   await truncate(join(f.out, "big.bin"), 25 * 2 ** 20 + 1);
-  const problems = (await checkPages(f.out, PUB)).join("\n");
+  const problems = (await checkPages(f.out, f.origin, PUB)).join("\n");
   assert.match(problems, /缺 install\.sh/);
   assert.match(problems, /sha256/);
   assert.match(problems, /big\.bin.*25 MiB/);
@@ -109,7 +152,7 @@ test("checkPages：缺文件、sha256 对不上、超过 25 MiB、/app/ 里有 .
 test("checkPages：官网 /app/ 的 CSP 不放行 DevTools iframe 时报出来", async (t) => {
   const f = await fixture(t, { appCsp: SITE_APP_CSP });
   await buildPages(f);
-  assert.match((await checkPages(f.out)).join("\n"), /chrome-devtools-frontend\.appspot\.com/);
+  assert.match((await checkPages(f.out, f.origin)).join("\n"), /chrome-devtools-frontend\.appspot\.com/);
 });
 
 test("appCspProblems：要连本机网关、要嵌 appspot DevTools；frame-src 缺省时按 child-src、default-src 回退", () => {

@@ -5,7 +5,7 @@ import { createConnection, type BootMsg, type ConnState, type VersionErrorCode }
 import { createHeldKeys } from "./held-keys.ts";
 import { createPointerTracker } from "./pointer.ts";
 import { isDevtoolsSrc } from "./devtools-src.ts";
-import { gatewayAnswers, gatewayPort, isLoopbackHost, isSupportedBrowser, parsePort, type LocalPermission } from "./launch.ts";
+import { gatewayAnswers, gatewayPort, isLoopbackHost, isSupportedBrowser, parsePort, siteOrigin, type LocalPermission } from "./launch.ts";
 import { createRenderer } from "./renderer.ts";
 import { createUploads } from "./uploads.ts";
 import { parseZoom, ZOOM_STEPS } from "../../shared/zoom.ts";
@@ -13,7 +13,7 @@ import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
 import { registerTools } from "./webmcp.ts";
 import { gatewayBanner, shouldRequestUpdate, timeoutText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
-import { GATEWAY_LEVEL, INSTALL_CMD, INSTALL_IDS, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type Licence, type Rotation } from "../../shared/protocol.ts";
+import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type Licence, type Rotation } from "../../shared/protocol.ts";
 
 // 从这个功能级别起网关一定认 renameAvd、deleteAvd（shared/protocol.ts 的 GATEWAY_LEVEL）
 const AVD_EDIT_LEVEL = 1;
@@ -39,6 +39,9 @@ async function localPermission(): Promise<LocalPermission> {
   return null;
 }
 const GATEWAY_PORT = resolvePort();
+// 官网的来源和从它安装网关的命令：连不上网关时给的命令、页面菜单里的官网和文档链接都用它
+const SITE = siteOrigin(location);
+const INSTALL = installCmd(SITE);
 // 设备画面的缩放存在这台浏览器里；存储不可用（隐私模式等）时每次都适应窗口
 const ZOOM_KEY = "droidpier.zoom";
 // 页面外观存在这台浏览器里；存储不可用（隐私模式等）时每次都跟随系统
@@ -166,7 +169,7 @@ export async function createHost(player: Player) {
   if (!supported) state = "unsupported-browser";
   const statusEvent = () => player.hostEvent("emu.status", { state, serial, upgrade, rev: ++rev });
   const gatewayEvent = () => {
-    gatewayNote = gateway === undefined ? null : gatewayBanner(gateway, GATEWAY_LEVEL, updateReport);
+    gatewayNote = gateway === undefined ? null : gatewayBanner(gateway, GATEWAY_LEVEL, updateReport, INSTALL);
     player.hostEvent("emu.gateway", { banner: gatewayNote, rev: ++rev });
   };
   const requestUpdate = () => {
@@ -179,6 +182,7 @@ export async function createHost(player: Player) {
   }, 2 * 60_000);
   const conn = !supported ? idleConnection() : createConnection({
     url: `ws://127.0.0.1:${GATEWAY_PORT}`,
+    installCmd: INSTALL,
     hidden: () => document.hidden,
     pageIsPublic: !isLoopbackHost(location.hostname),
     localPermission,
@@ -197,7 +201,7 @@ export async function createHost(player: Player) {
       const prev = state;
       state = s;
       // 没连上本机网关时页面给出安装命令
-      upgrade = s === "no-gateway" ? INSTALL_CMD : null;
+      upgrade = s === "no-gateway" ? INSTALL : null;
       paint();
       // 重启中还是同一台设备
       if (s !== "connected" && s !== "rebooting") serial = 0;
@@ -401,8 +405,6 @@ export async function createHost(player: Player) {
 
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
-    // 画面上的滚轮只给设备：nsh 在根元素上自己滚动滚动视图、不看 preventDefault，不拦住的话放大后设备区会跟着滚
-    e.stopPropagation();
     if (pointerIsDown || !device.width) return;
     // deltaMode 转换：PIXEL(0) 不变；LINE(1) ×40px；PAGE(2) × canvas CSS 高度
     let dy = e.deltaY;
@@ -724,6 +726,7 @@ export async function createHost(player: Player) {
         if (typeof id !== "number") throw new Error(`${name} 需要 id`);
         return ctl({ t: name === "emu.acceptLicenses" ? "acceptLicenses" : "rejectLicenses", id });
       }
+      if (name === "emu.site") return SITE;
       if (name === "emu.zoom") return parseZoom(readPref(ZOOM_KEY));
       if (name === "emu.setZoom") {
         const zoom = (args as { zoom?: unknown } | undefined)?.zoom;

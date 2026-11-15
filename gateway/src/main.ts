@@ -258,7 +258,17 @@ const cleanup = () => (cleaning ??= (async () => {
   // 等取消订阅时异步删除 mmap 临时文件
   await new Promise((r) => setTimeout(r, 200));
 })());
-const onSignal = exitHandler({ cleanup, exit: (code) => process.exit(code), timeoutMs: 3000, log: (s) => console.log(s) });
+/** 后台服务收到退出信号后的退出码：128 + SIGTERM(15)，shell 里被信号杀掉的惯例。 */
+const SIGNAL_EXIT_CODE = 143;
+const onSignal = exitHandler({
+  cleanup,
+  exit: (code) => process.exit(code),
+  // 后台服务被 kill、在活动监视器里退出时按非 0 退出，launchd 照崩溃处理、把它拉起来（KeepAlive.SuccessfulExit=false）；
+  // droidpier stop 用 launchctl bootout：launchd 先卸下服务再发 SIGTERM，这时退出码不起作用
+  code: service ? SIGNAL_EXIT_CODE : 0,
+  timeoutMs: 3000,
+  log: (s) => console.log(s),
+});
 // 新版本已经换上：清理后以非 0 退出，launchd（KeepAlive.SuccessfulExit=false）马上拉起新的可执行文件。
 // 不用 launchctl kickstart -k 自己杀自己：退出码不依赖 label、uid 和 launchctl，plist 是旧版本写的也一样
 const restartNow = exitHandler({ cleanup, exit: () => process.exit(RESTART_EXIT_CODE), timeoutMs: 3000, log: (s) => console.log(s) });

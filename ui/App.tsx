@@ -4,14 +4,14 @@ import { middleEllipsis } from "./ellipsis";
 import { isStaleStatus } from "./status-rev";
 import { gbText, spaceCheck } from "../shared/disk-space";
 import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
-import { ADB_UNRESPONSIVE, type Rotation } from "../shared/protocol";
+import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
 import { deviceFrame } from "../shared/screen";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
 import { matchesAvd } from "./device-search";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
-import { foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
+import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
 import { setupCardShown } from "./setup-card";
 import { deleteBlocked } from "./avd-delete";
 
@@ -53,9 +53,8 @@ type Upload = {
 };
 type Confirm = { kind: "install"; ids: EnvId[] } | { kind: "avd"; avd: NewAvd };
 
-// 侧栏顶上回官网的链接；本机网关托管的页面也指向公网官网
-const SITE_URL = "https://droid.devpier.dev/";
-const DOCS_URL = "https://droid.devpier.dev/docs/getting-started/install/";
+// 菜单里回官网的链接；官网的来源由 host 给（emu.site：公网页面自己的来源，本机网关托管的页面用官方的）
+const DOCS_PATH = "/docs/getting-started/install/";
 
 // shadcn/ui 设计系统（Zinc 灰阶 + 品牌紫），紫色只给选中状态和主操作
 const DARK = {
@@ -135,7 +134,8 @@ const PROBLEM: Partial<Record<State, string>> = {
   "unsupported-browser": "请用 Chrome 或 Edge 打开",
   "lna-denied": "Chrome 阻止了访问本机：请到 设置 → 隐私和安全 → 网站设置 中允许本站访问本地网络，然后刷新",
   "lna-prompt": "Chrome 正在询问是否允许本站访问本机：请在地址栏旁的权限框里点「允许」",
-  "bad-origin": "这个页面地址不在网关允许的来源里，请打开 https://droid.devpier.dev/app/",
+  // 网关在升级时就拒绝了，页面问不到它信任哪个来源
+  "bad-origin": "这个页面地址不在网关允许的来源里：请打开你安装 droidpier 的那个网站上的 /app/",
   // 页面看不出装没装 droidpier；同一条命令没装时先装、装了直接启动
   "no-gateway": "还没连上本机的 Droidpier",
   // 网关只收 Chrome / Edge 直接发起的连接（gateway/src/peer.ts）
@@ -209,6 +209,8 @@ const animateNext = () => {
 // 机身边框：内边距 + 1 像素描边
 const BEZEL = 11;
 const H5_EMPTY = "没有可审查的 H5。只有 debug 包或开启了 WebView 调试的 App 才能审查；先在 App 里打开一个 H5 页面。";
+// 页头地址栏放得下的字符数，超过时中间换成省略号：地址栏窄到约 380 像素时也不折行（再折 nsh 只会在连字符处断开、后面全丢）
+const URL_BAR_CHARS = 44;
 // 下拉框里没有标题的页面，地址大约放得下的字符数
 const URL_CHARS = 28;
 const pageKey = (p: Page) => `${p.socket}/${p.id}`;
@@ -410,6 +412,8 @@ const ICON_PATHS = {
   globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
   book: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
   chevronUp: '<path d="m18 15-6-6-6 6"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
@@ -470,14 +474,20 @@ function ToolGroup(props: { label: string; children: JSX.Element }) {
   );
 }
 
-/** 菜单里的一项：可带图标、右侧的说明（比如 ↗ 表示打开新页面）；danger 是删除这类破坏性操作。 */
-function Item(props: { label: string; onSelect: () => void; disabled?: boolean; danger?: boolean; icon?: IconName; trail?: string }) {
+/**
+ * 菜单里的一项：可带图标；trail 是右侧的短标记（比如 ↗ 表示打开新页面）；note 是标签下面的一行说明（比如不能点的原因）；
+ * danger 是删除这类破坏性操作。
+ */
+function Item(props: { label: string; onSelect: () => void; disabled?: boolean; danger?: boolean; icon?: IconName; trail?: string; note?: string }) {
   return (
     <MenuItem onSelect={props.onSelect} disabled={props.disabled}
       hoverStyle={{ backgroundColor: C.hover }} focusStyle={{ backgroundColor: C.hover }} disabledStyle={{ opacity: 0.4 }}
       style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, ...ease(100) }}>
       <If when={props.icon}>{(i) => <Icon name={i()} size={16} tint={C.muted} />}</If>
-      <Text style={{ flex: 1, color: props.danger ? C.danger : C.text, fontSize: 13 }}>{props.label}</Text>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ color: props.danger ? C.danger : C.text, fontSize: 13 }}>{props.label}</Text>
+        <If when={props.note}>{(n) => <Text style={{ color: C.muted, fontSize: 11, lineHeight: 15 }}>{n()}</Text>}</If>
+      </View>
       <If when={props.trail}>{(t) => <Text style={{ color: C.muted, fontSize: 12 }}>{t()}</Text>}</If>
     </MenuItem>
   );
@@ -534,7 +544,7 @@ function Mark(props: { size: number }) {
 }
 
 /** 侧栏底部的按钮：点开向上的菜单，里面是官网、文档和外观。 */
-function AppMenu(props: { theme: Theme; onTheme: (t: Theme) => void }) {
+function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => void }) {
   return (
     <Menu placement="top" offset={6} popupStyle={{ ...menuPopup(), minWidth: 248, padding: 6 }} popupStartingStyle={popOut(4)} popupEndingStyle={popOut(4)} trigger={
       <Button accessibilityLabel="Droidpier 菜单" hoverStyle={{ backgroundColor: C.hover }} focusStyle={{ borderColor: C.muted }}
@@ -548,12 +558,12 @@ function AppMenu(props: { theme: Theme; onTheme: (t: Theme) => void }) {
         <Mark size={36} />
         <View style={{ gap: 2 }}>
           <Text style={{ color: C.text, fontSize: 14, fontWeight: "600" }}>Droidpier</Text>
-          <Text style={{ color: C.muted, fontSize: 12 }}>droid.devpier.dev</Text>
+          <Text style={{ color: C.muted, fontSize: 12 }}>{props.site.replace(/^https?:\/\//, "")}</Text>
         </View>
       </View>
       <MenuSeparator style={{ height: 1, marginBottom: 4, marginHorizontal: 4, backgroundColor: C.line }} />
-      <Item icon="globe" label="官网" trail="↗" onSelect={() => void openUrl(SITE_URL)} />
-      <Item icon="book" label="使用文档" trail="↗" onSelect={() => void openUrl(DOCS_URL)} />
+      <Item icon="globe" label="官网" trail="↗" onSelect={() => void openUrl(`${props.site}/`)} />
+      <Item icon="book" label="使用文档" trail="↗" onSelect={() => void openUrl(props.site + DOCS_PATH)} />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 4, paddingLeft: 10, paddingRight: 4 }}>
         <Icon name="sun" size={16} tint={C.muted} />
         <Text style={{ flex: 1, color: C.text, fontSize: 13 }}>外观</Text>
@@ -821,6 +831,10 @@ function App() {
     if (picked) return;
     theme.set(parseTheme(t));
     setColorScheme(theme());
+  });
+  const site = signal(OFFICIAL_ORIGIN);
+  host.call("emu.site", {}).then((o: unknown) => {
+    if (typeof o === "string") site.set(o);
   });
   const state = signal<State>("connecting");
   const serial = signal(0);
@@ -1116,6 +1130,11 @@ function App() {
   // 主区现在显示的就是画面上这台：没有选中的设备时（列表里没有它），连着就算
   const shownIsLive = () => { const a = shown(); return a ? isCurrent(a) : state() === "connected"; };
   const switchTo = (a: Avd) => act(host.call("emu.use", { name: a.name }));
+  const copyHref = (url: string) =>
+    host.call("emu.copy", { text: url }).then(
+      () => showNotice({ text: "已复制页面地址" }),
+      () => showNotice({ text: "复制失败，请手动选中地址复制", error: true }),
+    );
   const pickDevice = (a: Avd) => {
     if (a.name !== selected()) animateNext();
     selected.set(a.name);
@@ -1243,7 +1262,7 @@ function App() {
   const DeviceRow = (props: { avd: () => Avd }) => {
     const a = props.avd;
     return (
-      <ContextMenu popupStyle={menuPopup()} popupStartingStyle={popOut(-4)} popupEndingStyle={popOut(-4)} trigger={
+      <ContextMenu offset={4} popupStyle={menuPopup()} popupStartingStyle={popOut(-4)} popupEndingStyle={popOut(-4)} trigger={
         <Button onPress={() => pickDevice(a())} selected={shown()?.name === a().name} accessibilityLabel={`${avdLabel(a())}，${avdStatus(a())}`}
           hoverStyle={{ backgroundColor: C.hover }} selectedStyle={{ backgroundColor: C.hover }} focusStyle={{ borderColor: C.muted }} activeStyle={pressed(0.985)}
           style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: "transparent", ...ease() }}>
@@ -1258,7 +1277,7 @@ function App() {
         </Button>
       }>
         <Item label="重命名…" disabled={beingDeleted(a())} onSelect={() => openRename(a())} />
-        <Item label="删除…" danger trail={deleteReason(a()) ?? undefined} disabled={deleteReason(a()) !== null || beingDeleted(a())} onSelect={() => openDelete(a())} />
+        <Item label="删除…" danger note={deleteReason(a()) ?? undefined} disabled={deleteReason(a()) !== null || beingDeleted(a())} onSelect={() => openDelete(a())} />
       </ContextMenu>
     );
   };
@@ -1293,11 +1312,11 @@ function App() {
             </If>
           </Scroll>
           <View style={{ height: 1, marginHorizontal: 4, backgroundColor: C.lineSoft }} />
-          <AppMenu theme={theme()} onTheme={pickTheme} />
+          <AppMenu site={site()} theme={theme()} onTheme={pickTheme} />
         </View>
       </If>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 16, borderBottomWidth: 1, borderColor: C.lineSoft }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 16 }}>
           <If when={sidebarHidden()}>
             <IconBtn icon="panelLeft" label="展开侧栏" onPress={() => setSidebar(false)} />
           </If>
@@ -1313,10 +1332,22 @@ function App() {
               <Text style={{ flexShrink: 1, color: C.muted, fontSize: 11, numberOfLines: 1 }}>{subtitle()}</Text>
             </View>
           </View>
+          {/* 设备上前台页面的地址（可调试的 WebView 或 Chrome 才有），点复制按钮复制完整地址 */}
+          <If when={shownIsLive() ? activePage(pages() ?? []) : undefined}>
+            {(p) => (
+              <View role="group" accessibilityLabel="当前页面"
+                style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 160, maxWidth: 520, height: 32, paddingLeft: 10, paddingRight: 2, borderRadius: 8, borderWidth: 1, borderColor: C.lineSoft, backgroundColor: C.panel, ...ease(200) }}>
+                <Icon name="link" size={14} tint={C.muted} />
+                <Text accessibilityLabel={`当前页面地址：${p().url}`}
+                  style={{ flex: 1, minWidth: 0, color: C.keyText, fontSize: 12, fontFamily: "monospace", userSelect: "text", numberOfLines: 1 }}>{middleEllipsis(p().url, URL_BAR_CHARS)}</Text>
+                <IconBtn icon="copy" label="复制地址" onPress={() => copyHref(p().url)} />
+              </View>
+            )}
+          </If>
           <Toolbar accessibilityLabel="设备操作" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
             <ZoomControl zoom={zoom()} onZoom={setZoom} />
             <ToolGroup label="画面">
-              <ToolBtn icon="rotateLeft" label="向左旋转" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "left" }))} />
+              <ToolBtn icon="rotateLeft" label="向左旋转" tip="点过屏幕后按 ⌘←" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "left" }))} />
               <ToolBtn icon="rotateRight" label="向右旋转" tip="点过屏幕后按 ⌘→" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "right" }))} />
               <ToolBtn icon="camera" label="截图" tip="点过屏幕后按 ⌘S" disabled={!shownIsLive()} onPress={() => act(host.call("emu.screenshot", {}))} />
             </ToolGroup>
@@ -1333,7 +1364,7 @@ function App() {
                 </Toggle>
               </ToolGroup>
             </If>
-            <Menu popupStyle={menuPopup()} popupStartingStyle={popOut(-4)} popupEndingStyle={popOut(-4)} trigger={
+            <Menu align="end" offset={6} popupStyle={menuPopup()} popupStartingStyle={popOut(-4)} popupEndingStyle={popOut(-4)} trigger={
               <Button accessibilityLabel="更多操作" tooltip={<Tip label="更多操作" />} hoverStyle={{ backgroundColor: C.hover }} focusStyle={{ borderColor: C.muted }}
                 activeStyle={pressed(0.9)} style={{ ...TOOL_BTN, borderColor: C.lineSoft, backgroundColor: C.panel, ...ease() }}>
                 <Icon name="more" size={17} tint={C.keyText} />
@@ -1343,7 +1374,7 @@ function App() {
               <Item label="关闭模拟器" disabled={!shownIsLive() || state() !== "connected"} onSelect={() => act(host.call("emu.stop", {}))} />
               <MenuSeparator style={{ height: 1, marginVertical: 4, backgroundColor: C.line }} />
               <Item label="重命名…" disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
-              <Item label="删除…" danger trail={shown() ? deleteReason(shown()!) ?? undefined : undefined} disabled={!shown() || deleteReason(shown()!) !== null || beingDeleted(shown()!)}
+              <Item label="删除…" danger note={shown() ? deleteReason(shown()!) ?? undefined : undefined} disabled={!shown() || deleteReason(shown()!) !== null || beingDeleted(shown()!)}
                 onSelect={() => { const a = shown(); if (a) openDelete(a); }} />
             </Menu>
           </Toolbar>
@@ -1396,9 +1427,6 @@ function App() {
           <View style={{ flex: 1, minHeight: 0, alignItems: "center", gap: 14, paddingTop: 24, paddingBottom: 16, paddingHorizontal: 16 }}>
             <View onLayout={({ bounds }) => deviceArea.set({ width: bounds.size.width, height: bounds.size.height })}
               style={{ flex: 1, minHeight: 0, alignSelf: "stretch", alignItems: "center", justifyContent: "center", position: "relative" }}>
-              {/* 放大到超出这块区域时两个方向都能滚动；没超出时居中 */}
-              <Scroll style={{ flex: 1, alignSelf: "stretch" }} contentStyle={{ flexGrow: 1, alignItems: "center", justifyContent: "center" }}>
-              <Scroll horizontal style={{ alignSelf: "stretch" }} contentStyle={{ flexGrow: 1, alignItems: "center", justifyContent: "center" }}>
                 <View style={{ width: frame().width, height: frame().height, flexShrink: 0, padding: BEZEL - 1, borderRadius: 44, borderWidth: 1, borderColor: C.lineStrong, backgroundColor: "#000" }}>
                   <View testID="screen" style={{ flex: 1, minHeight: 0, position: "relative", borderRadius: 34, overflow: "hidden" }} />
                   <If when={drag().active}>
@@ -1416,8 +1444,6 @@ function App() {
                     </View>
                   </If>
                 </View>
-              </Scroll>
-              </Scroll>
               {/* 选中的不是画面上这台（没在运行、正在启动、正在切换）：盖住画面，说明它的状态 */}
               <If when={!shownIsLive()}>
                 <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 10, padding: 24, backgroundColor: C.surface }}>

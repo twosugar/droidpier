@@ -1,5 +1,5 @@
 // 网关比页面旧时页面上显示什么、要不要让网关马上检查更新。网关在 hello 后的 gateway 消息里报功能级别（shared/protocol.ts 的 GATEWAY_LEVEL）。
-import { INSTALL_CMD, updateFailureText, type UpdateState } from "../../shared/protocol.ts";
+import { updateFailureText, type UpdateState } from "../../shared/protocol.ts";
 
 /** gateway 消息的内容；null 表示旧网关（hello 后没发 gateway 就发了别的）。 */
 export type GatewayInfo = { level: number; version: string; service: boolean; autoUpdate: boolean };
@@ -14,10 +14,10 @@ export const gatewayBelow = (info: GatewayInfo | null, level: number) => (info?.
 export const shouldRequestUpdate = (info: GatewayInfo | null, pageLevel: number) =>
   info !== null && gatewayBelow(info, pageLevel) && info.service && info.autoUpdate;
 
-const manual = (text: string): GatewayBanner => ({ kind: "manual", text, command: INSTALL_CMD });
 
-/** 网关不比页面旧时返回 null。report 是网关对 update 的最近一次回复。 */
-export function gatewayBanner(info: GatewayInfo | null, pageLevel: number, report: UpdateReport | null): GatewayBanner | null {
+/** 网关不比页面旧时返回 null。report 是网关对 update 的最近一次回复；command 是这个站点的安装命令。 */
+export function gatewayBanner(info: GatewayInfo | null, pageLevel: number, report: UpdateReport | null, command: string): GatewayBanner | null {
+  const manual = (text: string): GatewayBanner => ({ kind: "manual", text, command });
   if (!gatewayBelow(info, pageLevel)) return null;
   if (!info || !info.service) return manual("网关版本较旧，请运行安装命令更新");
   if (!info.autoUpdate) return manual("网关版本较旧，自动更新已关闭，请运行安装命令更新");

@@ -12,7 +12,7 @@ Droidpier replaces the Android Studio emulator window with a page in Chrome or E
 - Paste text from your Mac (including Chinese) and copy text out of the emulator
 - Back, Home, Recents, volume, power, rotate (the whole device turns), screenshots, restart; the Android Studio emulator's
   shortcuts for these keys work once you click the screen (⌘⌫ Back, ⇧⌘H Home, ⌘O Recents, ⌘P power, ⌘= / ⌘- volume,
-  ⌘→ rotate, ⌘S screenshot)
+  ⌘← / ⌘→ rotate left / right, ⌘S screenshot)
 - Device list: start and stop AVDs, rename and delete them, create a device by picking a model and Android version
 - H5 debugging: inspect a WebView page in an embedded DevTools, see its network requests, point it at a local dev server
 - First-run guide in the page: checks the Android SDK pieces and installs what is missing, after you confirm and accept each licence yourself
@@ -76,7 +76,7 @@ rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
 rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
 ```
 
-If `droidpier` is already deleted but the background gateway still runs or starts at login, remove it by hand:
+Quitting or killing the background gateway is not enough: it starts again. If `droidpier` is already deleted but the background gateway still runs or starts at login, remove it by hand:
 
 ```sh
 launchctl bootout gui/$(id -u)/dev.devpier.droidpier

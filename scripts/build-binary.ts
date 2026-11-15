@@ -6,6 +6,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { scrubDir } from "./scrub-paths.ts";
+import { isPublicOrigin } from "../gateway/src/auth.ts";
+import { OFFICIAL_ORIGIN } from "../shared/protocol.ts";
 
 const root = join(import.meta.dir, "..");
 const ui = join(root, ".nsh/out/Droidpier");
@@ -15,6 +17,10 @@ const name = "droidpier-darwin-arm64";
 const out = join(dist, name);
 // Cloudflare Pages 单个文件上限 25 MiB
 const PAGES_LIMIT = 25 * 2 ** 20;
+
+// 网关信任的公网页面：部署自己的一套时用 PUBLIC_ORIGIN 换掉官方的（docs/deploy.md）
+const origin = process.env.PUBLIC_ORIGIN || OFFICIAL_ORIGIN;
+if (!isPublicOrigin(origin)) throw new Error(`PUBLIC_ORIGIN 不合法：${origin}（要写成 https://主机，不带路径和结尾的 /；只有本机试用可以是 http://127.0.0.1 或 http://*.localhost）`);
 
 await stat(join(ui, "index.html")).catch(() => {
   throw new Error(`没有页面产物：${ui}，先跑 build:ui`);
@@ -33,8 +39,8 @@ const r = await Bun.build({
   compile: { target: "bun-darwin-arm64", outfile: out, assets: [stage] },
   minify: true,
   // 网关版本 = 构建时间，/healthz 报出去，另一个 droidpier 启动时按它比新旧（gateway/src/already-running.ts）；
-  // 也写进更新清单，后台网关只换比自己新的（gateway/src/updater.ts）
-  define: { DROIDPIER_VERSION: JSON.stringify(version) },
+  // 也写进更新清单，后台网关只换比自己新的（gateway/src/updater.ts）。公网页面的来源见 gateway/src/auth.ts 的 PUBLIC_ORIGIN
+  define: { DROIDPIER_VERSION: JSON.stringify(version), DROIDPIER_PUBLIC_ORIGIN: JSON.stringify(origin) },
 });
 if (!r.success) {
   for (const l of r.logs) console.error(l);
@@ -63,7 +69,7 @@ await writeFile(`${xz}.sha256`, `${sha}  ${name}.tar.xz\n`);
 await writeFile(join(dist, `${name}.update.json`), `${JSON.stringify({ name, version, sha256: sha })}\n`);
 
 const mib = (n: number) => `${(n / 2 ** 20).toFixed(1)} MiB`;
-console.log(`${out}：${mib(bin.size)}`);
+console.log(`${out}：${mib(bin.size)}  信任的公网页面 ${origin}`);
 console.log(`${xz}：${mib(packed.length)}  sha256 ${sha}`);
 if (packed.length > PAGES_LIMIT) {
   console.error(`压缩后仍超过 Cloudflare Pages 单文件上限 ${mib(PAGES_LIMIT)}`);

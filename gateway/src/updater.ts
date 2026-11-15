@@ -12,8 +12,10 @@ import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { UpdateFailure, UpdateState } from "../../shared/protocol.ts";
+import { PUBLIC_ORIGIN } from "./auth.ts";
 
-export const DOWNLOAD_BASE = "https://droid.devpier.dev/download";
+// 从构建时信任的公网页面所在站点下载（gateway/src/auth.ts 的 PUBLIC_ORIGIN）：fork 构建的网关不会换成官方版本
+export const DOWNLOAD_BASE = `${PUBLIC_ORIGIN}/download`;
 const NAME = "droidpier-darwin-arm64";
 /** 验更新清单签名的公钥；私钥只在 CI 的密钥里（scripts/sign-update.ts）。 */
 export const UPDATE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----

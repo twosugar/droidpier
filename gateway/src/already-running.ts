@@ -1,6 +1,6 @@
 // 端口已被占用时：看看占着的是不是另一个 droidpier，给出该怎么做
 import { createServer } from "node:net";
-import { INSTALL_CMD } from "../../shared/protocol.ts";
+import { INSTALL_CMD } from "./page-url.ts";
 
 /** /healthz 里的自动更新：开没开、上次检查的时间（ISO）和结果（gateway/src/updater.ts）。旧版没有。 */
 export type HealthUpdate = { auto: boolean; last?: { at: string; state: string; message?: string } };
