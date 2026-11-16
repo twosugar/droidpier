@@ -72,10 +72,17 @@ failed. Shown as 启动中 N 秒 while it lasts.
 _Avoid_: launch, startup task
 
 **Session**:
-The gateway's connection to one running emulator (`EmulatorSession`): its frame stream, input, rotation, clipboard and
-exit. A WebSocket connection is attached to at most one session at a time; the gateway works with one emulator at a
-time.
+The gateway's connection to one device (`EmulatorSession`, also exported as `DeviceSession`): an emulator over gRPC,
+or a phone through a **Phone session**. It carries the screen, input, rotation, clipboard and exit, plus `kind` and
+`caps` (what this device supports). A WebSocket connection is attached to at most one session at a time; the gateway
+works with one device at a time.
 _Avoid_: connection (that is the page's WebSocket), device
+
+**Phone session**:
+A session on a Phone (`gateway/src/phone-session.ts`): the gateway pushes the bundled scrcpy-server 5.0.1
+(`gateway/vendor/scrcpy`, Apache-2.0) to the phone, starts it over adb and reads H.264 from its video socket. The page
+gets the stream as `BIN_VIDEO` and decodes it with WebCodecs. Input is not supported yet.
+_Avoid_: scrcpy session, mirror
 
 **Current device**:
 The AVD whose session the page is attached to: named in the header and marked 当前画面 in the device list.

@@ -204,7 +204,7 @@ scrcpy 看画面、`chrome://inspect` 调 WebView、Android Studio 或终端看 
 
 1. **gateway：设备 id 改为字符串**。纯重构，模拟器行为不变，现有单测和模拟器集成测试全过。
 2. **gateway：adb 长进程 + track-devices，设备列表带真机**。页面能看到真机和授权状态，还不能连。
-3. **gateway + host：真机画面**（PhoneSession 视频部分、`BIN_VIDEO`、WebCodecs 渲染器、能力表、协议升到 2）。
+3. **gateway + host：真机画面**（PhoneSession 视频部分、`BIN_VIDEO`、WebCodecs 渲染器、能力表；协议只加不改，版本不升，见 6.4）。
 4. **gateway：真机输入和剪贴板**（touch / scroll / key / text / clip 翻译）。
 5. **gateway + ui：日志面板**（模拟器和真机共用）。
 6. **host + docs：WebMCP、README、CONTEXT.md 术语更新**（`Serial`、`Session`、`Emulator` 的定义都要改，新增「设备 id」「真机」）。
