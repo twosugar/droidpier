@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseDevtoolsSockets, createWebViews, createFreePortAllocator, parseResumedPkg, browserPkgFromSocket } from "../src/webviews.ts";
+import { parseDevtoolsSockets, createWebViews, createFreePortAllocator, parseResumedPkg, browserPkgFromSocket, parseAppBounds } from "../src/webviews.ts";
 
 // /proc/net/unix 的典型格式（abstract socket 名前缀 @）
 const PROC_NET_UNIX = `
@@ -462,4 +462,18 @@ test("前台 App 缓存 10 秒：socket 和当前标签页都没变时不再查�
   await wv.list();
   assert.equal(dumpsysCalls(d.execLog), 3);
   await wv.close();
+});
+
+test("parseAppBounds 取指定包名窗口的 mAppBounds，别的窗口和读不出时为 null", () => {
+  const out = [
+    "WINDOW MANAGER WINDOWS (dumpsys window windows)",
+    "  Window #8 Window{1a2b u0 StatusBar}:",
+    "    mFullConfiguration={ winConfig={ mBounds=Rect(0, 0 - 1080, 2340) mAppBounds=Rect(0, 0 - 1080, 136) } }",
+    "  Window #9 Window{8bb91e3 u0 com.android.chrome/com.google.android.apps.chrome.Main}:",
+    "    mFullConfiguration={1.3 winConfig={ mBounds=Rect(0, 0 - 1080, 2340) mAppBounds=Rect(0, 136 - 1080, 2274) mMaxBounds=Rect(0, 0 - 1080, 2340) } }",
+    "  Window #10 Window{92d6066 u0 Acetone}:",
+  ].join("\n");
+  assert.deepEqual(parseAppBounds(out, "com.android.chrome"), { x: 0, y: 136, width: 1080, height: 2138 });
+  assert.equal(parseAppBounds(out, "com.example"), null);
+  assert.equal(parseAppBounds("  Window #9 Window{8bb91e3 u0 com.android.chrome/x}:\n    mAppBounds=null", "com.android.chrome"), null);
 });

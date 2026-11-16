@@ -18,6 +18,21 @@ export function parseResumedPkg(out: string): string | null {
   return out.match(/ResumedActivity[:=]\s*ActivityRecord\{\S+ u\d+ ([\w.]+)\//)?.[1] ?? null;
 }
 
+/**
+ * 从 dumpsys window windows 取包名为 pkg 的窗口的 mAppBounds：App 能用的区域（去掉状态栏和导航栏，设备像素，按显示方向）。
+ * 窗口按从上到下列出，取第一个；找不到时 null。
+ */
+export function parseAppBounds(out: string, pkg: string): WebViewPage["rect"] | null {
+  for (const block of out.split(/\n(?=\s*Window #\d+ )/)) {
+    if (block.match(/^\s*Window #\d+ Window\{\S+ u\d+ ([\w.]+)\//)?.[1] !== pkg) continue;
+    const m = block.match(/mAppBounds=Rect\((-?\d+), (-?\d+) - (-?\d+), (-?\d+)\)/);
+    if (!m) continue;
+    const [l, t, r, b] = m.slice(1).map(Number);
+    if (r > l && b > t) return { x: l, y: t, width: r - l, height: b - t };
+  }
+  return null;
+}
+
 /** 解析 /proc/net/unix，返回去重后的 devtools socket 名（不含 @ 前缀）。 */
 export function parseDevtoolsSockets(procNetUnix: string): string[] {
   const seen = new Set<string>();

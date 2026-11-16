@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createInspectInput, createInspectorSlot, inspectModeChange, liveScale, pickMapping, toPageCss } from "../src/inspect.ts";
+import { browserView, createInspectInput, createInspectorSlot, inspectModeChange, liveValue, pickMapping, toPageCss } from "../src/inspect.ts";
 
 const j = (o: object) => JSON.stringify(o);
 
@@ -180,14 +180,13 @@ test("转屏后重新算位置：先告诉页面 mapped:false，算好再给 tru
   assert.deepEqual(modes.slice(-2), [[true, false], [false, false]]);
 });
 
-test("liveScale：模式开着时页面缩放变了，下一次取到的是新比例；同一秒内不重复去问", async () => {
+test("liveValue：模式开着时缩放或位置变了，下一次取到的是新值；同一秒内不重复去问", async () => {
   let now = 0;
   let asked = 0;
-  let cssWidth = 400;
-  const s = liveScale(1080, 2.7, async () => (asked++, cssWidth), () => now);
+  let next = 5.4;
+  const s = liveValue(2.7, async () => (asked++, next), () => now);
   assert.equal(s.get(), 2.7);
   assert.equal(asked, 0);
-  cssWidth = 200; // 双指放大后视口变窄
   now = 1500;
   assert.equal(s.get(), 2.7); // 这次先用旧值，同时去问
   await new Promise((r) => setImmediate(r));
@@ -199,16 +198,35 @@ test("liveScale：模式开着时页面缩放变了，下一次取到的是新�
   assert.equal(asked, 1);
 });
 
-test("liveScale：问不到或答得不对时保留原来的比例", async () => {
+test("liveValue：问不到或答 null 时保留原来的值", async () => {
   let now = 0;
-  const s = liveScale(1080, 2.7, async () => { throw new Error("paused"); }, () => now);
+  const s = liveValue(2.7, async () => { throw new Error("paused"); }, () => now);
   now = 2000;
   s.get();
   await new Promise((r) => setImmediate(r));
   assert.equal(s.get(), 2.7);
-  const z = liveScale(1080, 2.7, async () => 0, () => now);
+  const z = liveValue(2.7, async () => null, () => now);
   now = 4000;
   z.get();
   await new Promise((r) => setImmediate(r));
   assert.equal(z.get(), 2.7);
+});
+
+// Chrome 113 实测：内容区 [0,136]-[1080,2274]，地址栏收起时视口 1081x2140，展开时矮 154（56dp × 2.75）
+const APP = { x: 0, y: 136, width: 1080, height: 2138 };
+const lm = (w: number, h: number, cssW: number) => ({ layoutViewport: { clientWidth: w, clientHeight: h }, cssVisualViewport: { clientWidth: cssW } });
+
+test("browserView：标签页贴着内容区底边，地址栏收起和展开时顶边跟着变", () => {
+  assert.deepEqual(browserView(APP, lm(1081, 2138, 393.09)), { rect: { x: 0, y: 136, width: 1080, height: 2138 }, scale: 1080 / 393.09 });
+  const shown = browserView(APP, lm(1081, 1984, 393.09))!;
+  assert.deepEqual(shown.rect, { x: 0, y: 290, width: 1080, height: 1984 });
+  // 地址栏展开时点在屏幕 y=290 + 300*2.75，落在网页 CSS y≈300
+  assert.deepEqual(toPageCss({ x: 540, y: 290 + 825 }, DEV, 0, shown.rect, shown.scale), { x: 196.5, y: 300.3 });
+});
+
+test("browserView：双指放大后按视觉视口算缩放；量不出来时 null", () => {
+  assert.equal(browserView(APP, lm(1081, 2138, 196.5))!.scale, 1080 / 196.5);
+  assert.equal(browserView(APP, {}), null);
+  assert.equal(browserView(APP, lm(1081, 2138, 0)), null);
+  assert.equal(browserView(APP, lm(0, 2138, 393)), null);
 });

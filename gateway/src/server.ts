@@ -7,7 +7,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LatestFrame } from "./latest-frame.ts";
 import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath, proxyDevtools, type DevtoolsSession } from "./devtools-proxy.ts";
-import { createInspectorSlot, pickMapping, toPageCss, type InspectPointer, liveScale } from "./inspect.ts";
+import { browserView, createInspectorSlot, liveValue, pickMapping, toPageCss, type InspectPointer } from "./inspect.ts";
 import { checkHost, checkUpgrade, createTickets, type Tickets } from "./auth.ts";
 import { createPeerCheck, type SocketsLookup } from "./peer.ts";
 import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
@@ -106,6 +106,8 @@ export type SetupOps = {
 export type DeviceDebug = {
   webviews: { list(): Promise<WebViewPage[]>; portOf(socket: string): number | undefined; close(): Promise<void> };
   reverses: { ensure(port: number): Promise<void>; removeAll(): Promise<void> };
+  /** 包名为 pkg 的窗口去掉状态栏、导航栏后的区域（设备像素，按显示方向），选择元素模式给浏览器标签页定位用；不传或读不到时 null。 */
+  appBounds?(pkg: string): Promise<WebViewPage["rect"] | null>;
 };
 
 /** WebView 调试依赖。forDevice 每台设备只调一次，换设备或设备退出时网关关掉旧的。 */
@@ -571,25 +573,37 @@ export async function startServer(opts: {
     type Target = { send: DevtoolsSession["send"]; socket: string; pageId: string };
     const inspector = createInspectorSlot<Target>({
       notify: (on, mapped) => send(ws, { t: "inspectMode", on, mapped }),
-      // 每次进入模式、转屏后重新算：WebView 的位置来自 /json 的 description，缩放来自 Page.getLayoutMetrics（停在断点上也能答），
+      // 每次进入模式、转屏后重新算：位置和缩放用 Page.getLayoutMetrics（停在断点上也能答），
       // 显示方向问页面的 screen.orientation.angle（停在断点上答不了，pickMapping 按物理方向猜）
       locate: async (t) => {
         const s = conn.session;
         const h = s && opts.debug && debug?.id === s.id ? debug : undefined;
         if (!s || !h) return null;
-        const rect = (await listPages(h)).find((p) => p.socket === t.socket && p.id === t.pageId)?.rect;
-        if (!rect) return null;
-        const metrics = await t.send("Page.getLayoutMetrics");
-        const cssWidth = Number(metrics?.cssVisualViewport?.clientWidth ?? metrics?.cssLayoutViewport?.clientWidth);
+        const page = (await listPages(h)).find((p) => p.socket === t.socket && p.id === t.pageId);
+        if (!page) return null;
+        const metrics = () => t.send("Page.getLayoutMetrics");
+        // WebView 的位置来自 /json（没在屏幕上时没有，不映射）；浏览器标签页（没有 pid）只认前台那个，
+        // 按窗口内容区和视口推，地址栏收起展开时会变（gateway/src/inspect.ts 的 browserView）
+        const tab = page.pid === undefined && page.visible && page.pkg ? page.pkg : undefined;
+        const app = tab ? ((await h.d.appBounds?.(tab)) ?? null) : null;
+        const read = (r: any) => {
+          const v = page.rect ? { rect: page.rect, scale: page.rect.width / Number(r?.cssVisualViewport?.clientWidth ?? r?.cssLayoutViewport?.clientWidth) } : app ? browserView(app, r) : null;
+          return v && Number.isFinite(v.scale) && v.scale > 0 ? v : null;
+        };
+        const first = read(await metrics());
+        if (!first) return null;
         const angle = await Promise.race([
           t.send("Runtime.evaluate", { expression: "screen.orientation.angle", returnByValue: true }).then((r) => r?.result?.value, () => undefined),
           new Promise<undefined>((r) => setTimeout(r, 1000)),
         ]);
-        const m = pickMapping({ rect, device: s.device, physical: s.rotation, angle: typeof angle === "number" ? angle : undefined, cssWidth });
+        const m = pickMapping({ rect: first.rect, device: s.device, physical: s.rotation, angle: typeof angle === "number" ? angle : undefined, cssWidth: first.rect.width / first.scale });
         if (!m) return null;
-        const viewportWidth = () => t.send("Page.getLayoutMetrics").then((r) => Number(r?.cssVisualViewport?.clientWidth ?? r?.cssLayoutViewport?.clientWidth));
-        const scale = liveScale(rect.width, m.scale, viewportWidth);
-        return (p) => (conn.session === s ? toPageCss(p, s.device, m.rotation, rect, scale.get()) : null);
+        const view = liveValue(first, () => metrics().then(read));
+        return (p) => {
+          if (conn.session !== s) return null;
+          const v = view.get();
+          return toPageCss(p, s.device, m.rotation, v.rect, v.scale);
+        };
       },
     });
     let relocateTimer: ReturnType<typeof setTimeout> | undefined;

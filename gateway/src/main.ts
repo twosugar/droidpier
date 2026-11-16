@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { checkEnv, realEnvDeps } from "./setup.ts";
 import { cleanStaleInstallTmp, createInstaller, fetchWithIdle, realInstallerDeps, requireRepoUrl } from "./installer.ts";
 import { buildCatalog, realCatalogDeps } from "./catalog.ts";
-import { createWebViews, defaultFetchJson, defaultFetchVersion, findFreePort, makeAdbExec, releasePort } from "./webviews.ts";
+import { createWebViews, defaultFetchJson, defaultFetchVersion, findFreePort, makeAdbExec, parseAppBounds, releasePort } from "./webviews.ts";
 import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
 import { adb, killAdbChildren } from "./adb.ts";
@@ -222,6 +222,7 @@ srv = await startServer({
         // freePort 保留的端口只有 releasePort 才放回，两个必须成对传
         webviews: createWebViews({ exec, fetchJson: defaultFetchJson, fetchVersion: defaultFetchVersion, freePort: findFreePort, releasePort }),
         reverses: createReverses(exec),
+        appBounds: (pkg) => exec(["shell", "dumpsys", "window", "windows"]).then((out) => parseAppBounds(out, pkg)),
       };
     },
     connectCdp,

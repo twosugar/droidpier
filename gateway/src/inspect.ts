@@ -4,7 +4,7 @@ import type { Rotation, WebViewPage } from "../../shared/protocol.ts";
  * DevTools 的“选择元素”模式。
  *
  * 前端（devtools_app.html，不带画面镜像）进入这个模式后，等着被审查的页面自己拦下鼠标：移动时高亮、点下去时选中。
- * Android WebView 对注入的触摸不这样做，触摸照常进页面、点到页面自己的点击处理（2026-11-16 实测，Chrome 113 的标签页倒会拦）。
+ * Android WebView 对注入的触摸不这样做，触摸照常进页面、点到页面自己的点击处理；Chrome 113 的标签页会拦下点击，但没有鼠标就不会高亮（2026-11-16 实测）。
  * CDP 的 Input.dispatchMouseEvent 在 WebView 里会被这个模式拦下：mouseMoved 高亮，mousePressed 让前端收到
  * Overlay.inspectNodeRequested、在 Elements 里选中（同一实测）。所以模式开着时页面不发触摸，改由网关在前端的
  * 调试会话里补发鼠标事件，坐标从设备像素换成页面的 CSS 像素。
@@ -74,28 +74,43 @@ export function pickMapping(m: {
 }
 
 /**
- * 模式开着时页面可能被双指缩放：get() 先返回当前比例，离上次问超过 1 秒就顺手再问一次视口宽，下一次用新值。
- * 问不到（停在断点上）或答得不对时保留原值；不用定时器，模式关掉后没有东西要清。
+ * 模式开着时会变的位置和缩放（双指缩放、浏览器地址栏随滚动收起展开）：get() 先返回当前值，离上次问超过 1 秒就顺手再问一次，
+ * 下一次用新值。问不到（停在断点上）或答 null 时保留原值；不用定时器，模式关掉后没有东西要清。
  */
-export function liveScale(rectWidth: number, initial: number, cssWidth: () => Promise<number>, now: () => number = Date.now) {
-  let scale = initial;
+export function liveValue<T>(initial: T, ask: () => Promise<T | null>, now: () => number = Date.now) {
+  let value = initial;
   let last = now();
   let asking = false;
   return {
-    get(): number {
+    get(): T {
       if (!asking && now() - last > 1000) {
         asking = true;
         last = now();
-        cssWidth()
-          .then((w) => {
-            const next = rectWidth / w;
-            if (Number.isFinite(next) && next > 0) scale = next;
+        ask()
+          .then((v) => {
+            if (v !== null) value = v;
           }, () => {})
           .finally(() => (asking = false));
       }
-      return scale;
+      return value;
     },
   };
+}
+
+type Rect = NonNullable<WebViewPage["rect"]>;
+
+/**
+ * 浏览器标签页的网页在屏幕上的位置和缩放。/json 不给标签页的位置，用窗口内容区（app：去掉状态栏和导航栏，
+ * dumpsys window 的 mAppBounds）和 Page.getLayoutMetrics 推：地址栏收起展开时网页的底边不动，贴着内容区底边，
+ * 高度是 layoutViewport（设备像素）。缩放 = 网页宽（设备像素）/ cssVisualViewport 宽（2026-11-16 Chrome 113 实测）。
+ * 软键盘弹出、或浏览器把工具栏放在底部时网页不贴底，位置会偏，这里不处理。
+ */
+export function browserView(app: Rect, metrics: any): { rect: Rect; scale: number } | null {
+  const width = Math.min(app.width, Math.round(Number(metrics?.layoutViewport?.clientWidth)));
+  const height = Math.min(app.height, Math.round(Number(metrics?.layoutViewport?.clientHeight)));
+  const scale = width / Number(metrics?.cssVisualViewport?.clientWidth);
+  if (!(width > 0 && height > 0 && Number.isFinite(scale) && scale > 0)) return null;
+  return { rect: { x: app.x, y: app.y + app.height - height, width, height }, scale };
 }
 
 export type InspectPointer = { kind: "move" | "down" | "up"; x: number; y: number };

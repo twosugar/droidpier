@@ -325,7 +325,7 @@ export type ServerMsg =
   | { t: "deleteAvd"; rid: number; ok: boolean; error?: string }
   /**
    * 这个页面打开的 DevTools 进入、退出“选择元素”模式时发（gateway/src/inspect.ts）。
-   * mapped：网关知道页面在屏幕上的位置，页面这时不发触摸、改发 inspectPointer；为 false 时照常发触摸（Chrome 的标签页自己会拦下点击）。
+   * mapped：网关知道页面在屏幕上的位置（WebView 和浏览器标签页都算），页面这时不发触摸、改发 inspectPointer；算不出时为 false，照常发触摸。
    */
   | { t: "inspectMode"; on: boolean; mapped: boolean }
   | { t: "stopAvd"; rid: number; ok: boolean; error?: string }
