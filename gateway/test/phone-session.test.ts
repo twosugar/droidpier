@@ -123,15 +123,26 @@ test("取消订阅后不再收到包", async () => {
   assert.equal(got.length, 0);
 });
 
-test("requestKeyFrame 向控制连接写 [17]，200ms 内只写一次", async () => {
+test("requestKeyFrame：先写 [17]；200ms 内再请求的合并成一次，窗口结束时补写，不丢", async () => {
   const f = fakes();
   const s = await connectPhone("R5CR10WN52H", f.deps);
   s.requestKeyFrame!();
   s.requestKeyFrame!();
-  f.advance(250);
   s.requestKeyFrame!();
   await tick();
+  assert.deepEqual(f.control.written.map((b) => [...b]), [[17]]);
+  await sleep(260);
   assert.deepEqual(f.control.written.map((b) => [...b]), [[17], [17]]);
+});
+
+test("requestKeyFrame：会话关了，窗口里攒下的那次不再补写", async () => {
+  const f = fakes();
+  const s = await connectPhone("R5CR10WN52H", f.deps);
+  s.requestKeyFrame!();
+  s.requestKeyFrame!();
+  s.close();
+  await sleep(260);
+  assert.deepEqual(f.control.written.map((b) => [...b]), [[17]]);
 });
 
 test("会话包宽高从竖变横时回调 onRotation(90)，device 不变", async () => {

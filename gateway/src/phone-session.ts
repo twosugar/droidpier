@@ -28,7 +28,11 @@ const PHONE_CAPS: DeviceCaps = { rotate: false, reboot: false, stop: false, clip
 /** 服务端起来之前 adb forward 照样接受连接、随后关掉；这么久收不到数据就算连不上。 */
 const CONNECT_TIMEOUT_MS = 5000;
 const RETRY_MS = 100;
-/** 请求关键帧的最短间隔：每个新订阅者、每次积压都会请求，合并成一次。 */
+/**
+ * 请求关键帧的最短间隔：每个新订阅者、每次积压都会请求，窗口内的合并成一次、窗口结束时补发。
+ * 不能直接丢：转屏时页面连着改几次尺寸、每次都重新订阅，丢掉最后一次的话屏幕静止时 scrcpy 不会自己出关键帧，画面就一直停住
+ * （2026-11-16 SM-G9910 实测）。
+ */
 const KEY_REQUEST_GAP_MS = 200;
 /**
  * 两次「写剪贴板 + 粘贴」之间的最短间隔：服务端异步注入粘贴键，App 处理它时才读剪贴板，
@@ -93,6 +97,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
   let size = { width: 0, height: 0 };
   let lastConfig: VideoPacket | null = null;
   let lastKeyRequest = -Infinity;
+  let keyRequestTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let port: number | null = null;
   let server: AdbStream | null = null;
@@ -112,6 +117,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
   const close = (why: string) => {
     if (closed) return;
     closed = true;
+    clearTimeout(keyRequestTimer);
     log(`${id} 的画面连接结束：${why}`);
     server?.stop();
     video?.destroy();
@@ -156,9 +162,17 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
       return () => void subs.delete(onPacket);
     },
     requestKeyFrame() {
-      if (closed || !control || now() - lastKeyRequest < KEY_REQUEST_GAP_MS) return;
-      lastKeyRequest = now();
-      control.write(RESET_VIDEO);
+      if (closed || !control || keyRequestTimer) return;
+      const write = () => {
+        lastKeyRequest = now();
+        control?.write(RESET_VIDEO);
+      };
+      const wait = lastKeyRequest + KEY_REQUEST_GAP_MS - now();
+      if (wait <= 0) return write();
+      keyRequestTimer = setTimeout(() => {
+        keyRequestTimer = undefined;
+        if (!closed) write();
+      }, wait);
     },
     async touch(x, y, down) {
       if (liftedByRotation) {
