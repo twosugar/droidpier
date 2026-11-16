@@ -81,7 +81,9 @@ _Avoid_: connection (that is the page's WebSocket), device
 **Phone session**:
 A session on a Phone (`gateway/src/phone-session.ts`): the gateway pushes the bundled scrcpy-server 5.0.1
 (`gateway/vendor/scrcpy`, Apache-2.0) to the phone, starts it over adb and reads H.264 from its video socket. The page
-gets the stream as `BIN_VIDEO` and decodes it with WebCodecs. Input is not supported yet.
+gets the stream as `BIN_VIDEO` and decodes it with WebCodecs. Touch, keys, text, native scroll and the clipboard go
+over scrcpy's control socket; the phone's clipboard changes come back the same way. Rotation follows the phone, and
+reboot and stop are not supported.
 _Avoid_: scrcpy session, mirror
 
 **Current device**:
