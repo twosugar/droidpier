@@ -4,11 +4,12 @@ import { middleEllipsis } from "./ellipsis";
 import { isStaleStatus } from "./status-rev";
 import { gbText, spaceCheck } from "../shared/disk-space";
 import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
-import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type Rotation } from "../shared/protocol";
+import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type PhoneInfo, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
 import { deviceFrame } from "../shared/screen";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
 import { matchesAvd } from "./device-search";
+import { phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
 import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
@@ -841,6 +842,8 @@ function App() {
   const fps = signal(0);
   const latency = signal(0);
   const avds = signal<Avd[] | null>(null);
+  // null：网关没发过真机列表（旧网关或没带 --phones），不显示「真机」分组
+  const phones = signal<PhoneInfo[] | null>(null);
   const boots = signal<Record<string, Boot>>({});
   const notice = signal<Notice | null>(null);
   const upgrade = signal<string | null>(null);
@@ -1032,6 +1035,7 @@ function App() {
     latency.set(p.latencyMs);
   });
   host.on("emu.avds", (p: { list: Avd[] }) => avds.set(p.list));
+  host.on("emu.phones", (p: { list: PhoneInfo[] | null }) => phones.set(p.list));
   host.on("emu.boot", (b: Boot) => {
     boots.set({ ...boots(), [b.name]: b });
     if (b.progress === "failed") {
@@ -1055,7 +1059,7 @@ function App() {
       () => copyFailed.set(true),
     );
   };
-  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & Omit<Setup, "rev">) => {
+  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; phones?: PhoneInfo[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & Omit<Setup, "rev">) => {
     applySetup({ env: s.env, installs: s.installs, license: s.license, rev: s.rev });
     if (!isStaleStatus(s.rev, gatewayRev)) {
       gatewayRev = s.rev;
@@ -1073,6 +1077,7 @@ function App() {
     fps.set(s.fps);
     latency.set(s.latencyMs);
     if (s.avds) avds.set(s.avds);
+    if (s.phones) phones.set(s.phones);
     boots.set(Object.fromEntries(s.boots.map((b) => [b.name, b])));
   });
 
@@ -1282,6 +1287,24 @@ function App() {
     );
   };
 
+  // 真机这一版只列出来，不能点；样式跟 DeviceRow 一致
+  const PhoneRow = (props: { phone: () => PhoneInfo }) => {
+    const p = props.phone;
+    return (
+      <View accessibilityLabel={`${phoneLabel(p())}，${phoneStatus(p())}`}
+        style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: "transparent" }}>
+        <View style={{ width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: C.surface }}>
+          <Icon name="smartphone" size={17} tint={p().state === "device" ? C.text : C.muted} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+          <Text style={{ color: C.text, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>{phoneLabel(p())}</Text>
+          <Text style={{ color: p().state === "device" ? C.muted : C.warn, fontSize: 11, lineHeight: 15 }}>{phoneStatus(p())}</Text>
+        </View>
+        <Text style={{ color: C.muted, fontSize: 11 }}>{phoneDetail(p())}</Text>
+      </View>
+    );
+  };
+
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: C.surface, ...ease(200) }}>
       <If when={!sidebarHidden()}>
@@ -1308,6 +1331,14 @@ function App() {
                 <If when={listed().length > 0} else={<Text style={{ color: C.muted, fontSize: 13, lineHeight: 20, paddingHorizontal: 8 }}>{`没有名字含“${query().trim()}”的设备`}</Text>}>
                   <Each of={listed()} key={(a) => a.name}>{(a) => <DeviceRow avd={a} />}</Each>
                 </If>
+              </If>
+            </If>
+            <If when={showPhones(phones())}>
+              <Text style={{ color: C.muted, fontSize: 11, fontWeight: "600", paddingHorizontal: 8, paddingTop: 12, paddingBottom: 2 }}>真机</Text>
+              <If when={(phones() ?? []).length > 0} else={
+                <Text style={{ color: C.muted, fontSize: 13, lineHeight: 20, paddingHorizontal: 8 }}>插上手机，并在手机上打开 USB 调试</Text>
+              }>
+                <Each of={phones() ?? []} key={(p) => p.id}>{(p) => <PhoneRow phone={p} />}</Each>
               </If>
             </If>
           </Scroll>

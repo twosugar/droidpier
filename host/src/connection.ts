@@ -13,6 +13,7 @@ import {
   type InstallProgress,
   type Licence,
   type FrameHeader,
+  type PhoneInfo,
   type Rotation,
   type ServerMsg,
 } from "../../shared/protocol.ts";
@@ -82,6 +83,8 @@ export function createConnection(opts: {
   /** 设备里复制了新内容。 */
   onClip?: (text: string) => void;
   onAvds?: (list: AvdInfo[]) => void;
+  /** 真机列表（网关带 --phones 时才有）。 */
+  onPhones?: (list: PhoneInfo[]) => void;
   onBoot?: (b: BootMsg) => void;
   onEnv?: (env: EnvReport) => void;
   onInstall?: (p: InstallProgress) => void;
@@ -208,6 +211,8 @@ export function createConnection(opts: {
         opts.onClip?.(m.text);
       } else if (m.t === "avds") {
         opts.onAvds?.(m.list);
+      } else if (m.t === "phones") {
+        opts.onPhones?.(m.list);
       } else if (m.t === "boot") {
         opts.onBoot?.({ name: m.name, progress: m.progress, ...(m.error ? { error: m.error } : {}) });
       } else if (m.t === "env") {

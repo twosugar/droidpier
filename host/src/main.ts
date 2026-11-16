@@ -1,6 +1,7 @@
 import { inputToMsgs, keyToMsg, pasteToMsgs, shortcutToMsg, textToMsgs, toDevice, wheelToSwipe } from "../../shared/input-map.ts";
 import { fitSize, frameLatencyMs } from "../../shared/screen.ts";
 import { createClipSync } from "./clip-sync.ts";
+import { createPhoneList } from "./phone-list.ts";
 import { createConnection, type BootMsg, type ConnState, type VersionErrorCode } from "./connection.ts";
 import { createHeldKeys } from "./held-keys.ts";
 import { createPointerTracker } from "./pointer.ts";
@@ -152,6 +153,7 @@ export async function createHost(player: Player) {
   let catalog: AvdCatalog | null = null;
 
   let avds: AvdInfo[] | null = null;
+  const phones = createPhoneList((list) => player.hostEvent("emu.phones", { list }));
   let avdWaiters: Array<(l: AvdInfo[]) => void> = [];
   const boots = new Map<string, { since: number; last: Boot }>();
   const refreshAvds = () => conn.control({ t: "avds" });
@@ -245,6 +247,7 @@ export async function createHost(player: Player) {
       avdWaiters = [];
       for (const f of w) f(list);
     },
+    onPhones: (list) => phones.onPhones(list),
     onBoot: (b) => {
       const now = Date.now();
       const prev = boots.get(b.name);
@@ -271,6 +274,7 @@ export async function createHost(player: Player) {
     onUpload: (m) => uploads.onMsg(m),
     onClose: () => {
       uploads.disconnected();
+      phones.onDisconnect();
       // 网关在更新后重启：留着“正在自动更新”，等它重新连上报新的级别
       if (updateReport?.state === "restarting") return;
       gateway = undefined;
@@ -691,7 +695,7 @@ export async function createHost(player: Player) {
       }
       if (name === "emu.status") {
         return {
-          state, serial, upgrade, rev, rotation, gateway: gatewayNote, ...stats, avds, boots: [...boots.values()].map((b) => b.last),
+          state, serial, upgrade, rev, rotation, gateway: gatewayNote, ...stats, avds, phones: phones.current(), boots: [...boots.values()].map((b) => b.last),
           env, installs, license, uploads: uploads.list(),
         };
       }
