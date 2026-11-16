@@ -162,6 +162,8 @@ export async function startServer(opts: {
   rebootWait?: (id: string) => Promise<"done" | "adb-down">;
   /** 开机进度广播和无会话时重新发现的间隔，默认 1000ms。 */
   pollMs?: number;
+  /** 发出停止指令后最多等多久确认设备停了，默认 10000ms（页面的请求 15 秒超时）。 */
+  stopWaitMs?: number;
   log?: (s: string) => void;
   /** /healthz 报的网关版本；另一个 droidpier 启动时靠它判断谁更新（gateway/src/already-running.ts）。 */
   version?: string;
@@ -386,6 +388,38 @@ export async function startServer(opts: {
         send(c.ws, { t: "status", state: "emulator-closed" });
       }
     });
+  };
+
+  // 按名字停一台设备（开机中的按开机任务的串口），等列表里看到它停了；返回给页面看的失败原因，成功返回 null。
+  // announce：停完给所有页面发新列表；删除流程里不发，删完统一发一次
+  const stopByName = async (name: string, announce = true): Promise<string | null> => {
+    const avd = opts.avd!;
+    const deadline = Date.now() + (opts.stopWaitMs ?? 10_000);
+    const wait = () => new Promise((r) => setTimeout(r, opts.pollMs ?? 1000));
+    const jobOf = () => [...jobs].find((j) => j.name === name);
+    const info = (await avd.list()).find((a) => a.name === name);
+    if (!jobOf() && !info) return `没有这个设备：${name}`;
+    if (!jobOf() && info!.running === "no") return "这台设备没有在运行";
+    // 开机任务刚建时串口还是 0，要等模拟器写出发现文件（gateway/src/lifecycle.ts 的 startAvd）
+    let serial = jobOf()?.serial || info?.serial;
+    while (!serial && jobOf() && Date.now() <= deadline) {
+      await wait();
+      serial = jobOf()?.serial;
+    }
+    if (!serial) return jobOf() ? "设备还在启动，暂时停不了，稍后再试" : "找不到这台设备的串口，没法停止";
+    try {
+      await avd.stop(serial);
+    } catch (e) {
+      return `停止失败：${(e as Error).message}`;
+    }
+    for (;;) {
+      const now = (await avd.list()).find((a) => a.name === name);
+      if (!jobOf() && (!now || now.running === "no")) break;
+      if (Date.now() > deadline) return "已经发出停止指令，但设备还在运行，稍后再试";
+      await wait();
+    }
+    if (announce) avd.list().then((list) => broadcast({ t: "avds", list }), (e: Error) => log(`停止后读取 AVD 列表失败：${e.message}`));
+    return null;
   };
 
   const startJob = (name: string) => {
@@ -1060,6 +1094,20 @@ export async function startServer(opts: {
           if (done === null) avd.list().then((list) => broadcast({ t: "avds", list }), (e: Error) => log(`改名后读取 AVD 列表失败：${e.message}`));
           break;
         }
+        case "stopAvd": {
+          if (!opts.avd) {
+            send(ws, { t: "stopAvd", rid: m.rid, ok: false, error: "网关没有管理设备" });
+            break;
+          }
+          if (deleting.has(m.name)) {
+            send(ws, { t: "stopAvd", rid: m.rid, ok: false, error: DELETING });
+            break;
+          }
+          const failed = await stopByName(m.name);
+          log(failed === null ? `已停止设备 ${m.name}` : `停止设备 ${m.name} 失败：${failed}`);
+          send(ws, { t: "stopAvd", rid: m.rid, ok: failed === null, ...(failed === null ? {} : { error: failed }) });
+          break;
+        }
         case "deleteAvd": {
           if (!opts.avd) {
             send(ws, { t: "deleteAvd", rid: m.rid, ok: false, error: "网关没有管理设备" });
@@ -1067,14 +1115,23 @@ export async function startServer(opts: {
           }
           const avd = opts.avd;
           const name = m.name;
+          const stopFirst = m.stop === true;
           // 失败原因给页面看；cause 里带本机路径的细节只写日志（gateway/src/avd.ts 的 deleteAvd）
           let detail = "";
           const tryDelete = async (): Promise<string | null> => {
             if (deleting.has(name)) return DELETING;
             // 开机任务进行中时发现文件可能还没写出来，AvdOps 看不出它在运行
-            if ([...jobs].some((j) => j.name === name)) return "这台设备正在开机，等它开机后先关闭再删除";
+            const booting = [...jobs].some((j) => j.name === name);
+            if (booting && !stopFirst) return "这台设备正在开机，等它开机后先关闭再删除";
             deleting.add(name);
             try {
+              if (stopFirst) {
+                const running = (await avd.list()).find((a) => a.name === name)?.running;
+                if (booting || (running !== undefined && running !== "no")) {
+                  const stopped = await stopByName(name, false);
+                  if (stopped !== null) return stopped;
+                }
+              }
               // 最后再按列表看一次：它还认 adb 里看得到、没开 gRPC 的模拟器（no-grpc）
               const info = (await avd.list()).find((a) => a.name === name);
               if (info && info.running !== "no") return "先关闭这台设备再删除";

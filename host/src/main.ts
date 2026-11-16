@@ -18,6 +18,8 @@ import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, 
 
 // 从这个功能级别起网关一定认 renameAvd、deleteAvd（shared/protocol.ts 的 GATEWAY_LEVEL）
 const AVD_EDIT_LEVEL = 1;
+// 从这个级别起网关认 stopAvd 和 deleteAvd 的 stop
+const AVD_STOP_LEVEL = 2;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -717,10 +719,19 @@ export async function createHost(player: Player) {
         );
       }
       // 同上；删得慢（大目录、avdmanager 起 Java）时页面先超时，网关删完照样广播新列表
+      // stop：运行中先停止再删。旧网关不认 stop，照旧回“先关闭这台设备再删除”
       if (name === "emu.deleteAvd") {
-        return conn.request({ t: "deleteAvd", name: needName(name, args) }).then(
+        const stop = (args as { stop?: unknown } | undefined)?.stop === true;
+        return conn.request({ t: "deleteAvd", name: needName(name, args), ...(stop ? { stop: true as const } : {}) }).then(
           (r) => ({ ok: r.ok, error: r.error }),
           (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_EDIT_LEVEL, "删除设备", `${e.message}：可能还在删，稍后看设备列表`) : e.message }),
+        );
+      }
+      // 网关等设备真的停了才回；旧网关不认这条消息，等满超时后同样走这里
+      if (name === "emu.stopAvd") {
+        return conn.request({ t: "stopAvd", name: needName(name, args) }).then(
+          (r) => ({ ok: r.ok, error: r.error }),
+          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_STOP_LEVEL, "停止设备", `${e.message}：可能还在停，稍后看设备列表`) : e.message }),
         );
       }
       if (name === "emu.status") {

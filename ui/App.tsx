@@ -16,7 +16,7 @@ import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
 import { AUTO_START, autoOpen } from "./console-auto";
 import { addressEdit, addressShown, addressSubmit, type AddressDraft } from "./address-field";
 import { setupCardShown } from "./setup-card";
-import { deleteBlocked } from "./avd-delete";
+import { deviceLive } from "./avd-delete";
 
 type State =
   | "connecting" | "connected" | "no-emulator" | "emulator-closed" | "booting" | "rebooting" | "disconnected"
@@ -513,16 +513,13 @@ function ToolGroup(props: { label: string; children: JSX.Element }) {
  * 菜单里的一项：可带图标；trail 是右侧的短标记（比如 ↗ 表示打开新页面）；note 是标签下面的一行说明（比如不能点的原因）；
  * danger 是删除这类破坏性操作。
  */
-function Item(props: { label: string; onSelect: () => void; disabled?: boolean; danger?: boolean; icon?: IconName; trail?: string; note?: string }) {
+function Item(props: { label: string; onSelect: () => void; disabled?: boolean; danger?: boolean; icon?: IconName; trail?: string }) {
   return (
     <MenuItem onSelect={props.onSelect} disabled={props.disabled}
       hoverStyle={{ backgroundColor: C.hover }} focusStyle={{ backgroundColor: C.hover }} disabledStyle={{ opacity: 0.4 }}
       style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, ...ease(100) }}>
       <If when={props.icon}>{(i) => <Icon name={i()} size={16} tint={C.muted} />}</If>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ color: props.danger ? C.danger : C.text, fontSize: 13 }}>{props.label}</Text>
-        <If when={props.note}>{(n) => <Text style={{ color: C.muted, fontSize: 11, lineHeight: 15 }}>{n()}</Text>}</If>
-      </View>
+      <Text style={{ flex: 1, color: props.danger ? C.danger : C.text, fontSize: 13 }}>{props.label}</Text>
       <If when={props.trail}>{(t) => <Text style={{ color: C.muted, fontSize: 12 }}>{t()}</Text>}</If>
     </MenuItem>
   );
@@ -1198,7 +1195,7 @@ function App() {
   const canStart = (a: Avd) => a.running === "no" && !isBooting(boots()[a.name]);
   // 这台正在删：改名和删除都不能再点
   const beingDeleted = (a: Avd) => deleting() && deleteTarget()?.name === a.name;
-  const deleteReason = (a: Avd) => deleteBlocked(a, isBooting(boots()[a.name]));
+  const live = (a: Avd) => deviceLive(a, isBooting(boots()[a.name]));
   const subtitle = () => {
     const a = shown();
     if (!a) return statusText();
@@ -1295,7 +1292,8 @@ function App() {
     if (!a || deleting()) return;
     deleting.set(true);
     const still = () => deleteTarget()?.name === a.name;
-    (host.call("emu.deleteAvd", { name: a.name }) as Promise<{ ok: boolean; error?: string }>).then(
+    // 运行中、开机中的由网关先停掉再删（用户在确认框里看到了提醒）
+    (host.call("emu.deleteAvd", { name: a.name, stop: true }) as Promise<{ ok: boolean; error?: string }>).then(
       (r) => {
         if (r.ok) {
           if (still()) deleteTarget.set(null);
@@ -1304,6 +1302,17 @@ function App() {
       },
       (e: Error) => { if (still()) deleteError.set(`没有删除：${e.message}`); },
     ).finally(() => deleting.set(false));
+  };
+  // 停止运行：网关等设备真的停了才回复，期间这一项显示“停止中”
+  const stopping = signal<string | null>(null);
+  const beingStopped = (a: Avd) => stopping() === a.name;
+  const stopDevice = (a: Avd) => {
+    if (stopping()) return;
+    stopping.set(a.name);
+    (host.call("emu.stopAvd", { name: a.name }) as Promise<{ ok: boolean; error?: string }>).then(
+      (r) => showNotice(r.ok ? { text: `已停止 ${avdLabel(a)}` } : { text: `没有停止：${r.error ?? "未知原因"}`, error: true }),
+      (e: Error) => showNotice({ text: `没有停止：${e.message}`, error: true }),
+    ).finally(() => stopping.set(null));
   };
   // 回复晚了（页面 15 秒超时）或别的页面删掉了它：新列表里没有这台了，就当删完
   effect(() => {
@@ -1331,8 +1340,9 @@ function App() {
           <Text style={{ color: C.muted, fontSize: 11 }}>{a().apiLevel ? ANDROID[a().apiLevel!] ?? `API ${a().apiLevel}` : ""}</Text>
         </Button>
       }>
-        <Item label="重命名…" disabled={beingDeleted(a())} onSelect={() => openRename(a())} />
-        <Item label="删除…" danger note={deleteReason(a()) ?? undefined} disabled={deleteReason(a()) !== null || beingDeleted(a())} onSelect={() => openDelete(a())} />
+        <Item label="重命名" disabled={beingDeleted(a())} onSelect={() => openRename(a())} />
+        <Item label={beingStopped(a()) ? "停止中" : "停止运行"} disabled={!live(a()) || beingStopped(a()) || beingDeleted(a())} onSelect={() => stopDevice(a())} />
+        <Item label="删除" danger disabled={beingDeleted(a())} onSelect={() => openDelete(a())} />
       </ContextMenu>
     );
   };
@@ -1439,11 +1449,11 @@ function App() {
                 <Icon name="more" size={17} tint={C.keyText} />
               </Button>
             }>
-              <Item label={state() === "rebooting" ? "重启中…" : "重启模拟器系统…"} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
+              <Item label={state() === "rebooting" ? "重启中" : "重启模拟器系统"} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
               <Item label="关闭模拟器" disabled={!shownIsLive() || state() !== "connected"} onSelect={() => act(host.call("emu.stop", {}))} />
               <MenuSeparator style={{ height: 1, marginVertical: 4, backgroundColor: C.line }} />
-              <Item label="重命名…" disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
-              <Item label="删除…" danger note={shown() ? deleteReason(shown()!) ?? undefined : undefined} disabled={!shown() || deleteReason(shown()!) !== null || beingDeleted(shown()!)}
+              <Item label="重命名" disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
+              <Item label="删除" danger disabled={!shown() || beingDeleted(shown()!)}
                 onSelect={() => { const a = shown(); if (a) openDelete(a); }} />
             </Menu>
           </Toolbar>
@@ -1730,6 +1740,9 @@ function App() {
             <View role="group" accessibilityLabel="确认删除设备" style={{ gap: 10 }}>
               <Text role="header" style={{ color: C.text, fontSize: 15, fontWeight: "bold" }}>{`删除设备 ${avdLabel(a())}？`}</Text>
               <Text style={{ color: C.text, fontSize: 13, lineHeight: 20 }}>会删除这台设备的全部数据（已装的 App、文件、快照），不能恢复。系统镜像不会删除。</Text>
+              <If when={live(a())}>
+                <Text style={{ color: C.warn, fontSize: 13, lineHeight: 20 }}>这台设备正在运行，删除前会先停止它。</Text>
+              </If>
               <If when={deleteError()}>{(e) => <Text role="alert" style={{ color: C.danger, fontSize: 12, lineHeight: 18, userSelect: "text" }}>{e()}</Text>}</If>
               <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
                 <Btn label="取消" disabled={deleting()} onPress={() => deleteTarget.set(null)} />

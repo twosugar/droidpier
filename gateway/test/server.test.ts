@@ -475,16 +475,31 @@ function fakeAvd(sessions: Record<string, FakeSession>) {
   let running: "no" | "grpc" | "no-grpc" = "no";
   // 设了 gate 时 delete 等它放行，用来测删除进行中的请求
   let gate: Promise<void> | null = null;
+  // stuck：stop 发出去了但设备不停（测等待超时）
+  let stuck = false;
+  // lateSerial：开机任务刚建时串口还是 0，过一会儿才有（真实的发现文件要等模拟器写出来）
+  let lateSerial = false;
   const ops: AvdOps = {
-    list: async () => (deleted ? [] : [{ name: "A", running, ...(displayName ? { displayName } : {}) }]),
+    list: async () => (deleted ? [] : [{ name: "A", running, ...(running !== "no" ? { serial: 5554 } : {}), ...(displayName ? { displayName } : {}) }]),
     start: (name) => {
       calls.push(`start ${name}`);
       if (job && job.name === name && job.progress === "booting") return job;
-      job = { name, serial: 5556, grpcPort: 8556, progress: "booting", done: new Promise((res, rej) => ((resolve = res), (reject = rej))) };
+      job = { name, serial: lateSerial ? 0 : 5556, grpcPort: 8556, progress: "booting", done: new Promise((res, rej) => ((resolve = res), (reject = rej))) };
+      if (lateSerial) { const j = job; setTimeout(() => (j.serial = 5556), 80); }
       job.done.catch(() => {});
       return job;
     },
-    stop: async (serial) => void calls.push(`stop ${serial}`),
+    stop: async (serial) => {
+      calls.push(`stop ${serial}`);
+      if (stuck) return;
+      if (serial === 5554) running = "no";
+      // 停的是开机中的那台：开机任务失败结束
+      if (job && job.serial === serial && job.progress === "booting") {
+        job.progress = "failed";
+        job.error = "已停止";
+        reject(new Error("已停止"));
+      }
+    },
     use: async (name) => {
       calls.push(`use ${name}`);
       return sessions[name] ?? null;
@@ -505,6 +520,8 @@ function fakeAvd(sessions: Record<string, FakeSession>) {
     ops,
     calls,
     setRunning: (r: typeof running) => void (running = r),
+    stick: () => void (stuck = true),
+    serialLater: () => void (lateSerial = true),
     hold: () => {
       let release!: () => void;
       gate = new Promise((r) => (release = r));
@@ -2307,4 +2324,102 @@ test("不带 phones 时不发真机列表", async (t) => {
   await until(() => c.msgs.some((m) => m.t === "ready"));
   await sleep(50);
   assert.ok(!c.msgs.some((m) => m.t === "phones"));
+});
+
+test("stopAvd：停掉列表里在运行的设备，等它停了再回复，所有连接都收到新的 avds", async (t) => {
+  const f = fakeAvd({});
+  f.setRunning("grpc");
+  const { connect } = await setup(t, new FakeSession(), undefined, f.ops);
+  const a = await connect();
+  const b = await connect();
+  hello(a);
+  hello(b);
+  await until(() => a.msgs.length > 0 && b.msgs.length > 0);
+  a.ws.send(JSON.stringify({ t: "stopAvd", rid: 20, name: "A" }));
+  await until(() => a.msgs.some((m) => m.t === "stopAvd") && b.msgs.some((m) => m.t === "avds"));
+  assert.deepEqual(a.msgs.find((m) => m.t === "stopAvd"), { t: "stopAvd", rid: 20, ok: true });
+  assert.deepEqual(f.calls, ["stop 5554"]);
+  assert.deepEqual(b.msgs.findLast((m) => m.t === "avds"), { t: "avds", list: [{ name: "A", running: "no" }] });
+});
+
+test("stopAvd：开机中的设备按开机任务的串口停", async (t) => {
+  const f = fakeAvd({});
+  const { connect } = await setup(t, null, async () => null, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "start", name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "boot"));
+  c.ws.send(JSON.stringify({ t: "stopAvd", rid: 21, name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "stopAvd"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "stopAvd"), { t: "stopAvd", rid: 21, ok: true });
+  assert.ok(f.calls.includes("stop 5556"));
+});
+
+test("stopAvd：没在运行的设备回复原因，不去停", async (t) => {
+  const f = fakeAvd({});
+  const { connect } = await setup(t, new FakeSession(), undefined, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "stopAvd", rid: 22, name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "stopAvd"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "stopAvd"), { t: "stopAvd", rid: 22, ok: false, error: "这台设备没有在运行" });
+  assert.deepEqual(f.calls, []);
+});
+
+test("stopAvd：发了停止但设备一直不停时，等满时间回复超时", async (t) => {
+  const f = fakeAvd({});
+  f.setRunning("grpc");
+  f.stick();
+  const { connect } = await setup(t, new FakeSession(), undefined, f.ops, undefined, undefined, { stopWaitMs: 150 });
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "stopAvd", rid: 23, name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "stopAvd"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "stopAvd"), { t: "stopAvd", rid: 23, ok: false, error: "已经发出停止指令，但设备还在运行，稍后再试" });
+});
+
+test("deleteAvd 带 stop：运行中的设备先停再删", async (t) => {
+  const f = fakeAvd({});
+  f.setRunning("grpc");
+  const { connect } = await setup(t, new FakeSession(), undefined, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "deleteAvd", rid: 24, name: "A", stop: true }));
+  await until(() => c.msgs.some((m) => m.t === "deleteAvd"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "deleteAvd"), { t: "deleteAvd", rid: 24, ok: true });
+  assert.deepEqual(f.calls, ["stop 5554", "delete A"]);
+});
+
+test("deleteAvd 带 stop：开机中的设备也先停再删", async (t) => {
+  const f = fakeAvd({});
+  const { connect } = await setup(t, null, async () => null, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "start", name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "boot"));
+  c.ws.send(JSON.stringify({ t: "deleteAvd", rid: 25, name: "A", stop: true }));
+  await until(() => c.msgs.some((m) => m.t === "deleteAvd"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "deleteAvd"), { t: "deleteAvd", rid: 25, ok: true });
+  assert.ok(f.calls.indexOf("stop 5556") < f.calls.indexOf("delete A"));
+});
+
+test("stopAvd：开机任务刚建、还没有串口时，等串口出来再停，不去停 emulator-0", async (t) => {
+  const f = fakeAvd({});
+  f.serialLater();
+  const { connect } = await setup(t, null, async () => null, f.ops);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.length > 0);
+  c.ws.send(JSON.stringify({ t: "start", name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "boot"));
+  c.ws.send(JSON.stringify({ t: "stopAvd", rid: 26, name: "A" }));
+  await until(() => c.msgs.some((m) => m.t === "stopAvd"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "stopAvd"), { t: "stopAvd", rid: 26, ok: true });
+  assert.equal(f.calls.includes("stop 0"), false);
+  assert.ok(f.calls.includes("stop 5556"));
 });

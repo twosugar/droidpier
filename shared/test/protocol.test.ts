@@ -155,3 +155,15 @@ test("parseClientMsg：inspectPointer 只认 move/down/up 和数字坐标", () =
   assert.equal(parseClientMsg('{"t":"inspectPointer","kind":"click","x":1,"y":2}'), null);
   assert.equal(parseClientMsg('{"t":"inspectPointer","kind":"up","x":"1","y":2}'), null);
 });
+
+test("parseClientMsg 解析 stopAvd；rid、name 不对或 name 不合 AVD 名规则时返回 null", () => {
+  assert.deepEqual(parseClientMsg('{"t":"stopAvd","rid":5,"name":"Pixel_5_API_34","extra":1}'), { t: "stopAvd", rid: 5, name: "Pixel_5_API_34" });
+  assert.equal(parseClientMsg('{"t":"stopAvd","name":"A"}'), null);
+  assert.equal(parseClientMsg('{"t":"stopAvd","rid":5}'), null);
+  assert.equal(parseClientMsg(JSON.stringify({ t: "stopAvd", rid: 5, name: "../x" })), null);
+});
+
+test("parseClientMsg：deleteAvd 只在 stop 为 true 时带上 stop（运行中先停止再删）", () => {
+  assert.deepEqual(parseClientMsg('{"t":"deleteAvd","rid":4,"name":"A","stop":true}'), { t: "deleteAvd", rid: 4, name: "A", stop: true });
+  assert.deepEqual(parseClientMsg('{"t":"deleteAvd","rid":4,"name":"A","stop":"yes"}'), { t: "deleteAvd", rid: 4, name: "A" });
+});
