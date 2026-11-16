@@ -1056,6 +1056,12 @@ export async function startServer(opts: {
         case "clip":
           enqueue("clip", (s) => s.setClipboard(m.text));
           break;
+        case "scroll": {
+          // 只有 caps.scroll 的会话（真机）收原生滚动；模拟器的滚轮由页面模拟成滑动
+          const { x, y, dx, dy } = m;
+          if (conn.session?.caps.scroll && conn.session.scroll) enqueue("scroll", (s) => s.scroll?.(x, y, dx, dy) ?? Promise.resolve());
+          break;
+        }
         case "resize":
           log(`resize ${m.width}x${m.height}`);
           size = { width: m.width, height: m.height };

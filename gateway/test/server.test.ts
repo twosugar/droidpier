@@ -23,11 +23,11 @@ import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
 
 type Sub = { size: { width: number; height: number }; onFrame: (h: FrameHeader, d: Buffer) => void; active: boolean };
 
-const EMU_CAPS = { rotate: true, reboot: true, stop: true, clipboard: true, input: true };
+const EMU_CAPS = { rotate: true, reboot: true, stop: true, clipboard: true, input: true, scroll: false };
 
 class FakeSession implements EmulatorSession {
   kind: "emulator" | "phone" = "emulator";
-  caps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true };
+  caps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true, scroll: false };
   device = { width: 1080, height: 2340 };
   serial = 5554;
   id = "emulator-5554";
@@ -2439,7 +2439,7 @@ class FakePhone extends FakeSession {
   constructor(id = "R5CR10WN52H") {
     super();
     this.kind = "phone";
-    this.caps = { rotate: false, reboot: false, stop: false, clipboard: false, input: false };
+    this.caps = { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: true };
     this.id = id;
     this.serial = 0;
     this.avdName = undefined;
@@ -2450,6 +2450,8 @@ class FakePhone extends FakeSession {
     return () => { this.videoSubs = this.videoSubs.filter((x) => x !== cb); };
   }
   requestKeyFrame() { this.keyRequests++; }
+  scrolls: Array<[number, number, number, number]> = [];
+  async scroll(x: number, y: number, dx: number, dy: number) { this.scrolls.push([x, y, dx, dy]); this.calls.push("scroll"); }
   pushPacket(kind: "config" | "key" | "delta", tag: number) {
     for (const cb of this.videoSubs) cb({ config: kind === "config", key: kind === "key", data: Buffer.from([tag]), width: 864, height: 1920 });
   }
@@ -2625,4 +2627,34 @@ test("用户切到模拟器的同时真机插回：不会再连回真机，页�
   await sleep(60);
   assert.deepEqual(used, ["A"]);
   assert.equal(c.msgs.filter((m) => m.t === "ready").at(-1)?.kind, "emulator");
+});
+
+test("真机会话收到 scroll 时转给 session.scroll", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  c.ws.send(JSON.stringify({ t: "scroll", x: 10, y: 20, dx: 0, dy: 120 }));
+  await until(() => phone.scrolls.length === 1);
+  assert.deepEqual(phone.scrolls, [[10, 20, 0, 120]]);
+});
+
+test("模拟器会话收到 scroll 时忽略，不报错", async (t) => {
+  const emu = new FakeSession();
+  const s = await setup(t, emu);
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "scroll", x: 10, y: 20, dx: 0, dy: 120 }));
+  c.ws.send(JSON.stringify({ t: "touch", x: 1, y: 2, down: true }));
+  await until(() => emu.calls.includes("touch"));
+  assert.deepEqual(emu.calls, ["touch"]);
+  assert.equal(c.msgs.some((m) => m.t === "error"), false);
+});
+
+test("真机的 touch / key / text / clip 照常转给会话", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  c.ws.send(JSON.stringify({ t: "touch", x: 1, y: 2, down: true }));
+  c.ws.send(JSON.stringify({ t: "key", key: "GoBack", eventType: "keypress" }));
+  c.ws.send(JSON.stringify({ t: "text", text: "中文" }));
+  c.ws.send(JSON.stringify({ t: "clip", text: "x" }));
+  await until(() => phone.calls.length >= 4);
+  assert.deepEqual(phone.calls.filter((x) => ["touch", "key", "text", "setClipboard"].includes(x)), ["touch", "key", "text", "setClipboard"]);
 });
