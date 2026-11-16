@@ -37,5 +37,10 @@ export function createReverses(exec: (args: string[]) => Promise<string>) {
     return [...ports];
   }
 
-  return { ensure, removeAll, list };
+  /** adb server 已经把 reverse 撤了（重连过这台设备）：只忘掉记录，下次 ensure 重新建。 */
+  function forget(): void {
+    ports.clear();
+  }
+
+  return { ensure, removeAll, list, forget };
 }

@@ -973,7 +973,7 @@ function App() {
     h5Open.set(false);
     showNotice({ text: "页面已关闭，控制台已收起" });
   };
-  // 重启：确认框；adb 无响应的提示条（输入时发现的）
+  // 重启：确认框；adb 无响应的提示条（输入或读 H5 列表时发现的）
   const rebootAsk = signal(false);
   const adbStuck = signal(false);
   host.on("emu.adbStuck", () => adbStuck.set(true));
@@ -1004,7 +1004,10 @@ function App() {
     const failed = (msg: Msg) => {
       okStreak = 0;
       listError.set(msg);
-      listAdbStuck.set(!!msg.adbStuck);
+      // 刚发现 adb 卡住时在画面上提示一次（和输入时发现的同一条提示），点了忽略之后一直卡着也不再弹；
+      // 别的失败不算恢复，不清这个标记，免得卡住—别的错—又卡住时提示条再弹一次。读成功才清
+      if (msg.adbStuck && !listAdbStuck()) adbStuck.set(true);
+      if (msg.adbStuck) listAdbStuck.set(true);
       closeIfGone({ kind: "list-failed" });
     };
     call<WebViewsResult>("emu.webviews", {}).then(
@@ -1017,6 +1020,8 @@ function App() {
         closeIfGone({ kind: "list", keys: r.list.map(pageKey) });
         pages.set(r.list);
         listError.set(null);
+        // adb 又能用了（自动重连好了，或者自己恢复了）：提示条跟着收起
+        if (listAdbStuck()) adbStuck.set(false);
         listAdbStuck.set(false);
       },
       (e: Error) => {
@@ -1032,6 +1037,8 @@ function App() {
       okStreak = 0;
       pages.set(null);
       listError.set(null);
+      // 提示条说的是旧设备：换了设备就收起
+      adbStuck.set(false);
       listAdbStuck.set(false);
     }
     if (!pageHidden() && dev) refresh();

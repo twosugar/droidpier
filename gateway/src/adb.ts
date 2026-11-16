@@ -5,6 +5,11 @@ import { adbBin } from "./platform.ts";
 /** 短命令（排在设备队列里的）一次 adb 调用的超时；long 队列的超时由调用方给。 */
 export const ADB_TIMEOUT_MS = 5000;
 
+/** 同一台设备连续这么多次短命令超时，就让 adb server 重连它一次。 */
+const RECONNECT_AFTER = 2;
+/** 两次自动重连至少隔这么久：重连没用时不反复折腾，等用户重启模拟器。 */
+const RECONNECT_COOLDOWN_MS = 30_000;
+
 /** adb 调用超时：设备里的 adbd 多半卡住了。 */
 export class AdbUnresponsive extends Error {
   constructor() {
@@ -81,11 +86,48 @@ export function streamAdb(bin: string, args: string[], h: AdbStreamHandlers): Ad
  * 不带 -s 的（forward --list、devices）只找本机 adb server，不排队。
  * 装 APK、传文件要几分钟，走 long 这条单独的队列：不挡住 H5 列表这类短命令，长任务之间仍一次一个。
  */
-export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) => Promise<string>; stream?: (args: string[], h: AdbStreamHandlers) => AdbStream; execBuffer?: (args: string[], timeoutMs?: number) => Promise<Buffer>; timeoutMs?: number; log?: (s: string) => void } = {}) {
+export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) => Promise<string>; stream?: (args: string[], h: AdbStreamHandlers) => AdbStream; execBuffer?: (args: string[], timeoutMs?: number) => Promise<Buffer>; timeoutMs?: number; log?: (s: string) => void; now?: () => number } = {}) {
   const log = opts.log ?? ((s: string) => console.log(s));
   const exec = opts.exec ?? ((args: string[], timeoutMs?: number) => execAdb(adbBin(), args, timeoutMs ?? opts.timeoutMs ?? ADB_TIMEOUT_MS, log));
   const execBuffer = opts.execBuffer ?? ((args: string[], timeoutMs?: number) => execAdbBuffer(adbBin(), args, timeoutMs ?? opts.timeoutMs ?? ADB_TIMEOUT_MS, log));
+  const now = opts.now ?? Date.now;
   const tails = new Map<string, Promise<unknown>>();
+  // 设备 → 连续超时次数和上次自动重连的时间
+  const stuck = new Map<string, { count: number; reconnectedAt: number }>();
+  // 设备 → 重连完成后要通知的：adb server 断开设备时会撤掉它的 forward / reverse，缓存了它们的模块得忘掉
+  const reconnectListeners = new Map<string, Set<() => void>>();
+
+  /**
+   * 模拟器的短命令连续超时时让 adb server 重连它：模拟器里的 adbd 卡住后，adb reconnect 常常就能恢复，不用重启模拟器
+   * （2026-11-16 实测一次，同一时间页面也点了重启，没能单独确认）。重连不排队：排在卡住的命令后面就没意义了。
+   * 真机不自动重连：USB 慢时超时更常见，重连会打断投屏和正在传的文件。
+   */
+  function watch<T>(id: string, p: Promise<T>): Promise<T> {
+    return p.then(
+      (v) => {
+        // 只清计数，冷却照旧：adbd 时好时坏时也不能每隔几秒就重连一次
+        const s = stuck.get(id);
+        if (s) s.count = 0;
+        return v;
+      },
+      (e) => {
+        if (!(e instanceof AdbUnresponsive) || !id.startsWith("emulator-")) throw e;
+        const s = stuck.get(id) ?? { count: 0, reconnectedAt: -Infinity };
+        s.count++;
+        stuck.set(id, s);
+        if (s.count >= RECONNECT_AFTER && now() - s.reconnectedAt >= RECONNECT_COOLDOWN_MS) {
+          s.count = 0;
+          s.reconnectedAt = now();
+          log(`${id} 的 adb 连续没有响应，执行 adb reconnect`);
+          exec(["-s", id, "reconnect"]).then(
+            () => { for (const f of reconnectListeners.get(id) ?? []) f(); },
+            (err: Error) => log(`adb reconnect ${id} 失败：${err.message}`),
+          );
+        }
+        throw e;
+      },
+    );
+  }
 
   function queued<T>(key: string, job: () => Promise<T>): Promise<T> {
     const p = (tails.get(key) ?? Promise.resolve()).then(job);
@@ -97,17 +139,27 @@ export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) =>
 
   function run(args: string[]): Promise<string> {
     if (args[0] !== "-s" || !args[1]) return exec(args);
-    return queued(args[1], () => exec(args));
+    return watch(args[1], queued(args[1], () => exec(args)));
   }
 
   return {
     run,
+    /** 自动重连这台设备之后调 f（见 watch）；返回取消订阅。 */
+    onReconnect(id: string, f: () => void): () => void {
+      const set = reconnectListeners.get(id) ?? new Set();
+      set.add(f);
+      reconnectListeners.set(id, set);
+      return () => {
+        set.delete(f);
+        if (!set.size && reconnectListeners.get(id) === set) reconnectListeners.delete(id);
+      };
+    },
     /** 长期运行的 adb，见 streamAdb。 */
     stream: opts.stream ?? ((args: string[], h: AdbStreamHandlers) => streamAdb(adbBin(), args, h)),
     /** 这台设备上的 adb：参数是 `adb -s <设备 id>` 之后的部分。 */
     device: (id: string) => (args: string[]) => run(["-s", id, ...args]),
     /** 这台设备上输出是二进制的短命令（exec-out screencap -p），和 device 排同一条队列。 */
-    deviceBuffer: (id: string) => (args: string[], timeoutMs?: number) => queued(id, () => execBuffer(["-s", id, ...args], timeoutMs)),
+    deviceBuffer: (id: string) => (args: string[], timeoutMs?: number) => watch(id, queued(id, () => execBuffer(["-s", id, ...args], timeoutMs))),
     /** 这台设备上的长任务（install、push），超时由调用方给。 */
     long: (id: string) => (args: string[], timeoutMs: number) => {
       const full = ["-s", id, ...args];

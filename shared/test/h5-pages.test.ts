@@ -20,10 +20,14 @@ test("H5 键：连着设备、列表里有真正可见的页面才显示", () =>
   assert.equal(h5KeyShown({ ...base, list: null }), false);
 });
 
-test("H5 键：没有设备或 adb 无响应时隐藏", () => {
-  const list = [page("a", { visible: true })];
-  assert.equal(h5KeyShown({ connected: false, adbStuck: false, consoleOpen: false, list }), false);
-  assert.equal(h5KeyShown({ connected: true, adbStuck: true, consoleOpen: false, list }), false);
+test("H5 键：没有设备时隐藏", () => {
+  assert.equal(h5KeyShown({ connected: false, adbStuck: false, consoleOpen: false, list: [page("a", { visible: true })] }), false);
+  assert.equal(h5KeyShown({ connected: false, adbStuck: true, consoleOpen: false, list: null }), false);
+});
+
+test("H5 键：adb 无响应、读不到列表时也显示，好打开面板看原因", () => {
+  assert.equal(h5KeyShown({ connected: true, adbStuck: true, consoleOpen: false, list: null }), true);
+  assert.equal(h5KeyShown({ connected: true, adbStuck: true, consoleOpen: false, list: [] }), true);
 });
 
 test("H5 键：控制台开着时保留，用它收起控制台", () => {

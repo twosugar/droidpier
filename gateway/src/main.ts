@@ -248,10 +248,17 @@ srv = await startServer({
   debug: {
     forDevice: (id) => {
       const exec = makeAdbExec(id);
+      // freePort 保留的端口只有 releasePort 才放回，两个必须成对传
+      const webviews = createWebViews({ exec, fetchJson: defaultFetchJson, fetchVersion: defaultFetchVersion, freePort: findFreePort, releasePort });
+      const reverses = createReverses(exec);
+      // 网关自动重连过这台设备后，adb server 已经撤掉了它的 forward / reverse：忘掉旧记录，下次用到时重新建
+      const off = adb.onReconnect(id, () => {
+        webviews.forget();
+        reverses.forget();
+      });
       return {
-        // freePort 保留的端口只有 releasePort 才放回，两个必须成对传
-        webviews: createWebViews({ exec, fetchJson: defaultFetchJson, fetchVersion: defaultFetchVersion, freePort: findFreePort, releasePort }),
-        reverses: createReverses(exec),
+        webviews: { ...webviews, close: () => (off(), webviews.close()) },
+        reverses,
         appBounds: (pkg) => exec(["shell", "dumpsys", "window", "windows"]).then((out) => parseAppBounds(out, pkg)),
       };
     },

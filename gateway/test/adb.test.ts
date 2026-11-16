@@ -207,3 +207,112 @@ test("deviceBuffer 和 device 共用同一条设备队列", async () => {
   assert.deepEqual([...(await b)], [1]);
   assert.deepEqual(order, ["str shell true", "buf exec-out screencap -p"]);
 });
+
+/** 假 exec：按参数决定超时还是成功，记下每次调用。 */
+function scriptedExec(hang: (args: string[]) => boolean) {
+  const calls: string[] = [];
+  return {
+    calls,
+    exec: async (args: string[]) => {
+      calls.push(args.join(" "));
+      if (hang(args)) throw new AdbUnresponsive();
+      return "";
+    },
+  };
+}
+
+test("同一台设备连续两次超时后自动 adb reconnect 一次，不排在卡住的命令后面", async () => {
+  const f = scriptedExec((a) => a[2] === "shell");
+  const logs: string[] = [];
+  const adb = createAdb({ exec: f.exec, log: (s) => logs.push(s), now: () => 0 });
+  const dev = adb.device("emulator-5554");
+  await assert.rejects(dev(["shell", "a"]), AdbUnresponsive);
+  assert.ok(!f.calls.includes("-s emulator-5554 reconnect"));
+  await assert.rejects(dev(["shell", "b"]), AdbUnresponsive);
+  assert.equal(f.calls.filter((c) => c === "-s emulator-5554 reconnect").length, 1);
+  assert.ok(logs.some((l) => l.includes("adb reconnect")));
+});
+
+test("自动重连 30 秒内最多一次；中间有一次成功就重新计数", async () => {
+  let t = 0;
+  let hang = true;
+  const f = scriptedExec((a) => a[2] === "shell" && hang);
+  const adb = createAdb({ exec: f.exec, log: () => {}, now: () => t });
+  const dev = adb.device("emulator-5554");
+  const reconnects = () => f.calls.filter((c) => c.endsWith(" reconnect")).length;
+  for (let i = 0; i < 4; i++) await dev(["shell", "x"]).catch(() => {});
+  assert.equal(reconnects(), 1);
+  t = 29_999;
+  await dev(["shell", "x"]).catch(() => {});
+  assert.equal(reconnects(), 1);
+  t = 30_000;
+  await dev(["shell", "x"]).catch(() => {});
+  assert.equal(reconnects(), 2, "冷却过了还卡着：下一次超时就再重连");
+  // 时好时坏：成功只清计数，不清冷却
+  t = 40_000;
+  hang = false;
+  await dev(["shell", "x"]);
+  hang = true;
+  await dev(["shell", "x"]).catch(() => {});
+  await dev(["shell", "x"]).catch(() => {});
+  assert.equal(reconnects(), 2, "上次重连才过 10 秒，不再重连");
+  t = 70_000;
+  hang = false;
+  await dev(["shell", "x"]);
+  hang = true;
+  await dev(["shell", "x"]).catch(() => {});
+  assert.equal(reconnects(), 2, "成功过一次，之前的超时不再算");
+  await dev(["shell", "x"]).catch(() => {});
+  assert.equal(reconnects(), 3);
+});
+
+test("真机（不是 emulator-）超时不自动重连", async () => {
+  const f = scriptedExec(() => true);
+  const adb = createAdb({ exec: f.exec, execBuffer: async () => { throw new AdbUnresponsive(); }, log: () => {}, now: () => 0 });
+  for (let i = 0; i < 3; i++) await adb.device("R5CT1234")(["shell", "x"]).catch(() => {});
+  for (let i = 0; i < 3; i++) await adb.deviceBuffer("R5CT1234")(["exec-out", "screencap", "-p"]).catch(() => {});
+  assert.ok(!f.calls.some((c) => c.endsWith(" reconnect")));
+});
+
+test("重连完成后通知订阅了这台设备的模块，取消订阅后不再通知", async () => {
+  const f = scriptedExec((a) => a[2] === "shell");
+  const adb = createAdb({ exec: f.exec, log: () => {}, now: () => 0 });
+  let a = 0;
+  let b = 0;
+  const offA = adb.onReconnect("emulator-5554", () => a++);
+  adb.onReconnect("emulator-5556", () => b++);
+  const dev = adb.device("emulator-5554");
+  await dev(["shell", "x"]).catch(() => {});
+  await dev(["shell", "x"]).catch(() => {});
+  await sleep(0);
+  assert.equal(a, 1);
+  assert.equal(b, 0);
+  offA();
+  const adb2 = createAdb({ exec: f.exec, log: () => {}, now: () => 0 });
+  const off2 = adb2.onReconnect("emulator-5554", () => a++);
+  off2();
+  await adb2.device("emulator-5554")(["shell", "x"]).catch(() => {});
+  await adb2.device("emulator-5554")(["shell", "x"]).catch(() => {});
+  await sleep(0);
+  assert.equal(a, 1);
+});
+
+test("别的失败、长任务超时、别的设备都不触发重连", async () => {
+  const calls: string[] = [];
+  const adb = createAdb({
+    exec: async (args) => {
+      calls.push(args.join(" "));
+      if (args.includes("bad")) throw new Error("exit 1");
+      throw new AdbUnresponsive();
+    },
+    log: () => {},
+    now: () => 0,
+  });
+  await adb.device("emulator-5554")(["shell", "bad"]).catch(() => {});
+  await adb.device("emulator-5554")(["shell", "bad"]).catch(() => {});
+  await adb.long("emulator-5554")(["install", "a.apk"], 1000).catch(() => {});
+  await adb.long("emulator-5554")(["install", "a.apk"], 1000).catch(() => {});
+  await adb.device("emulator-5554")(["shell", "x"]).catch(() => {});
+  await adb.device("emulator-5556")(["shell", "x"]).catch(() => {});
+  assert.ok(!calls.some((c) => c.endsWith(" reconnect")));
+});

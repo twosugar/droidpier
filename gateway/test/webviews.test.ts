@@ -518,3 +518,24 @@ test("迟到的 /json 回来后：下一轮用它的结果，之后照常每轮�
   assert.equal(requests, 3);
   await wv.close();
 });
+
+test("forget：adb 重连后转发已被撤掉，下次 list 重新建转发，不去移除已经没了的", async () => {
+  const { exec, execLog, fetchJson, freePort } = makeDeps({
+    procNetUnix: `0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642`,
+    pagesJson: PAGES_JSON,
+  });
+  const released: number[] = [];
+  const wv = createWebViews({ exec, fetchJson, freePort, releasePort: (p) => released.push(p) });
+  await wv.list();
+  const forwards = () => execLog.filter((a) => a[0] === "forward" && a[1] !== "--remove" && a[1] !== "--list").length;
+  const before = forwards();
+  assert.ok(wv.portOf("webview_devtools_remote_6642"));
+  wv.forget();
+  assert.equal(wv.portOf("webview_devtools_remote_6642"), undefined);
+  assert.equal(released.length, 1);
+  await wv.list();
+  assert.equal(forwards(), before + 1, "重新建了转发");
+  const removesBefore = execLog.filter((a) => a[1] === "--remove").length;
+  await wv.close();
+  assert.equal(execLog.filter((a) => a[1] === "--remove").length, removesBefore + 1, "只移除新建的那个");
+});

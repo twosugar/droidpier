@@ -295,7 +295,15 @@ export function createWebViews(deps: WebViewsDeps) {
     if (failed.length) throw new Error(`部分 adb forward 没移除：${failed.join("；")}`);
   }
 
-  return { list, portOf, close };
+  /** adb server 已经把转发撤了（重连过这台设备）：只忘掉记录、放回端口，下次 list() 重新建。 */
+  function forget(): void {
+    for (const port of socketToPort.values()) releasePort?.(port);
+    socketToPort.clear();
+    socketToPkg.clear();
+    socketToItems.clear();
+  }
+
+  return { list, portOf, close, forget };
 }
 
 // ─────────────────────────── 端口分配器 ───────────────────────────

@@ -7,13 +7,14 @@ export function foregroundPkg(list: ListedPage[]): string | null {
 }
 
 /**
- * 左侧 H5 键显示与否：连着设备、adb 有响应，并且前台有真正可见的 H5 页面。
+ * 工具栏 H5 键显示与否：连着设备，并且前台有真正可见的 H5 页面。
+ * adb 没有响应时读不到列表、不知道有没有 H5 页面，也显示：打开后面板里说明原因、给重启按钮，不能让控制台无声无息地消失。
  * 控制台开着时一直保留，好用它收起控制台。list 为 null 表示还没成功读到过。
  */
 export function h5KeyShown(s: { connected: boolean; adbStuck: boolean; consoleOpen: boolean; list: ListedPage[] | null }): boolean {
   if (!s.connected) return false;
   if (s.consoleOpen) return true;
-  return !s.adbStuck && !!s.list?.some((p) => p.visible);
+  return s.adbStuck || !!s.list?.some((p) => p.visible);
 }
 
 const isPreload = (p: ListedPage) => p.url.startsWith("data:");
