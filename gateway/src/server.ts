@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LatestFrame } from "./latest-frame.ts";
-import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath, proxyDevtools } from "./devtools-proxy.ts";
+import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath, proxyDevtools, type DevtoolsSession } from "./devtools-proxy.ts";
+import { createInspectorSlot, pickMapping, toPageCss, type InspectPointer, liveScale } from "./inspect.ts";
 import { checkHost, checkUpgrade, createTickets, type Tickets } from "./auth.ts";
 import { createPeerCheck, type SocketsLookup } from "./peer.ts";
 import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
@@ -74,6 +75,10 @@ type Conn = {
   resubscribe(): void;
   detach(): void;
   stats: { recv: number; sent: number; bytes: number; lagMs: number; dropped: number };
+  /** 这个页面的 DevTools 连上了：返回选择元素模式开关时要调的函数。 */
+  devtoolsOpened(session: DevtoolsSession, socket: string, pageId: string, devtoolsWs: WebSocket): (on: boolean) => void;
+  /** 设备转了方向。 */
+  rotated(): void;
 };
 
 /** 设备管理操作，由 main.ts 接到 avd.ts / lifecycle.ts / session-cache.ts。 */
@@ -185,6 +190,8 @@ export async function startServer(opts: {
   const transfers = new Set<object>();
   let gatewayPort = opts.port;
   const tickets = opts.tickets ?? createTickets();
+  // 票据是哪个页面要的：DevTools 连上后，选择元素模式的开关告诉那个页面
+  const ticketOwners = new Map<string, Conn>();
   const peerCheck = createPeerCheck({ ...opts.peer, log });
 
   // 当前设备的调试工具：首次用到时创建，换设备、设备退出、网关关闭时收掉
@@ -314,6 +321,8 @@ export async function startServer(opts: {
       return;
     }
     devtoolsWss.handleUpgrade(req, socket, head, (ws) => {
+      const owner = target.ticket ? ticketOwners.get(target.ticket) : undefined;
+      if (target.ticket) ticketOwners.delete(target.ticket);
       if (!target.ticket || !tickets.take(target.ticket, target.socket, target.pageId)) {
         ws.close(CLOSE_BAD_TOKEN, "bad devtools ticket");
         return;
@@ -328,7 +337,9 @@ export async function startServer(opts: {
         h.proxies.add(ws);
         ws.on("close", () => h.proxies.delete(ws));
       }
-      proxyDevtools(ws, `ws://127.0.0.1:${port}/devtools/page/${encodeURIComponent(target.pageId)}`);
+      let onMode = (_on: boolean) => {};
+      const session = proxyDevtools(ws, `ws://127.0.0.1:${port}/devtools/page/${encodeURIComponent(target.pageId)}`, { onInspectMode: (on) => onMode(on) });
+      if (owner && conns.has(owner)) onMode = owner.devtoolsOpened(session, target.socket, target.pageId, ws);
     });
   };
   // adb 无响应统一成一句话并带 code，页面据此给出“重启模拟器”；其他失败照旧加前缀
@@ -361,6 +372,7 @@ export async function startServer(opts: {
         if (c.session !== s) continue;
         send(c.ws, { t: "orientation", rotation });
         c.resubscribe();
+        c.rotated();
       }
     });
     s.onClipboard((text) => {
@@ -512,8 +524,46 @@ export async function startServer(opts: {
       resubscribe: () => subscribe(),
       detach: () => detach(),
       stats: { recv: 0, sent: 0, bytes: 0, lagMs: 0, dropped: 0 },
+      devtoolsOpened: (session, socket, pageId, dws) => devtoolsOpened(session, socket, pageId, dws),
+      // 转屏后 App 重新排版要一会儿：马上作废旧位置，过 1.5 秒按新的 /json 再算一次
+      rotated: () => {
+        inspector.relocate();
+        clearTimeout(relocateTimer);
+        relocateTimer = setTimeout(() => inspector.relocate(), 1500);
+      },
     };
     conns.add(conn);
+    // 这个页面打开的 DevTools 和它的选择元素模式（gateway/src/inspect.ts）；同一时间只认最新的一个
+    type Target = { send: DevtoolsSession["send"]; socket: string; pageId: string };
+    const inspector = createInspectorSlot<Target>({
+      notify: (on, mapped) => send(ws, { t: "inspectMode", on, mapped }),
+      // 每次进入模式、转屏后重新算：WebView 的位置来自 /json 的 description，缩放来自 Page.getLayoutMetrics（停在断点上也能答），
+      // 显示方向问页面的 screen.orientation.angle（停在断点上答不了，pickMapping 按物理方向猜）
+      locate: async (t) => {
+        const s = conn.session;
+        const h = s && opts.debug && debug?.id === s.id ? debug : undefined;
+        if (!s || !h) return null;
+        const rect = (await listPages(h)).find((p) => p.socket === t.socket && p.id === t.pageId)?.rect;
+        if (!rect) return null;
+        const metrics = await t.send("Page.getLayoutMetrics");
+        const cssWidth = Number(metrics?.cssVisualViewport?.clientWidth ?? metrics?.cssLayoutViewport?.clientWidth);
+        const angle = await Promise.race([
+          t.send("Runtime.evaluate", { expression: "screen.orientation.angle", returnByValue: true }).then((r) => r?.result?.value, () => undefined),
+          new Promise<undefined>((r) => setTimeout(r, 1000)),
+        ]);
+        const m = pickMapping({ rect, device: s.device, physical: s.rotation, angle: typeof angle === "number" ? angle : undefined, cssWidth });
+        if (!m) return null;
+        const viewportWidth = () => t.send("Page.getLayoutMetrics").then((r) => Number(r?.cssVisualViewport?.clientWidth ?? r?.cssLayoutViewport?.clientWidth));
+        const scale = liveScale(rect.width, m.scale, viewportWidth);
+        return (p) => (conn.session === s ? toPageCss(p, s.device, m.rotation, rect, scale.get()) : null);
+      },
+    });
+    let relocateTimer: ReturnType<typeof setTimeout> | undefined;
+    const devtoolsOpened = (session: DevtoolsSession, socket: string, pageId: string, dws: WebSocket) => {
+      const dt = inspector.open({ send: (m, p) => session.send(m, p), socket, pageId });
+      dws.on("close", () => dt.close());
+      return (on: boolean) => dt.mode(on);
+    };
     const slot = new LatestFrame<Frame>();
     let sending = false;
     let unsubscribe: (() => void) | undefined;
@@ -612,7 +662,11 @@ export async function startServer(opts: {
       }
       if (!found) return send(ws, { t: "inspect", rid, error: "页面已关闭" });
       const { page } = found;
-      const url = inspectUrl(page, gatewayPort, tickets.issue(page.socket, page.id));
+      const ticket = tickets.issue(page.socket, page.id);
+      // 没用掉的票据 60 秒后自己过期，这里只防表无限长
+      if (ticketOwners.size > 32) ticketOwners.delete(ticketOwners.keys().next().value!);
+      ticketOwners.set(ticket, conn);
+      const url = inspectUrl(page, gatewayPort, ticket);
       if (url) send(ws, { t: "inspect", rid, url });
       else send(ws, { t: "inspect", rid, hint: `在 chrome://inspect 里找：${page.pkg ?? page.socket} / ${page.title}` });
     };
@@ -883,6 +937,9 @@ export async function startServer(opts: {
         return;
       }
       switch (m.t) {
+        case "inspectPointer":
+          inspector.pointer(m as InspectPointer);
+          break;
         case "touch":
           lastTouch = { x: m.x, y: m.y, down: m.down };
           enqueue("touch", (s) => s.touch(m.x, m.y, m.down));
@@ -1103,6 +1160,8 @@ export async function startServer(opts: {
       unsubscribe?.();
       unsubscribe = undefined;
       conns.delete(conn);
+      clearTimeout(relocateTimer);
+      for (const [t, c] of ticketOwners) if (c === conn) ticketOwners.delete(t);
     });
   });
 

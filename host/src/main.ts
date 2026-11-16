@@ -59,6 +59,8 @@ type Boot = BootMsg & { seconds: number };
 export async function createHost(player: Player) {
   let dpr = window.devicePixelRatio || 1;
   let rotation: Rotation = 0;
+  // DevTools 的选择元素模式开着、网关知道页面位置（见下面的 setInspect）
+  let inspecting = false;
   let device = { width: 0, height: 0 };
   let serial = 0;
   // 画布当前的 CSS 尺寸，由容器大小和设备宽高比算出
@@ -202,6 +204,7 @@ export async function createHost(player: Player) {
     onState: (s) => {
       const prev = state;
       state = s;
+      if (s !== "connected") setInspect(false);
       // 没连上本机网关时页面给出安装命令
       upgrade = s === "no-gateway" ? INSTALL : null;
       paint();
@@ -218,6 +221,7 @@ export async function createHost(player: Player) {
       statusEvent();
       refreshAvds();
     },
+    onInspectMode: (on, mapped) => setInspect(on && mapped),
     onOrientation: (r) => {
       if (r === rotation) return;
       // 方向变了，正按着的手指按旧方向换算过，先抬起
@@ -391,6 +395,21 @@ export async function createHost(player: Player) {
   // 鼠标按下状态，供滚轮处理器判断是否有拖拽进行中
   let pointerIsDown = false;
   const pointer = createPointerTracker((m) => conn.send(m), () => ({ rect: canvas.getBoundingClientRect(), device, rotation }));
+  // DevTools 的选择元素模式（网关知道页面位置时）：画面上的鼠标不再变成触摸，改发 inspectPointer，
+  // 由网关在 WebView 里高亮、选中（gateway/src/inspect.ts）；不然点击会落到页面自己的点击处理上
+  let lastInspectMove = 0;
+  function setInspect(on: boolean) {
+    if (on === inspecting) return;
+    // 正按着的手指先抬起，免得模式切换后留下按住的触摸
+    pointer.cancel();
+    inspecting = on;
+    canvas.style.cursor = on ? "crosshair" : "";
+    player.hostEvent("emu.inspectMode", { on });
+  }
+  const inspectAt = (kind: "move" | "down" | "up", e: { clientX: number; clientY: number }) => {
+    const at = toDevice({ x: e.clientX, y: e.clientY }, canvas.getBoundingClientRect(), device, rotation);
+    conn.send({ t: "inspectPointer", kind, x: at.x, y: at.y });
+  };
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !device.width) return;
     e.preventDefault();
@@ -400,10 +419,21 @@ export async function createHost(player: Player) {
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {}
-    pointer.down(e);
+    if (inspecting) inspectAt("down", e);
+    else pointer.down(e);
   });
-  canvas.addEventListener("pointermove", (e) => pointer.move(e));
-  canvas.addEventListener("pointerup", (e) => { pointerIsDown = false; pointer.up(e); });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!inspecting) return pointer.move(e);
+    // 网关那边也只留最新一条，这里再限到约 30 次每秒
+    if (!device.width || e.timeStamp - lastInspectMove < 33) return;
+    lastInspectMove = e.timeStamp;
+    inspectAt("move", e);
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    pointerIsDown = false;
+    if (inspecting) inspectAt("up", e);
+    else pointer.up(e);
+  });
   canvas.addEventListener("pointercancel", () => { pointerIsDown = false; pointer.cancel(); });
   canvas.addEventListener("lostpointercapture", () => { pointerIsDown = false; pointer.cancel(); });
 

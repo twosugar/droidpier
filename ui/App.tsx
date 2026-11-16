@@ -1,4 +1,4 @@
-import { cleanup, colorScheme, effect, host, Image, type JSX, LayoutAnimation, mount, openUrl, reduceMotion, Scroll, setColorScheme, signal, Text, View } from "nsh";
+import { cleanup, colorScheme, effect, host, Image, type JSX, keymap, LayoutAnimation, mount, openUrl, reduceMotion, Scroll, setColorScheme, signal, Text, View } from "nsh";
 import { Button, ContextMenu, Dialog, Input, Menu, MenuItem, MenuSeparator, Radio, RadioGroup, Select, Toggle, Toolbar, ToolbarGroup, Tooltip } from "nsh/base";
 import { middleEllipsis } from "./ellipsis";
 import { isStaleStatus } from "./status-rev";
@@ -13,6 +13,8 @@ import { phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
 import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
+import { AUTO_START, autoOpen } from "./console-auto";
+import { addressEdit, addressShown, addressSubmit, type AddressDraft } from "./address-field";
 import { setupCardShown } from "./setup-card";
 import { deleteBlocked } from "./avd-delete";
 
@@ -210,8 +212,6 @@ const animateNext = () => {
 // 机身边框：内边距 + 1 像素描边
 const BEZEL = 11;
 const H5_EMPTY = "没有可审查的 H5。只有 debug 包或开启了 WebView 调试的 App 才能审查；先在 App 里打开一个 H5 页面。";
-// 页头地址栏放得下的字符数，超过时中间换成省略号：地址栏窄到约 380 像素时也不折行（再折 nsh 只会在连字符处断开、后面全丢）
-const URL_BAR_CHARS = 44;
 // 下拉框里没有标题的页面，地址大约放得下的字符数
 const URL_CHARS = 28;
 const pageKey = (p: Page) => `${p.socket}/${p.id}`;
@@ -262,12 +262,15 @@ function MsgLine(props: { msg: Msg; onReboot: () => void }) {
  * onInspect：控制台已在页面里打开。 */
 function H5Console(props: {
   pages: () => Page[] | null; listError: () => Msg | null; refresh: () => void; inspected: () => Inspected | null; onReboot: () => void;
-  onInspect: (key: string, title: string) => void; onClose: () => void;
+  onInspect: (key: string, title: string) => void; onClose: () => void; onCopy: (url: string) => void;
+  /** DevTools 的选择元素模式开着，画面上的鼠标在 WebView 里高亮、选中。 */
+  picking: () => boolean;
 }) {
   const pages = props.pages;
   const listError = props.listError;
   const selected = signal<string | null>(null);
-  const address = signal("");
+  // 地址栏里改过、还没提交的内容；null 时显示页面当前的地址（ui/address-field.ts）
+  const draft = signal<AddressDraft>(null);
   const navigating = signal(false);
   const inspecting = signal(false);
   const result = signal<Msg | null>(null);
@@ -306,22 +309,43 @@ function H5Console(props: {
     inspect(p);
   });
 
-  const canNavigate = () => !!activePage() && address().trim() !== "" && !navigating();
+  const currentUrl = () => activePage()?.url;
+  // 换了审查的页面：改了一半的地址作废
+  let draftKey: string | null = null;
+  effect(() => {
+    const k = activeKey();
+    if (k !== draftKey) {
+      draftKey = k;
+      draft.set(null);
+    }
+  });
+  // 回车跳转：成功后地址栏回到跟着页面走；失败时留着改的内容，好改了再试
   const navigate = () => {
     const p = activePage();
-    if (!p || !canNavigate()) return;
+    const address = addressSubmit(draft());
+    if (!p || !address || navigating()) return;
     navigating.set(true);
     result.set(null);
-    call<NavigateResult>("emu.navigate", { socket: p.socket, id: p.id, address: address().trim() }).then(
-      (r: NavigateResult) => result.set(r.ok
-        ? { text: `已跳转：${r.title ?? ""} JSBridge：${r.bridge ? "在" : "不在"}` }
-        : { text: r.error ?? "跳转失败", error: true, adbStuck: r.adbStuck }),
+    call<NavigateResult>("emu.navigate", { socket: p.socket, id: p.id, address }).then(
+      (r: NavigateResult) => {
+        if (r.ok) draft.set(null);
+        result.set(r.ok
+          ? { text: `已跳转：${r.title ?? ""} JSBridge：${r.bridge ? "在" : "不在"}` }
+          : { text: r.error ?? "跳转失败", error: true, adbStuck: r.adbStuck });
+      },
       (e: Error) => result.set({ text: e.message, error: true }),
     ).finally(() => {
       navigating.set(false);
       props.refresh();
     });
   };
+
+  const addressFocused = signal(false);
+  // 地址栏有焦点时 Escape 放弃修改（输入框自己不报 Escape）
+  effect(() => {
+    if (!addressFocused()) return;
+    cleanup(keymap.bind("escape", () => draft.set(null), { when: "always" }));
+  });
 
   const pageTitle = (p: Page) => `${p.title || middleEllipsis(p.url, URL_CHARS)}${p.visible ? "" : "（后台）"}`;
   const items = () => appPages().map((p) => ({ value: pageKey(p), title: pageTitle(p) }));
@@ -348,7 +372,7 @@ function H5Console(props: {
             </View>
           )}
           trigger={
-            <View style={{ width: 200, height: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg }}
+            <View style={{ width: 160, height: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg }}
               hoverStyle={{ borderColor: C.lineStrong }} focusStyle={{ borderColor: C.muted }}>
               <Text style={{ flex: 1, color: activePage() ? C.text : C.muted, fontSize: 13, numberOfLines: 1 }}>
                 {activePage() ? pageTitle(activePage()!) : "没有页面"}
@@ -356,15 +380,25 @@ function H5Console(props: {
               <Icon name="chevron" size={14} tint={C.muted} />
             </View>
           } />
-        <Input value={address()} onChange={({ value }) => address.set(value)} onSubmit={navigate}
-          placeholder="localhost:5173/path" accessibilityLabel="跳转地址" autoCapitalize="none" autoCorrect={false}
-          style={{ flex: 1, minWidth: 160, height: 32, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg, color: C.text, fontSize: 12, fontFamily: "monospace" }} />
-        <Btn label={navigating() ? "跳转中…" : "跳转"} onPress={navigate} disabled={!canNavigate()} />
+        {/* 当前页面的地址：改了按回车跳转（localhost 自动 adb reverse），Escape 放弃修改 */}
+        <View role="group" accessibilityLabel="页面地址"
+          style={{ flex: 1, minWidth: 180, height: 32, flexDirection: "row", alignItems: "center", gap: 4, paddingLeft: 10, paddingRight: 2, borderRadius: 8, borderWidth: 1, borderColor: addressFocused() ? C.muted : C.line, backgroundColor: C.bg, opacity: navigating() ? 0.6 : 1 }}>
+          <Icon name="link" size={14} tint={C.muted} />
+          <Input value={addressShown(draft(), currentUrl())} onChange={({ value }) => draft.set(addressEdit(currentUrl(), value))} onSubmit={navigate}
+            submitBehavior="submit" readonly={!activePage() || navigating()}
+            onFocus={() => addressFocused.set(true)} onBlur={() => addressFocused.set(false)}
+            placeholder="localhost:5173/path" accessibilityLabel="页面地址，改了按回车跳转" autoCapitalize="none" autoCorrect={false}
+            style={{ flex: 1, minWidth: 0, height: 30, color: C.text, fontSize: 12, fontFamily: "monospace" }} />
+          <IconBtn icon="copy" label="复制地址" disabled={!currentUrl()} onPress={() => props.onCopy(currentUrl()!)} />
+        </View>
         <IconBtn icon="rotate" label="重新加载控制台" disabled={!props.inspected()} onPress={() => host.call("emu.devtoolsReload", {})} />
         <IconBtn icon="close" label="关闭控制台" onPress={props.onClose} />
       </View>
-      <If when={inspectMsg() || listError() || result()}>
+      <If when={inspectMsg() || listError() || result() || props.picking()}>
         <View style={{ gap: 4, paddingVertical: 6, paddingHorizontal: 12, borderBottomWidth: 1, borderColor: C.lineSoft }}>
+          <If when={props.picking()}>
+            <Text role="status" style={{ color: C.text, fontSize: 12, lineHeight: 18 }}>选择元素：在画面上移动鼠标高亮，点一下选中；点在网页以外的地方不起作用</Text>
+          </If>
           <If when={inspectMsg()}>
             {(m) => (
               <If when={!m().adbStuck} else={<AdbStuck onReboot={props.onReboot} />}>
@@ -920,6 +954,8 @@ function App() {
   const drag = signal<{ active: boolean; blocked: string | null }>({ active: false, blocked: null });
   host.on("emu.drag", (p: { active: boolean; blocked: string | null }) => drag.set(p));
   const inspected = signal<Inspected | null>(null);
+  const picking = signal(false);
+  host.on("emu.inspectMode", (p: { on: boolean }) => picking.set(p.on));
   const pageHidden = signal(false);
   host.on("emu.visibility", (p: { hidden: boolean }) => pageHidden.set(p.hidden));
   const closeDevtools = () => {
@@ -973,10 +1009,11 @@ function App() {
         if (dev !== device()) return;
         if (r.error) return failed(r.adbStuck ? { text: r.error, error: true, adbStuck: true } : { text: `读取 H5 列表失败：${r.error}`, error: true });
         okStreak++;
+        // 先收起已经没了的页面的控制台，再换列表：新列表里的前台页面才能把控制台自动打开（转屏后 Activity 重建、页面 id 换了时就是这样）
+        closeIfGone({ kind: "list", keys: r.list.map(pageKey) });
         pages.set(r.list);
         listError.set(null);
         listAdbStuck.set(false);
-        closeIfGone({ kind: "list", keys: r.list.map(pageKey) });
       },
       (e: Error) => {
         if (dev === device()) failed({ text: `读取 H5 列表失败：${e.message}`, error: true });
@@ -1176,9 +1213,22 @@ function App() {
     return isBooting(b) ? `启动中 ${b!.seconds} 秒` : "未运行";
   };
   const toggleH5 = () => {
-    if (h5Open()) closeDevtools();
+    if (h5Open()) {
+      closeDevtools();
+      // 用户手动关的：这个 App 的页面不再自动打开，直到出现别的 App 的 H5 页面
+      autoState = autoOpen(autoState, { kind: "closed", pkg: livePage()?.pkg ?? null }).state;
+    }
     h5Open.set(!h5Open());
   };
+  // 前台出现 H5 页面时自动打开控制台，每次出现一次（ui/console-auto.ts）
+  let autoState = AUTO_START;
+  const livePage = () => (shownIsLive() ? activePage(pages() ?? []) : undefined);
+  effect(() => {
+    const p = livePage();
+    const r = autoOpen(autoState, { kind: "active", key: p ? pageKey(p) : null, pkg: p?.pkg ?? null });
+    autoState = r.state;
+    if (r.open && !h5Open()) h5Open.set(true);
+  });
   const statusText = () => {
     const s = state();
     if (s === "connected") return `已连接 · ${fps()} 帧/秒 · 延迟 ${latency()} 毫秒`;
@@ -1363,18 +1413,6 @@ function App() {
               <Text style={{ flexShrink: 1, color: C.muted, fontSize: 11, numberOfLines: 1 }}>{subtitle()}</Text>
             </View>
           </View>
-          {/* 设备上前台页面的地址（可调试的 WebView 或 Chrome 才有），点复制按钮复制完整地址 */}
-          <If when={shownIsLive() ? activePage(pages() ?? []) : undefined}>
-            {(p) => (
-              <View role="group" accessibilityLabel="当前页面"
-                style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 160, maxWidth: 520, height: 32, paddingLeft: 10, paddingRight: 2, borderRadius: 8, borderWidth: 1, borderColor: C.lineSoft, backgroundColor: C.panel, ...ease(200) }}>
-                <Icon name="link" size={14} tint={C.muted} />
-                <Text accessibilityLabel={`当前页面地址：${p().url}`}
-                  style={{ flex: 1, minWidth: 0, color: C.keyText, fontSize: 12, fontFamily: "monospace", userSelect: "text", numberOfLines: 1 }}>{middleEllipsis(p().url, URL_BAR_CHARS)}</Text>
-                <IconBtn icon="copy" label="复制地址" onPress={() => copyHref(p().url)} />
-              </View>
-            )}
-          </If>
           <Toolbar accessibilityLabel="设备操作" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
             <ZoomControl zoom={zoom()} onZoom={setZoom} />
             <ToolGroup label="画面">
@@ -1568,7 +1606,7 @@ function App() {
         </View>
         <If when={h5Open()}>
           <H5Console pages={pages} listError={listError} refresh={refresh} inspected={inspected} onReboot={() => rebootAsk.set(true)}
-            onInspect={(key, title) => inspected.set({ key, title, serial: serial() })} onClose={toggleH5} />
+            onInspect={(key, title) => inspected.set({ key, title, serial: serial() })} onClose={toggleH5} onCopy={copyHref} picking={picking} />
         </If>
         </View>
       </View>

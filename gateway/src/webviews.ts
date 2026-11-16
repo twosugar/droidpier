@@ -2,8 +2,21 @@ import net from "node:net";
 import type { WebViewPage } from "../../shared/protocol.ts";
 import { adb } from "./adb.ts";
 
-// 匹配 webview_devtools_remote_<pid> 和 chrome_devtools_remote
-const DEVTOOLS_SOCKET_RE = /^(webview_devtools_remote_\d+|chrome_devtools_remote)$/;
+// 匹配 webview_devtools_remote_<pid>、Chrome 的 chrome_devtools_remote 和其他 Chromium 浏览器的 <包名>_devtools_remote
+const DEVTOOLS_SOCKET_RE = /^(webview_devtools_remote_\d+|chrome_devtools_remote|[A-Za-z][\w.]*_devtools_remote)$/;
+const WEBVIEW_SOCKET_RE = /^webview_devtools_remote_\d+$/;
+
+/** 浏览器 socket 按名字推出的包名：chrome_devtools_remote 是 Chrome，<包名>_devtools_remote 取前面的包名；WebView 的 socket 返回 undefined。 */
+export function browserPkgFromSocket(socket: string): string | undefined {
+  if (WEBVIEW_SOCKET_RE.test(socket)) return undefined;
+  if (socket === "chrome_devtools_remote") return "com.android.chrome";
+  return socket.match(/^(.+)_devtools_remote$/)?.[1];
+}
+
+/** 从 dumpsys activity 的 topResumedActivity / mResumedActivity 行取前台 App 的包名，读不出时返回 null。 */
+export function parseResumedPkg(out: string): string | null {
+  return out.match(/ResumedActivity[:=]\s*ActivityRecord\{\S+ u\d+ ([\w.]+)\//)?.[1] ?? null;
+}
 
 /** 解析 /proc/net/unix，返回去重后的 devtools socket 名（不含 @ 前缀）。 */
 export function parseDevtoolsSockets(procNetUnix: string): string[] {
@@ -13,7 +26,8 @@ export function parseDevtoolsSockets(procNetUnix: string): string[] {
     const col = line.trimEnd().split(/\s+/).pop() ?? "";
     if (!col.startsWith("@")) continue;
     const name = col.slice(1);
-    if (!DEVTOOLS_SOCKET_RE.test(name)) continue;
+    // Stetho（stetho_<包名>_devtools_remote）调的是 App 本身，不是网页
+    if (!DEVTOOLS_SOCKET_RE.test(name) || name.startsWith("stetho_")) continue;
     if (seen.has(name)) continue;
     seen.add(name);
     result.push(name);
@@ -26,7 +40,11 @@ export type { WebViewPage };
 type WebViewsDeps = {
   exec: (args: string[]) => Promise<string>;
   fetchJson: (port: number) => Promise<any[]>;
+  /** GET /json/version；浏览器 socket 靠里面的 Android-Package 认包名，不传或读不到时按 socket 名推。 */
+  fetchVersion?: (port: number) => Promise<any>;
   freePort: () => Promise<number>;
+  /** 当前时间（毫秒），前台 App 缓存用；测试注入。 */
+  now?: () => number;
   /** list()/close() 移除转发后调用，通知端口分配器释放保留位。 */
   releasePort?: (port: number) => void;
   /**
@@ -47,15 +65,32 @@ function pidFromSocket(socket: string): number | undefined {
  * never_attached 或 empty 为 true 时强制为不可见（即便 visible:true）。
  */
 function parseVisible(description: string | undefined): boolean {
-  if (!description) return false;
+  const d = parseDescription(description);
+  if (!d || d.never_attached || d.empty) return false;
+  return d.visible === true;
+}
+
+function parseDescription(description: string | undefined): any {
+  if (!description) return undefined;
   try {
-    const d = JSON.parse(description);
-    if (d?.never_attached || d?.empty) return false;
-    return d?.visible === true;
+    return JSON.parse(description);
   } catch {
-    return false;
+    return undefined;
   }
 }
+
+/** WebView 在屏幕上的位置（设备像素，按当前显示方向），来自 description 的 screenX/screenY/width/height；没贴到窗口上的不给。 */
+function parseRect(description: string | undefined): WebViewPage["rect"] {
+  const d = parseDescription(description);
+  if (!d || d.never_attached || d.empty) return undefined;
+  const { screenX: x, screenY: y, width, height } = d;
+  if (![x, y, width, height].every((n) => typeof n === "number" && Number.isFinite(n)) || width <= 0 || height <= 0) return undefined;
+  return { x, y, width, height };
+}
+
+const FOREGROUND_CMD = ["shell", "dumpsys activity activities 2>/dev/null | grep -m1 ResumedActivity"];
+/** 前台 App 缓存多久：用户的模拟器上 adb 可能很慢甚至卡住，每次轮询都多跑一条 shell 太重。 */
+const FOREGROUND_TTL_MS = 10_000;
 
 /**
  * 创建 WebViews 管理器。
@@ -66,7 +101,10 @@ function parseVisible(description: string | undefined): boolean {
  * TODO: Phase 3 Task 1 — 在此处加口令和 Origin 校验，与 HTTP 代理层共用同一套机制。
  */
 export function createWebViews(deps: WebViewsDeps) {
-  const { exec, fetchJson, freePort, releasePort } = deps;
+  const { exec, fetchJson, fetchVersion, freePort, releasePort } = deps;
+  const now = deps.now ?? Date.now;
+  // 上次查到的前台 App；sig（socket 和各浏览器当前标签页）变了或过了 FOREGROUND_TTL_MS 再查
+  let foreground: { pkg: string | null; at: number; sig: string } | null = null;
   const BACKOFF_SCHEDULE = deps.backoffMs ?? [3000, 6000, 12000, 30000];
 
   // socket → 本机端口
@@ -133,7 +171,7 @@ export function createWebViews(deps: WebViewsDeps) {
     }
 
     // 查询每个 socket 的页面列表
-    const pages: WebViewPage[] = [];
+    const fetched: Array<{ socket: string; pid: number | undefined; pkg: string | undefined; items: any[] }> = [];
     for (const socket of current) {
       const port = socketToPort.get(socket)!;
       const pid = pidFromSocket(socket);
@@ -147,6 +185,13 @@ export function createWebViews(deps: WebViewsDeps) {
           if (name) socketToPkg.set(socket, name);
         }
         pkg = socketToPkg.get(socket);
+      } else {
+        if (!socketToPkg.has(socket)) {
+          const v = await fetchVersion?.(port).catch(() => undefined);
+          const name = typeof v?.["Android-Package"] === "string" ? v["Android-Package"] : browserPkgFromSocket(socket);
+          if (name) socketToPkg.set(socket, name);
+        }
+        pkg = socketToPkg.get(socket);
       }
 
       let items: any[];
@@ -157,6 +202,26 @@ export function createWebViews(deps: WebViewsDeps) {
         items = socketToItems.get(socket) ?? [];
       }
 
+      fetched.push({ socket, pid, pkg, items });
+    }
+
+    // 浏览器：/json 按最近用过排序，在前台时第一个 page 就是正在看的标签页（Chrome 113 实测）。
+    // 浏览器的 socket 在后台也一直在、标签页的 /json 里没有 visible，所以有 page 标签页时才查前台 App
+    const firstTab = (items: any[]) => items.find((i) => (i.type ?? "page") === "page");
+    const browsers = fetched.filter((f) => f.pid === undefined && firstTab(f.items));
+    let fgPkg: string | null = null;
+    if (browsers.length) {
+      const sig = [...current].sort().join(",") + "|" + browsers.map((b) => `${b.socket}:${firstTab(b.items).id}`).join(",");
+      if (!foreground || foreground.sig !== sig || now() - foreground.at > FOREGROUND_TTL_MS) {
+        foreground = { pkg: await exec(FOREGROUND_CMD).then(parseResumedPkg, () => null), at: now(), sig };
+      }
+      fgPkg = foreground.pkg;
+    }
+
+    const pages: WebViewPage[] = [];
+    for (const { socket, pid, pkg, items } of fetched) {
+      const isBrowser = pid === undefined;
+      const activeTab = isBrowser && pkg !== undefined && pkg === fgPkg ? firstTab(items) : undefined;
       for (const item of items) {
         pages.push({
           socket,
@@ -165,8 +230,9 @@ export function createWebViews(deps: WebViewsDeps) {
           id: String(item.id ?? ""),
           title: String(item.title ?? ""),
           url: String(item.url ?? ""),
-          visible: parseVisible(item.description),
+          visible: isBrowser ? item === activeTab : parseVisible(item.description),
           frontendUrl: item.devtoolsFrontendUrl || undefined,
+          rect: isBrowser ? undefined : parseRect(item.description),
         });
       }
     }
@@ -285,6 +351,18 @@ export async function defaultFetchJson(port: number): Promise<any[]> {
   const tid = setTimeout(() => ctrl.abort(), 2000);
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json`, { signal: ctrl.signal });
+    return await res.json();
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+/** 默认的 fetchVersion：GET http://127.0.0.1:<port>/json/version，超时 2 秒。 */
+export async function defaultFetchVersion(port: number): Promise<any> {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 2000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: ctrl.signal });
     return await res.json();
   } finally {
     clearTimeout(tid);

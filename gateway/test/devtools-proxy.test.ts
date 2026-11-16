@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { IncomingHttpHeaders } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { startServer } from "../src/server.ts";
-import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath } from "../src/devtools-proxy.ts";
+import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath, proxyDevtools, type DevtoolsSession } from "../src/devtools-proxy.ts";
 import type { WebViewPage } from "../src/webviews.ts";
 import { createTickets, type Tickets } from "../src/auth.ts";
 import { CLOSE_BAD_TOKEN } from "../../shared/protocol.ts";
@@ -209,4 +209,80 @@ test("inspectUrl 对 socket 和页面 id 做 URL 编码，不能借 id 改写参
     inspectUrl(p, 7300, "TK"),
     `https://chrome-devtools-frontend.appspot.com/serve_rev/@abc/devtools_app.html?ws=127.0.0.1:7300/devtools/${SOCKET}/A%26x%3D1%23y/TK`,
   );
+});
+
+/** 不经网关，直接把一对 ws 接到 proxyDevtools 上。 */
+async function directProxy(t: import("node:test").TestContext) {
+  const up = await fakeUpstream(t);
+  const front = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await new Promise((r) => front.once("listening", r));
+  t.after(() => new Promise<void>((r) => { for (const s of front.clients) s.terminate(); front.close(() => r()); }));
+  const modes: boolean[] = [];
+  const session = new Promise<DevtoolsSession>((res) => front.on("connection", (ws) => res(proxyDevtools(ws, `ws://127.0.0.1:${up.port}/devtools/page/AB`, { onInspectMode: (on) => modes.push(on) }))));
+  const c = connect(t, `ws://127.0.0.1:${(front.address() as { port: number }).port}`);
+  await new Promise((r) => c.ws.once("open", r));
+  return { up, c, modes, session: await session };
+}
+
+test("选择元素模式：前端发 setInspectMode 时报开/关，页面发 inspectModeCanceled 时报关，消息照常转发", async (t) => {
+  const { up, c, modes } = await directProxy(t);
+  await until(() => up.socks.length === 1);
+  c.ws.send(JSON.stringify({ id: 3, method: "Overlay.setInspectMode", params: { mode: "searchForNode", highlightConfig: {} } }));
+  await until(() => modes.length === 1);
+  c.ws.send(JSON.stringify({ id: 4, method: "Overlay.setInspectMode", params: { mode: "none", highlightConfig: {} } }));
+  await until(() => modes.length === 2);
+  c.ws.send(JSON.stringify({ id: 5, method: "Overlay.setInspectMode", params: { mode: "searchForNode", highlightConfig: {} } }));
+  await until(() => modes.length === 3);
+  up.socks[0].send(JSON.stringify({ method: "Overlay.inspectModeCanceled", params: {} }));
+  await until(() => modes.length === 4 && c.msgs.length === 1);
+  assert.deepEqual(modes, [true, false, true, false]);
+  assert.equal(up.got.length, 3);
+});
+
+test("选择元素模式开着时连接断了，按关报一次", async (t) => {
+  const { up, c, modes } = await directProxy(t);
+  await until(() => up.socks.length === 1);
+  c.ws.send(JSON.stringify({ id: 3, method: "Overlay.setInspectMode", params: { mode: "searchForNode" } }));
+  await until(() => modes.length === 1);
+  c.ws.close();
+  await until(() => modes.length === 2);
+  assert.deepEqual(modes, [true, false]);
+});
+
+test("网关插进会话的命令：编号不和前端的撞，回复只给网关、不转给前端；页面的事件照常给前端", async (t) => {
+  const { up, c, session } = await directProxy(t);
+  await until(() => up.socks.length === 1);
+  const r = session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 2 });
+  await until(() => up.got.length === 1);
+  const sent = JSON.parse(up.got[0].data);
+  assert.ok(sent.id >= 1_000_000_000);
+  assert.deepEqual([sent.method, sent.params], ["Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 2 }]);
+  up.socks[0].send(JSON.stringify({ method: "Overlay.inspectNodeRequested", params: { backendNodeId: 9 } }));
+  up.socks[0].send(JSON.stringify({ id: sent.id, result: { ok: 1 } }));
+  assert.deepEqual(await r, { ok: 1 });
+  await until(() => c.msgs.length === 1);
+  await new Promise((res) => setTimeout(res, 30));
+  assert.deepEqual(c.msgs.map((m) => JSON.parse(m.data).method), ["Overlay.inspectNodeRequested"]);
+});
+
+test("网关的命令在会话关了之后 reject", async (t) => {
+  const { up, c, session } = await directProxy(t);
+  await until(() => up.socks.length === 1);
+  const r = session.send("Runtime.evaluate", { expression: "1" });
+  c.ws.close();
+  await assert.rejects(r, /已关闭/);
+  await assert.rejects(session.send("Runtime.evaluate", {}), /已关闭/);
+});
+
+test("和模式、网关命令无关的消息原样转发：坏 JSON、像网关编号但不是网关在等的回复", async (t) => {
+  const { up, c, modes } = await directProxy(t);
+  await until(() => up.socks.length === 1);
+  const front = ['not json "Overlay.setInspectMode"', '{"id":2,"method":"Overlay.highlightNode","params":{"mode":"searchForNode"}}'];
+  for (const m of front) c.ws.send(m);
+  const back = ['{"id":1000000123,"result":{}}', '{"method":"Overlay.inspectNodeRequested","params":{}}', "{bad"];
+  for (const m of back) up.socks[0].send(m);
+  await until(() => up.got.length === 2 && c.msgs.length === 3);
+  assert.deepEqual(up.got.map((m) => m.data), front);
+  assert.deepEqual(c.msgs.map((m) => m.data), back);
+  assert.deepEqual(modes, []);
 });

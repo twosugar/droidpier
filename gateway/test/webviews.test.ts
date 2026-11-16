@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseDevtoolsSockets, createWebViews, createFreePortAllocator } from "../src/webviews.ts";
+import { parseDevtoolsSockets, createWebViews, createFreePortAllocator, parseResumedPkg, browserPkgFromSocket } from "../src/webviews.ts";
 
 // /proc/net/unix 的典型格式（abstract socket 名前缀 @）
 const PROC_NET_UNIX = `
@@ -8,6 +8,8 @@ Num       RefCount Protocol Flags    Type St Inode Path
 0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642
 0000000000000000: 00000003 00000000 00000000 0001 03 11112 @webview_devtools_remote_6642
 0000000000000000: 00000003 00000000 00000000 0001 03 22222 @chrome_devtools_remote
+0000000000000000: 00000003 00000000 00000000 0001 03 22223 @com.example.browser_devtools_remote
+0000000000000000: 00000003 00000000 00000000 0001 03 22224 @stetho_com.example.app_devtools_remote
 0000000000000000: 00000002 00000000 00000000 0001 03 33333 @some_other_socket
 0000000000000000: 00000002 00000000 00000000 0001 03 44444 /tmp/not_abstract
 `.trim();
@@ -16,6 +18,7 @@ test("parseDevtoolsSockets 返回去重后的 devtools socket 名", () => {
   assert.deepEqual(parseDevtoolsSockets(PROC_NET_UNIX), [
     "webview_devtools_remote_6642",
     "chrome_devtools_remote",
+    "com.example.browser_devtools_remote",
   ]);
 });
 
@@ -225,8 +228,8 @@ test("close 中某个转发移除失败：其余转发照样移除、端口照�
   await wv.list();
   await assert.rejects(() => wv.close(), /9300.*device offline/);
   const removed = execLog.filter((a) => a[0] === "forward" && a[1] === "--remove").map((a) => a[2]);
-  assert.deepEqual(removed.sort(), ["tcp:9300", "tcp:9301"]);
-  assert.deepEqual(released.sort(), [9300, 9301]);
+  assert.deepEqual(removed.sort(), ["tcp:9300", "tcp:9301", "tcp:9302"]);
+  assert.deepEqual(released.sort(), [9300, 9301, 9302]);
   assert.equal(wv.portOf("webview_devtools_remote_6642"), undefined);
   assert.equal(wv.portOf("chrome_devtools_remote"), undefined);
 });
@@ -340,4 +343,123 @@ test("连续 list 失败时退避：第一次失败后短时间内不再调用 a
   // 立刻第二次：退避窗口内，不应再调用 adb
   await assert.rejects(() => wv.list());
   assert.equal(execCallCount, 1, "退避窗口内不应再调用 adb");
+});
+
+test("browserPkgFromSocket：chrome_devtools_remote 是 Chrome，<包名>_devtools_remote 取前面的包名，WebView 的不算", () => {
+  assert.equal(browserPkgFromSocket("chrome_devtools_remote"), "com.android.chrome");
+  assert.equal(browserPkgFromSocket("com.example.browser_devtools_remote"), "com.example.browser");
+  assert.equal(browserPkgFromSocket("webview_devtools_remote_6642"), undefined);
+});
+
+test("parseResumedPkg 从 dumpsys 的 topResumedActivity 行取前台包名，读不出时为 null", () => {
+  assert.equal(parseResumedPkg("    topResumedActivity=ActivityRecord{91909ce u0 com.android.chrome/org.chromium.chrome.browser.ChromeTabbedActivity t83}\n"), "com.android.chrome");
+  assert.equal(parseResumedPkg("  mResumedActivity: ActivityRecord{1a2b u0 com.example.app/.MainActivity t5}"), "com.example.app");
+  assert.equal(parseResumedPkg(""), null);
+});
+
+// Chrome 的 /json 按最近用过排序，第一个 page 就是当前标签页；description 是空的
+const TABS_JSON = [
+  { id: "29", type: "page", title: "Example Domain", url: "https://example.com/", devtoolsFrontendUrl: "https://chrome-devtools-frontend.appspot.com/serve_internal_file/@abc/inspector.html?ws=127.0.0.1:1/devtools/page/29", description: "" },
+  { id: "4", type: "page", title: "Other", url: "https://example.org/", description: "" },
+];
+
+function browserDeps(fg: string | Error) {
+  const execLog: string[][] = [];
+  let port = 9300;
+  const exec = async (args: string[]): Promise<string> => {
+    execLog.push(args);
+    if (args[0] === "shell" && args[2] === "/proc/net/unix") return "0000000000000000: 00000003 00000000 00000000 0001 03 22222 @chrome_devtools_remote";
+    if (args[0] === "shell" && args.join(" ").includes("dumpsys activity")) {
+      if (fg instanceof Error) throw fg;
+      return `  topResumedActivity=ActivityRecord{1 u0 ${fg}/.Main t1}`;
+    }
+    return "";
+  };
+  return { exec, execLog, fetchJson: async () => TABS_JSON, freePort: async () => port++ };
+}
+
+test("浏览器在前台：当前标签页（/json 里第一个 page）可见，包名来自 /json/version 的 Android-Package", async () => {
+  const d = browserDeps("com.android.chrome");
+  const versions: number[] = [];
+  const wv = createWebViews({ ...d, fetchVersion: async (p) => { versions.push(p); return { "Android-Package": "com.android.chrome" }; } });
+  const pages = await wv.list();
+  assert.deepEqual(pages.map((p) => [p.id, p.visible, p.pkg]), [["29", true, "com.android.chrome"], ["4", false, "com.android.chrome"]]);
+  assert.equal(pages[0].pid, undefined);
+  // 包名只问一次
+  await wv.list();
+  assert.equal(versions.length, 1);
+  await wv.close();
+});
+
+test("浏览器不在前台：它的标签页都不可见", async () => {
+  const d = browserDeps("com.example.app");
+  const wv = createWebViews({ ...d, fetchVersion: async () => ({ "Android-Package": "com.android.chrome" }) });
+  const pages = await wv.list();
+  assert.ok(pages.every((p) => !p.visible));
+  await wv.close();
+});
+
+test("/json/version 读不到时按 socket 名推包名；读前台失败时浏览器标签页按不可见，不让整个列表失败", async () => {
+  const d = browserDeps(new Error("dumpsys failed"));
+  const wv = createWebViews({ ...d, fetchVersion: async () => { throw new Error("timeout"); } });
+  const pages = await wv.list();
+  assert.equal(pages[0].pkg, "com.android.chrome");
+  assert.ok(pages.every((p) => !p.visible));
+  await wv.close();
+});
+
+test("只有 WebView 的 socket 时不查前台 App", async () => {
+  const { exec, execLog, fetchJson, freePort } = makeDeps({ procNetUnix: "0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642" });
+  const wv = createWebViews({ exec, fetchJson, freePort });
+  await wv.list();
+  assert.ok(!execLog.some((a) => a.join(" ").includes("dumpsys")));
+  await wv.close();
+});
+
+test("WebView 的 description 带 screenX/screenY/width/height 时给出页面在屏幕上的位置（设备像素）", async () => {
+  const { exec, fetchJson, freePort } = makeDeps({
+    procNetUnix: "0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642",
+    pagesJson: [
+      { id: "a", title: "A", url: "https://example.com/", description: JSON.stringify({ attached: true, visible: true, screenX: 0, screenY: 258, width: 1080, height: 2016 }) },
+      { id: "b", title: "B", url: "https://example.com/b", description: JSON.stringify({ visible: true, never_attached: true, screenX: 0, screenY: 0 }) },
+    ],
+  });
+  const wv = createWebViews({ exec, fetchJson, freePort });
+  const pages = await wv.list();
+  assert.deepEqual(pages.find((p) => p.id === "a")!.rect, { x: 0, y: 258, width: 1080, height: 2016 });
+  assert.equal(pages.find((p) => p.id === "b")!.rect, undefined);
+  await wv.close();
+});
+
+const dumpsysCalls = (log: string[][]) => log.filter((a) => a.join(" ").includes("dumpsys")).length;
+
+test("parseDevtoolsSockets 不收 Stetho 的 stetho_*_devtools_remote（不是网页）", () => {
+  assert.ok(!parseDevtoolsSockets(PROC_NET_UNIX).some((s) => s.startsWith("stetho_")));
+});
+
+test("浏览器没有 page 标签页时不查前台 App", async () => {
+  const d = browserDeps("com.android.chrome");
+  const wv = createWebViews({ ...d, fetchJson: async () => [{ id: "sw", type: "service_worker", url: "https://example.com/sw.js" }] });
+  await wv.list();
+  assert.equal(dumpsysCalls(d.execLog), 0);
+  await wv.close();
+});
+
+test("前台 App 缓存 10 秒：socket 和当前标签页都没变时不再查；当前标签页变了、过了 10 秒再查", async () => {
+  const d = browserDeps("com.android.chrome");
+  let t = 1000;
+  let tabs = TABS_JSON;
+  const wv = createWebViews({ ...d, fetchJson: async () => tabs, now: () => t });
+  await wv.list();
+  t += 5000;
+  const again = await wv.list();
+  assert.equal(dumpsysCalls(d.execLog), 1);
+  assert.equal(again[0].visible, true);
+  tabs = [TABS_JSON[1], TABS_JSON[0]];
+  await wv.list();
+  assert.equal(dumpsysCalls(d.execLog), 2);
+  t += 10_001;
+  await wv.list();
+  assert.equal(dumpsysCalls(d.execLog), 3);
+  await wv.close();
 });

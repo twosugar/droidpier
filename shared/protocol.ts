@@ -226,6 +226,8 @@ export type WebViewPage = {
   url: string;
   visible: boolean;
   frontendUrl?: string;
+  /** WebView 在屏幕上的位置（设备像素，按当前显示方向）；浏览器标签页没有。 */
+  rect?: { x: number; y: number; width: number; height: number };
 };
 
 /** 设备顺时针转过的角度。 */
@@ -261,6 +263,8 @@ export type ClientMsg =
   | { t: "webviews"; rid: number }
   | { t: "inspect"; rid: number; socket: string; id: string }
   | { t: "navigate"; rid: number; socket: string; id: string; address: string }
+  /** DevTools 选择元素模式下（收到 inspectMode on 且 mapped）代替触摸发：坐标同 touch，move 高亮、down + up 选中。 */
+  | { t: "inspectPointer"; kind: "move" | "down" | "up"; x: number; y: number }
   /** 改 AVD 的显示名（name 是 id）；回复同 rid 的 renameAvd，成功后网关给所有页面发新的 avds。 */
   | { t: "renameAvd"; rid: number; name: string; displayName: string }
   /** 用户在确认框里确认过才发：删掉这台 AVD 的 .ini 和数据目录（系统镜像不动）；运行中、启动中的拒绝。回复同 rid 的 deleteAvd，成功后网关给所有页面发新的 avds。 */
@@ -316,6 +320,11 @@ export type ServerMsg =
   | { t: "navigate"; rid: number; ok: boolean; href?: string; title?: string; bridge?: boolean; error?: string; code?: AdbErrorCode }
   | { t: "renameAvd"; rid: number; ok: boolean; error?: string }
   | { t: "deleteAvd"; rid: number; ok: boolean; error?: string }
+  /**
+   * 这个页面打开的 DevTools 进入、退出“选择元素”模式时发（gateway/src/inspect.ts）。
+   * mapped：网关知道页面在屏幕上的位置，页面这时不发触摸、改发 inspectPointer；为 false 时照常发触摸（Chrome 的标签页自己会拦下点击）。
+   */
+  | { t: "inspectMode"; on: boolean; mapped: boolean }
   /** hello 通过后最先发。level 见 GATEWAY_LEVEL；version 是构建时间（从源码运行时为空）；autoUpdate：后台服务且没关自动更新。 */
   | { t: "gateway"; level: number; version: string; service: boolean; autoUpdate: boolean }
   /** 回复 update；换上新版本、马上重启时（restarting）发给所有页面。message 是 deferred 的原因或 failed 的错误。 */
@@ -411,6 +420,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "navigate":
       if (!isNum(o.rid) || !isStr(o.socket) || !isStr(o.id) || !isStr(o.address)) return null;
       return o as ClientMsg;
+    case "inspectPointer":
+      if (!["move", "down", "up"].includes(o.kind as string) || !isNum(o.x) || !isNum(o.y)) return null;
+      return { t: "inspectPointer", kind: o.kind as "move" | "down" | "up", x: o.x, y: o.y };
     case "renameAvd":
       if (!isNum(o.rid) || !isStr(o.name) || !isStr(o.displayName)) return null;
       return { t: "renameAvd", rid: o.rid, name: o.name, displayName: o.displayName };

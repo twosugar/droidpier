@@ -85,6 +85,8 @@ export function createConnection(opts: {
   onAvds?: (list: AvdInfo[]) => void;
   /** 真机列表（网关带 --phones 时才有）。 */
   onPhones?: (list: PhoneInfo[]) => void;
+  /** DevTools 进入、退出选择元素模式（shared/protocol.ts 的 inspectMode）。 */
+  onInspectMode?: (on: boolean, mapped: boolean) => void;
   onBoot?: (b: BootMsg) => void;
   onEnv?: (env: EnvReport) => void;
   onInstall?: (p: InstallProgress) => void;
@@ -213,6 +215,8 @@ export function createConnection(opts: {
         opts.onAvds?.(m.list);
       } else if (m.t === "phones") {
         opts.onPhones?.(m.list);
+      } else if (m.t === "inspectMode") {
+        opts.onInspectMode?.(m.on, m.mapped);
       } else if (m.t === "boot") {
         opts.onBoot?.({ name: m.name, progress: m.progress, ...(m.error ? { error: m.error } : {}) });
       } else if (m.t === "env") {

@@ -149,3 +149,9 @@ test("parseClientMsg 解析 deleteAvd；rid、name 不对或 name 不合 AVD 名
     assert.equal(parseClientMsg(JSON.stringify({ t: "deleteAvd", rid: 4, name })), null, name);
   }
 });
+
+test("parseClientMsg：inspectPointer 只认 move/down/up 和数字坐标", () => {
+  assert.deepEqual(parseClientMsg('{"t":"inspectPointer","kind":"move","x":1,"y":2,"extra":1}'), { t: "inspectPointer", kind: "move", x: 1, y: 2 });
+  assert.equal(parseClientMsg('{"t":"inspectPointer","kind":"click","x":1,"y":2}'), null);
+  assert.equal(parseClientMsg('{"t":"inspectPointer","kind":"up","x":"1","y":2}'), null);
+});

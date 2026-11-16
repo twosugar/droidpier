@@ -1,5 +1,6 @@
 import WebSocket, { type RawData } from "ws";
 import type { WebViewPage } from "./webviews.ts";
+import { inspectModeChange } from "./inspect.ts";
 
 /** WebSocket 关闭码：/devtools/<socket>/<pageId> 里的 socket 当前没有转发。 */
 export const CLOSE_UNKNOWN_SOCKET = 4404;
@@ -23,26 +24,78 @@ function sendableCode(code: number): number {
   return ok ? code : 1000;
 }
 
+/** 网关自己插进调试会话的命令从这个编号开始，前端的编号从 1 往上数，碰不到；这些命令的回复不转给前端。 */
+const OWN_ID_BASE = 1_000_000_000;
+const OWN_ID_RE = /"id":\d{10}\b/;
+
+/** proxyDevtools 返回的句柄：在前端的调试会话里替网关发命令。 */
+export type DevtoolsSession = {
+  /** 发一条 CDP 命令，回复只给网关；会话关了或页面报错时 reject。 */
+  send(method: string, params?: object): Promise<any>;
+};
+
 /**
  * 把客户端连接和 WebView 的 DevTools WebSocket 双向接起来，任一端关闭另一端跟着关闭。
  * 连上游时不带 Origin：WebView 的 DevTools 端点对带任何 Origin 的握手都回 403（2026-11-11 实测）。
+ * onInspectMode：DevTools 的“选择元素”模式开关时调用（gateway/src/inspect.ts），连接关闭时按关处理。
  *
  * 安全：这条通道能完全控制 App 里的网页，调用前必须已在升级时核过 Origin 和票据（server.ts）。
  */
-export function proxyDevtools(client: WebSocket, upstreamUrl: string): void {
+export function proxyDevtools(client: WebSocket, upstreamUrl: string, hooks: { onInspectMode?: (on: boolean) => void } = {}): DevtoolsSession {
   const upstream = new WebSocket(upstreamUrl, { perMessageDeflate: false });
   // 上游握手完成前客户端就可能发消息，先排队
-  const pending: Array<{ data: RawData; isBinary: boolean }> = [];
+  const pending: Array<{ data: RawData | string; isBinary: boolean }> = [];
+  let nextId = OWN_ID_BASE;
+  const own = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  let inspecting = false;
+  const setInspect = (on: boolean) => {
+    if (on === inspecting) return;
+    inspecting = on;
+    hooks.onInspectMode?.(on);
+  };
+  const toUpstream = (data: RawData | string, isBinary: boolean) => {
+    if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary });
+    else if (upstream.readyState === WebSocket.CONNECTING) pending.push({ data, isBinary });
+    else return false;
+    return true;
+  };
 
   upstream.on("open", () => {
     for (const m of pending) upstream.send(m.data, { binary: m.isBinary });
     pending.length = 0;
   });
+  // 只解析可能相关的消息：DevTools 的流量很大（Network、Console），不能每条都 JSON.parse
   client.on("message", (data, isBinary) => {
-    if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary });
-    else if (upstream.readyState === WebSocket.CONNECTING) pending.push({ data, isBinary });
+    if (!isBinary) {
+      const text = data.toString();
+      if (text.includes('"Overlay.setInspectMode"')) {
+        const on = inspectModeChange(true, text);
+        if (on !== null) setInspect(on);
+      }
+    }
+    toUpstream(data, isBinary);
   });
   upstream.on("message", (data, isBinary) => {
+    if (!isBinary) {
+      const text = data.toString();
+      // 只有网关自己的回复才解析编号：先粗筛，免得每条消息都 JSON.parse
+      if (own.size && OWN_ID_RE.test(text.slice(0, 64))) {
+        try {
+          const m = JSON.parse(text);
+          const p = own.get(m.id);
+          if (p) {
+            own.delete(m.id);
+            if (m.error) p.reject(new Error(m.error.message ?? "CDP 出错"));
+            else p.resolve(m.result);
+            return;
+          }
+        } catch {}
+      }
+      if (text.includes('"Overlay.inspectModeCanceled"')) {
+        const on = inspectModeChange(false, text);
+        if (on !== null) setInspect(on);
+      }
+    }
     if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
   });
 
@@ -50,13 +103,35 @@ export function proxyDevtools(client: WebSocket, upstreamUrl: string): void {
     if (other.readyState === WebSocket.CONNECTING) other.terminate();
     else if (other.readyState === WebSocket.OPEN) other.close(sendableCode(code), reason);
   };
-  client.on("close", (code, reason) => closeOther(upstream, code, reason));
-  upstream.on("close", (code, reason) => closeOther(client, code, reason));
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    for (const p of own.values()) p.reject(new Error("DevTools 连接已关闭"));
+    own.clear();
+    setInspect(false);
+  };
+  client.on("close", (code, reason) => { closeOther(upstream, code, reason); end(); });
+  upstream.on("close", (code, reason) => { closeOther(client, code, reason); end(); });
   client.on("error", () => client.terminate());
   upstream.on("error", () => {
     upstream.terminate();
     if (client.readyState === WebSocket.OPEN) client.close(1011, "devtools upstream error");
   });
+
+  return {
+    send(method, params = {}) {
+      if (ended) return Promise.reject(new Error("DevTools 连接已关闭"));
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        own.set(id, { resolve, reject });
+        if (!toUpstream(JSON.stringify({ id, method, params }), false)) {
+          own.delete(id);
+          reject(new Error("DevTools 连接已关闭"));
+        }
+      });
+    },
+  };
 }
 
 const FRONTEND_HOST = "chrome-devtools-frontend.appspot.com";
