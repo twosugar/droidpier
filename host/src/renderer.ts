@@ -13,11 +13,19 @@ uniform sampler2D t;
 out vec4 o;
 void main() { o = vec4(texture(t, uv).rgb, 1.0); }`;
 
-/** WebGL2 画面渲染：put 只存最新一帧，绘制只发生在 requestAnimationFrame 里；没有新帧时不调度 rAF。 */
-export function createRenderer(canvas: HTMLCanvasElement, onDraw: (tsMs: number) => void): {
+/**
+ * WebGL2 画面渲染：put 只存最新一帧，绘制只发生在 requestAnimationFrame 里；没有新帧时不调度 rAF。
+ * 模拟器给 RGBA（put），真机给解码后的 VideoFrame（putVideoFrame），共用同一个程序和纹理。
+ * onDraw 的 tsMs 是模拟器帧的时间戳，真机帧传 null（手机时钟和电脑不同，不算延迟）。
+ */
+export function createRenderer(canvas: HTMLCanvasElement, onDraw: (tsMs: number | null) => void): {
   put(pixels: Uint8Array, width: number, height: number, tsMs: number): void;
-  /** 最后画到画布上的那一帧（RGBA，自上而下），还没画过为 null。 */
+  /** 收下帧的所有权：画完或被新帧顶掉时由渲染器 close()。 */
+  putVideoFrame(f: VideoFrame): void;
+  /** 最后画到画布上的那一帧（RGBA，自上而下），还没画过、或最后一帧是视频帧时为 null。 */
   shown(): { pixels: Uint8Array; width: number; height: number } | null;
+  /** 最后画到画布上的视频帧（截图用），没有时为 null。 */
+  shownVideo(): VideoFrame | null;
 } {
   const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: false })!;
   const shader = (type: number, src: string) => {
@@ -59,10 +67,30 @@ export function createRenderer(canvas: HTMLCanvasElement, onDraw: (tsMs: number)
   };
 
   let latest: { pixels: Uint8Array; width: number; height: number; tsMs: number } | null = null;
+  let latestVideo: VideoFrame | null = null;
   let shown: { pixels: Uint8Array; width: number; height: number } | null = null;
+  let shownVideo: VideoFrame | null = null;
   let scheduled = false;
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(draw);
+  };
   const draw = () => {
     scheduled = false;
+    const v = latestVideo;
+    if (v) {
+      latestVideo = null;
+      ensureTexture(v.displayWidth, v.displayHeight);
+      // 纹理是 texStorage2D 建的不可变纹理，只能 texSubImage2D；VideoFrame 也是上行在前，和 RGBA 一样由顶点着色器翻转
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, v);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      shownVideo?.close();
+      shownVideo = v;
+      shown = null;
+      onDraw(null);
+      return;
+    }
     const f = latest;
     if (!f) return;
     latest = null;
@@ -70,17 +98,23 @@ export function createRenderer(canvas: HTMLCanvasElement, onDraw: (tsMs: number)
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, f.width, f.height, gl.RGBA, gl.UNSIGNED_BYTE, f.pixels);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     shown = f;
+    shownVideo?.close();
+    shownVideo = null;
     onDraw(f.tsMs);
   };
 
   return {
     put(pixels, width, height, tsMs) {
       latest = { pixels, width, height, tsMs };
-      if (!scheduled) {
-        scheduled = true;
-        requestAnimationFrame(draw);
-      }
+      schedule();
+    },
+    putVideoFrame(f) {
+      // 还没画就被顶掉的帧要释放，否则解码器的帧池会被占满而停住
+      latestVideo?.close();
+      latestVideo = f;
+      schedule();
     },
     shown: () => shown,
+    shownVideo: () => shownVideo,
   };
 }

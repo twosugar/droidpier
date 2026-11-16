@@ -1,9 +1,11 @@
 import {
   BIN_FRAME,
   BIN_SCREENSHOT,
+  BIN_VIDEO,
   binKind,
   CLOSE_NO_EMULATOR,
   decodeFrameHeader,
+  decodeVideoHeader,
   FRAME_HEADER_BYTES,
   PROTOCOL_VERSION,
   type AvdCatalog,
@@ -12,10 +14,12 @@ import {
   type EnvReport,
   type InstallProgress,
   type Licence,
+  type DeviceCaps,
   type FrameHeader,
   type PhoneInfo,
   type Rotation,
   type ServerMsg,
+  type VideoHeader,
 } from "../../shared/protocol.ts";
 import { classifyFailure, refineLocalFailure, type LocalPermission } from "./launch.ts";
 import { createPending } from "./pending.ts";
@@ -26,7 +30,7 @@ import type { GatewayInfo, UpdateReport } from "./gateway-update.ts";
  * lna-denied（本地网络权限被拒）、lna-prompt（权限框还没点）、no-gateway（本机网关没开）、refused（网关在，但没接受这条 WebSocket）照常每秒探测，连上就恢复。
  */
 export type ConnState =
-  | "connecting" | "connected" | "no-emulator" | "emulator-closed" | "booting" | "rebooting" | "disconnected"
+  | "connecting" | "connected" | "no-emulator" | "emulator-closed" | "phone-closed" | "booting" | "rebooting" | "disconnected"
   | "lna-denied" | "lna-prompt" | "bad-origin" | "no-gateway" | "refused";
 
 /** 协议版本不兼容时的错误码。 */
@@ -75,9 +79,12 @@ export function createConnection(opts: {
   hidden: () => boolean;
   size: () => { width: number; height: number };
   onState: (s: ConnState) => void;
-  onReady: (device: { width: number; height: number }, serial: number) => void;
+  /** extra 是新网关才带的字段：deviceId（adb 设备名）、kind、caps；旧网关为空。 */
+  onReady: (device: { width: number; height: number }, serial: number, extra: { deviceId?: string; kind?: "emulator" | "phone"; caps?: DeviceCaps }) => void;
   onOrientation: (rotation: Rotation) => void;
   onFrame: (h: FrameHeader, pixels: Uint8Array) => void;
+  /** 真机的 H.264 包（BIN_VIDEO）。 */
+  onVideo?: (h: VideoHeader, data: Uint8Array) => void;
   /** 收到截图 PNG 时回调（4 字节 kind 之后的 PNG 数据）。 */
   onScreenshot?: (name: string, png: Uint8Array) => void;
   /** 设备里复制了新内容。 */
@@ -177,6 +184,9 @@ export function createConnection(opts: {
         if (kind === BIN_FRAME) {
           if (e.data.byteLength < FRAME_HEADER_BYTES) return;
           opts.onFrame(decodeFrameHeader(e.data), new Uint8Array(e.data, FRAME_HEADER_BYTES));
+        } else if (kind === BIN_VIDEO) {
+          if (e.data.byteLength < FRAME_HEADER_BYTES) return;
+          opts.onVideo?.(decodeVideoHeader(e.data), new Uint8Array(e.data, FRAME_HEADER_BYTES));
         } else if (kind === BIN_SCREENSHOT && pendingScreenshot) {
           const name = pendingScreenshot;
           pendingScreenshot = null;
@@ -200,11 +210,11 @@ export function createConnection(opts: {
       } else if (m.t === "update") {
         opts.onUpdate?.({ state: m.state, ...(m.message ? { message: m.message } : {}) });
       } else if (m.t === "ready") {
-        opts.onReady(m.device, m.serial);
+        opts.onReady(m.device, m.serial, { deviceId: m.deviceId, kind: m.kind, caps: m.caps });
         setState("connected");
       } else if (m.t === "status") {
-        // 模拟器关掉后，重连时网关会回 no-emulator；继续显示"已关闭"，直到重新连上
-        if (!(m.state === "no-emulator" && state === "emulator-closed")) setState(m.state);
+        // 设备断开后，重连时网关会回 no-emulator；继续显示"已关闭 / 已断开"，直到重新连上
+        if (!(m.state === "no-emulator" && (state === "emulator-closed" || state === "phone-closed"))) setState(m.state);
       } else if (m.t === "orientation") {
         opts.onOrientation(m.rotation);
       } else if (m.t === "screenshot") {

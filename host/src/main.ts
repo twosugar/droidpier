@@ -8,13 +8,14 @@ import { createPointerTracker } from "./pointer.ts";
 import { isDevtoolsSrc } from "./devtools-src.ts";
 import { gatewayAnswers, gatewayPort, isLoopbackHost, isSupportedBrowser, parsePort, siteOrigin, type LocalPermission } from "./launch.ts";
 import { createRenderer } from "./renderer.ts";
+import { createVideoPipe, webCodecsDecoder } from "./video.ts";
 import { createUploads } from "./uploads.ts";
 import { parseZoom, ZOOM_STEPS } from "../../shared/zoom.ts";
 import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
 import { registerTools } from "./webmcp.ts";
 import { gatewayBanner, shouldRequestUpdate, timeoutText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
-import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type Licence, type Rotation } from "../../shared/protocol.ts";
+import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type DeviceCaps, type Licence, type Rotation } from "../../shared/protocol.ts";
 
 // 从这个功能级别起网关一定认 renameAvd、deleteAvd（shared/protocol.ts 的 GATEWAY_LEVEL）
 const AVD_EDIT_LEVEL = 1;
@@ -65,6 +66,10 @@ export async function createHost(player: Player) {
   let inspecting = false;
   let device = { width: 0, height: 0 };
   let serial = 0;
+  // 设备身份：真机的 serial 是 0，页面要按 deviceId 认设备；kind / caps 决定画面通路和能用的按钮
+  let deviceId = "";
+  let kind: "emulator" | "phone" = "emulator";
+  let caps: DeviceCaps | null = null;
   // 画布当前的 CSS 尺寸，由容器大小和设备宽高比算出
   let css = { width: 0, height: 0 };
   let slotSize = { width: 0, height: 0 };
@@ -140,7 +145,23 @@ export async function createHost(player: Player) {
 
   const renderer = createRenderer(canvas, (tsMs) => {
     draws++;
-    latencyMs = frameLatencyMs(Date.now(), tsMs);
+    // 真机帧没有时间戳（手机时钟和电脑不同），只数帧率
+    if (tsMs !== null) latencyMs = frameLatencyMs(Date.now(), tsMs);
+  });
+  // 真机的 H.264：解码后的 VideoFrame 交给同一个渲染器
+  // 解码器出错时让网关重发配置包和关键帧（pause + resume 会重新订阅）；2 秒内最多一次，免得坏流来回重试
+  let lastRestart = 0;
+  const video = createVideoPipe({
+    makeDecoder: (codec, onError) => webCodecsDecoder(codec, (f) => renderer.putVideoFrame(f), (e) => {
+      console.warn(`[emu] 视频解码出错：${e.message}`);
+      onError();
+    }),
+    requestRestart: () => {
+      if (Date.now() - lastRestart < 2000) return;
+      lastRestart = Date.now();
+      conn.send({ t: "pause" });
+      conn.send({ t: "resume" });
+    },
   });
   // 页面没焦点等情况下写不进系统剪贴板，交给 TSX 显示提示条，用户点一下再写；text 为 null 时收起
   const clipSync = createClipSync(
@@ -173,7 +194,7 @@ export async function createHost(player: Player) {
 
   const supported = isSupportedBrowser((navigator as { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands);
   if (!supported) state = "unsupported-browser";
-  const statusEvent = () => player.hostEvent("emu.status", { state, serial, upgrade, rev: ++rev });
+  const statusEvent = () => player.hostEvent("emu.status", { state, serial, deviceId, kind, caps, device, upgrade, rev: ++rev });
   const gatewayEvent = () => {
     gatewayNote = gateway === undefined ? null : gatewayBanner(gateway, GATEWAY_LEVEL, updateReport, INSTALL);
     player.hostEvent("emu.gateway", { banner: gatewayNote, rev: ++rev });
@@ -211,14 +232,24 @@ export async function createHost(player: Player) {
       upgrade = s === "no-gateway" ? INSTALL : null;
       paint();
       // 重启中还是同一台设备
-      if (s !== "connected" && s !== "rebooting") serial = 0;
+      if (s !== "connected" && s !== "rebooting") {
+        serial = 0;
+        deviceId = "";
+        caps = null;
+        video.close();
+      }
       statusEvent();
       // 设备开了、关了、换了，列表里的运行状态跟着变
       if (prev !== s && s !== "connecting" && s !== "disconnected") refreshAvds();
     },
-    onReady: (d, sn) => {
+    onReady: (d, sn, extra) => {
+      // 换了设备：旧的解码器和它的配置包都不能再用
+      if (extra.deviceId !== deviceId || extra.kind !== "phone") video.close();
       device = d;
       serial = sn;
+      deviceId = extra.deviceId ?? (sn ? `emulator-${sn}` : "");
+      kind = extra.kind ?? "emulator";
+      caps = extra.caps ?? null;
       layout(false);
       statusEvent();
       refreshAvds();
@@ -233,6 +264,7 @@ export async function createHost(player: Player) {
       player.hostEvent("emu.orientation", { rotation });
     },
     onFrame: (h, px) => renderer.put(px, h.width, h.height, h.tsMs),
+    onVideo: (h, data) => video.push(h, data),
     onScreenshot: (name, png) => {
       const blob = new Blob([png], { type: "image/png" });
       const url = URL.createObjectURL(blob);
@@ -312,6 +344,7 @@ export async function createHost(player: Player) {
       state = code;
       upgrade = cmd;
       serial = 0;
+      deviceId = "";
       paint();
       statusEvent();
     },
@@ -602,6 +635,12 @@ export async function createHost(player: Player) {
     device: () => device,
     rotation: () => rotation,
     async snapshot() {
+      const v = renderer.shownVideo();
+      if (v) {
+        const oc = new OffscreenCanvas(v.displayWidth, v.displayHeight);
+        oc.getContext("2d")!.drawImage(v, 0, 0);
+        return { width: v.displayWidth, height: v.displayHeight, jpeg: await oc.convertToBlob({ type: "image/jpeg", quality: 0.8 }) };
+      }
       const f = renderer.shown();
       if (!f) return null;
       // 帧里的 alpha 不可靠（画的时候只用 rgb），转成不透明再编码
@@ -736,7 +775,7 @@ export async function createHost(player: Player) {
       }
       if (name === "emu.status") {
         return {
-          state, serial, upgrade, rev, rotation, gateway: gatewayNote, ...stats, avds, phones: phones.current(), boots: [...boots.values()].map((b) => b.last),
+          state, serial, deviceId, kind, caps, device, upgrade, rev, rotation, gateway: gatewayNote, ...stats, avds, phones: phones.current(), boots: [...boots.values()].map((b) => b.last),
           env, installs, license, uploads: uploads.list(),
         };
       }
