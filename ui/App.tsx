@@ -4,12 +4,12 @@ import { middleEllipsis } from "./ellipsis";
 import { isStaleStatus } from "./status-rev";
 import { gbText, spaceCheck } from "../shared/disk-space";
 import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
-import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type PhoneInfo, type Rotation } from "../shared/protocol";
+import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type PhoneInfo, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
 import { deviceFrame } from "../shared/screen";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
 import { matchesAvd } from "./device-search";
-import { phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
+import { canPick, phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
 import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
@@ -19,7 +19,7 @@ import { setupCardShown } from "./setup-card";
 import { deviceLive } from "./avd-delete";
 
 type State =
-  | "connecting" | "connected" | "no-emulator" | "emulator-closed" | "booting" | "rebooting" | "disconnected"
+  | "connecting" | "connected" | "no-emulator" | "emulator-closed" | "phone-closed" | "booting" | "rebooting" | "disconnected"
   | "gateway-outdated" | "page-outdated"
   | "unsupported-browser" | "lna-denied" | "lna-prompt" | "bad-origin" | "no-gateway" | "refused";
 type Avd = { name: string; displayName?: string; width?: number; height?: number; apiLevel?: number; running: "no" | "grpc" | "no-grpc"; serial?: number };
@@ -28,7 +28,7 @@ type Boot = { name: string; progress: string; error?: string; seconds: number };
 type Notice = { text: string; error?: boolean; sticky?: boolean };
 type Page = { socket: string; pkg?: string; id: string; title: string; url: string; visible: boolean };
 type InspectResult = { opened: true } | { cancelled: true } | { hint: string } | { error: string; adbStuck?: boolean };
-type Inspected = { key: string; title: string; serial: number };
+type Inspected = { key: string; title: string; device: string };
 type NavigateResult = { ok: boolean; title?: string; bridge?: boolean; error?: string; adbStuck?: boolean };
 type WebViewsResult = { list: Page[]; error?: string; adbStuck?: boolean };
 type Msg = { text: string; error?: boolean; adbStuck?: boolean };
@@ -117,6 +117,7 @@ const LABEL: Record<State, string> = {
   connected: "已连接",
   "no-emulator": "没有运行中的模拟器",
   "emulator-closed": "模拟器已关闭",
+  "phone-closed": "手机已断开",
   booting: "启动中",
   rebooting: "重启中…",
   disconnected: "与网关断开，正在重连…",
@@ -132,6 +133,7 @@ const LABEL: Record<State, string> = {
 
 // 连不上时画面上方的说明；带命令的两种（gateway-outdated、no-gateway）命令由 host 在 upgrade 里给
 const PROBLEM: Partial<Record<State, string>> = {
+  "phone-closed": "重新插上手机后会自动恢复",
   "gateway-outdated": "网关版本过旧，请运行：",
   "page-outdated": "页面版本过旧，请强制刷新",
   "unsupported-browser": "请用 Chrome 或 Edge 打开",
@@ -875,6 +877,11 @@ function App() {
   const avds = signal<Avd[] | null>(null);
   // null：网关没发过真机列表（旧网关或没带 --phones），不显示「真机」分组
   const phones = signal<PhoneInfo[] | null>(null);
+  // 当前设备的身份和能力（ready 带来）：真机的 serial 是 0，按 deviceId 认设备；deviceSize 是 ready.device，真机不在 AVD 列表里，设备框比例靠它
+  const deviceId = signal("");
+  const kind = signal<"emulator" | "phone">("emulator");
+  const caps = signal<DeviceCaps | null>(null);
+  const deviceSize = signal({ width: 0, height: 0 });
   const boots = signal<Record<string, Boot>>({});
   const notice = signal<Notice | null>(null);
   const upgrade = signal<string | null>(null);
@@ -986,8 +993,8 @@ function App() {
   const pages = signal<Page[] | null>(null);
   const listError = signal<Msg | null>(null);
   const listAdbStuck = signal(false);
-  const device = () => (state() === "connected" ? serial() : 0);
-  let listDevice = 0;
+  const device = () => (state() === "connected" ? deviceId() : "");
+  let listDevice = "";
   let loading = false;
   let okStreak = 0;
   const refresh = () => {
@@ -1038,7 +1045,7 @@ function App() {
   };
   tick();
   cleanup(() => clearTimeout(pollTimer));
-  const h5Key = () => h5KeyShown({ connected: device() !== 0, adbStuck: listAdbStuck(), consoleOpen: h5Open(), list: pages() });
+  const h5Key = () => h5KeyShown({ connected: device() !== "", adbStuck: listAdbStuck(), consoleOpen: h5Open(), list: pages() });
   // 选中了别的设备、主区不再显示画面上这台：控制台跟着收起
   effect(() => {
     if (h5Open() && !shownIsLive()) {
@@ -1056,12 +1063,20 @@ function App() {
   });
 
   let statusRev = -1;
-  host.on("emu.status", (p: { state: State; serial: number; upgrade: string | null; rev: number }) => {
+  type DeviceStatus = { deviceId?: string; kind?: "emulator" | "phone"; caps?: DeviceCaps | null; device?: { width: number; height: number } };
+  const applyDevice = (p: DeviceStatus) => {
+    deviceId.set(p.deviceId ?? "");
+    kind.set(p.kind ?? "emulator");
+    caps.set(p.caps ?? null);
+    if (p.device) deviceSize.set(p.device);
+  };
+  host.on("emu.status", (p: { state: State; serial: number; upgrade: string | null; rev: number } & DeviceStatus) => {
     if (isStaleStatus(p.rev, statusRev)) return;
     statusRev = p.rev;
-    closeIfGone({ kind: "status", state: p.state, serial: p.serial ?? 0 });
+    closeIfGone({ kind: "status", state: p.state, device: p.deviceId ?? "" });
     state.set(p.state);
     serial.set(p.serial ?? 0);
+    applyDevice(p);
     upgrade.set(p.upgrade);
   });
   host.on("emu.stats", (p: { fps: number; latencyMs: number }) => {
@@ -1093,7 +1108,7 @@ function App() {
       () => copyFailed.set(true),
     );
   };
-  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; phones?: PhoneInfo[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & Omit<Setup, "rev">) => {
+  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; phones?: PhoneInfo[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & DeviceStatus & Omit<Setup, "rev">) => {
     applySetup({ env: s.env, installs: s.installs, license: s.license, rev: s.rev });
     if (!isStaleStatus(s.rev, gatewayRev)) {
       gatewayRev = s.rev;
@@ -1106,6 +1121,7 @@ function App() {
       state.set(s.state);
       upgrade.set(s.upgrade);
       serial.set(s.serial);
+      applyDevice(s);
     }
     rotation.set(s.rotation);
     fps.set(s.fps);
@@ -1138,8 +1154,11 @@ function App() {
   const deviceArea = signal({ width: 0, height: 0 });
   const frame = () => {
     const a = currentAvd();
-    return deviceFrame(deviceArea(), { width: a?.width ?? 1080, height: a?.height ?? 2340 }, rotation() as Rotation, BEZEL, zoom());
+    const d = a?.width && a.height ? { width: a.width, height: a.height } : deviceSize().width ? deviceSize() : { width: 1080, height: 2340 };
+    return deviceFrame(deviceArea(), d, rotation() as Rotation, BEZEL, zoom());
   };
+  // 主区现在连着的真机（不是真机时为 undefined）
+  const currentPhone = () => (kind() === "phone" && state() === "connected" ? (phones() ?? []).find((p) => p.id === deviceId()) : undefined);
   // 侧栏收起与否：先展开，读到这台浏览器存的值后换过去；读回来之前用户已经点过的，以用户点的为准
   const sidebarHidden = signal(false);
   let sidebarTouched = false;
@@ -1158,7 +1177,7 @@ function App() {
   const selected = signal<string | null>(null);
   let lastCurrent: string | null = null;
   effect(() => {
-    const name = state() === "connected" ? currentAvd()?.name ?? null : null;
+    const name = state() === "connected" ? (kind() === "phone" ? deviceId() || null : currentAvd()?.name ?? null) : null;
     // 断开、重启、重连时 name 暂时是 null：不算换了设备，回来的还是同一台就不动用户的选择
     if (!name || name === lastCurrent) return;
     lastCurrent = name;
@@ -1169,6 +1188,13 @@ function App() {
   // 主区现在显示的就是画面上这台：没有选中的设备时（列表里没有它），连着就算
   const shownIsLive = () => { const a = shown(); return a ? isCurrent(a) : state() === "connected"; };
   const switchTo = (a: Avd) => act(host.call("emu.use", { name: a.name }));
+  const isCurrentPhone = (p: PhoneInfo) => kind() === "phone" && p.id === deviceId() && state() === "connected";
+  const pickPhone = (p: PhoneInfo) => {
+    if (!canPick(p)) return;
+    if (p.id !== selected()) animateNext();
+    selected.set(p.id);
+    if (!isCurrentPhone(p)) act(host.call("emu.use", { name: p.id }));
+  };
   const copyHref = (url: string) =>
     host.call("emu.copy", { text: url }).then(
       () => showNotice({ text: "已复制页面地址" }),
@@ -1228,7 +1254,8 @@ function App() {
   });
   const statusText = () => {
     const s = state();
-    if (s === "connected") return `已连接 · ${fps()} 帧/秒 · 延迟 ${latency()} 毫秒`;
+    // 真机帧没有时间戳（手机时钟和电脑不同），只显示帧率
+    if (s === "connected") return kind() === "phone" ? `已连接 · ${fps()} 帧/秒` : `已连接 · ${fps()} 帧/秒 · 延迟 ${latency()} 毫秒`;
     const b = bootingName();
     if (s === "booting" || b) return b ? `启动中 ${b.seconds} 秒` : LABEL.booting;
     return LABEL[s];
@@ -1348,20 +1375,22 @@ function App() {
   };
 
   // 真机这一版只列出来，不能点；样式跟 DeviceRow 一致
+  // 可用的手机能点开看画面（操作是 PR 4）；样式跟 DeviceRow 一致
   const PhoneRow = (props: { phone: () => PhoneInfo }) => {
     const p = props.phone;
     return (
-      <View accessibilityLabel={`${phoneLabel(p())}，${phoneStatus(p())}`}
-        style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: "transparent" }}>
+      <Button onPress={() => pickPhone(p())} disabled={!canPick(p())} selected={selected() === p().id} accessibilityLabel={`${phoneLabel(p())}，${phoneStatus(p(), isCurrentPhone(p()))}`}
+        hoverStyle={{ backgroundColor: C.hover }} selectedStyle={{ backgroundColor: C.hover }} focusStyle={{ borderColor: C.muted }} activeStyle={pressed(0.985)}
+        style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: "transparent", ...ease() }}>
         <View style={{ width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: C.surface }}>
           <Icon name="smartphone" size={17} tint={p().state === "device" ? C.text : C.muted} />
         </View>
         <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
           <Text style={{ color: C.text, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>{phoneLabel(p())}</Text>
-          <Text style={{ color: p().state === "device" ? C.muted : C.warn, fontSize: 11, lineHeight: 15 }}>{phoneStatus(p())}</Text>
+          <Text style={{ color: p().state === "device" ? C.muted : C.warn, fontSize: 11, lineHeight: 15 }}>{phoneStatus(p(), isCurrentPhone(p()))}</Text>
         </View>
         <Text style={{ color: C.muted, fontSize: 11 }}>{phoneDetail(p())}</Text>
-      </View>
+      </Button>
     );
   };
 
@@ -1413,7 +1442,7 @@ function App() {
           </If>
           <View style={{ flex: 1, minWidth: 180, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text role="header" style={{ flexShrink: 1, color: C.text, fontSize: 14, fontWeight: "600", numberOfLines: 1 }}>{shown() ? avdLabel(shown()!) : "没有连接设备"}</Text>
+              <Text role="header" style={{ flexShrink: 1, color: C.text, fontSize: 14, fontWeight: "600", numberOfLines: 1 }}>{shown() ? avdLabel(shown()!) : currentPhone() ? phoneLabel(currentPhone()!) : "没有连接设备"}</Text>
               <If when={h5Open() && foregroundPkg(pages() ?? [])}>
                 {(pkg) => <Text style={{ flexShrink: 1, color: C.muted, fontSize: 12, fontFamily: "monospace", numberOfLines: 1 }}>{pkg()}</Text>}
               </If>
@@ -1426,14 +1455,16 @@ function App() {
           <Toolbar accessibilityLabel="设备操作" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
             <ZoomControl zoom={zoom()} onZoom={setZoom} />
             <ToolGroup label="画面">
-              <ToolBtn icon="rotateLeft" label="向左旋转" tip="点过屏幕后按 ⌘←" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "left" }))} />
-              <ToolBtn icon="rotateRight" label="向右旋转" tip="点过屏幕后按 ⌘→" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "right" }))} />
+              <If when={caps()?.rotate !== false}>
+                <ToolBtn icon="rotateLeft" label="向左旋转" tip="点过屏幕后按 ⌘←" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "left" }))} />
+                <ToolBtn icon="rotateRight" label="向右旋转" tip="点过屏幕后按 ⌘→" disabled={!shownIsLive()} onPress={() => act(host.call("emu.rotate", { dir: "right" }))} />
+              </If>
               <ToolBtn icon="camera" label="截图" tip="点过屏幕后按 ⌘S" disabled={!shownIsLive()} onPress={() => act(host.call("emu.screenshot", {}))} />
             </ToolGroup>
             <ToolGroup label="硬件按键">
-              <ToolBtn icon="power" label="电源" tip="点过屏幕后按 ⌘P" disabled={!shownIsLive()} onPress={() => key("Power")} />
-              <ToolBtn icon="volDown" label="音量−" tip="点过屏幕后按 ⌘-" disabled={!shownIsLive()} onPress={() => key("AudioVolumeDown")} />
-              <ToolBtn icon="volUp" label="音量+" tip="点过屏幕后按 ⌘=" disabled={!shownIsLive()} onPress={() => key("AudioVolumeUp")} />
+              <ToolBtn icon="power" label="电源" tip="点过屏幕后按 ⌘P" disabled={!shownIsLive() || caps()?.input === false} onPress={() => key("Power")} />
+              <ToolBtn icon="volDown" label="音量−" tip="点过屏幕后按 ⌘-" disabled={!shownIsLive() || caps()?.input === false} onPress={() => key("AudioVolumeDown")} />
+              <ToolBtn icon="volUp" label="音量+" tip="点过屏幕后按 ⌘=" disabled={!shownIsLive() || caps()?.input === false} onPress={() => key("AudioVolumeUp")} />
             </ToolGroup>
             <If when={h5Key() && shownIsLive()}>
               <ToolGroup label="H5 调试">
@@ -1449,8 +1480,12 @@ function App() {
                 <Icon name="more" size={17} tint={C.keyText} />
               </Button>
             }>
-              <Item label={state() === "rebooting" ? "重启中" : "重启模拟器系统"} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
-              <Item label="关闭模拟器" disabled={!shownIsLive() || state() !== "connected"} onSelect={() => act(host.call("emu.stop", {}))} />
+              <If when={caps()?.reboot !== false}>
+                <Item label={state() === "rebooting" ? "重启中" : "重启模拟器系统"} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
+              </If>
+              <If when={caps()?.stop !== false}>
+                <Item label="关闭模拟器" disabled={!shownIsLive() || state() !== "connected"} onSelect={() => act(host.call("emu.stop", {}))} />
+              </If>
               <MenuSeparator style={{ height: 1, marginVertical: 4, backgroundColor: C.line }} />
               <Item label="重命名" disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
               <Item label="删除" danger disabled={!shown() || beingDeleted(shown()!)}
@@ -1616,7 +1651,7 @@ function App() {
         </View>
         <If when={h5Open()}>
           <H5Console pages={pages} listError={listError} refresh={refresh} inspected={inspected} onReboot={() => rebootAsk.set(true)}
-            onInspect={(key, title) => inspected.set({ key, title, serial: serial() })} onClose={toggleH5} onCopy={copyHref} picking={picking} />
+            onInspect={(key, title) => inspected.set({ key, title, device: deviceId() })} onClose={toggleH5} onCopy={copyHref} picking={picking} />
         </If>
         </View>
       </View>

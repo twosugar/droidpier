@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { phoneDetail, phoneLabel, phoneStatus, showPhones } from "../../ui/phones.ts";
+import { canPick, phoneDetail, phoneLabel, phoneStatus, showPhones } from "../../ui/phones.ts";
 
 test("phoneLabel：厂商首字母大写加型号", () => {
   assert.equal(phoneLabel({ id: "R5CR10WN52H", state: "device", manufacturer: "samsung", model: "SM-G9910" }), "Samsung SM-G9910");
@@ -11,10 +11,22 @@ test("phoneLabel：只有型号时用型号，都没有时用设备 id", () => {
   assert.equal(phoneLabel({ id: "R5CR10WN52H", state: "unauthorized" }), "R5CR10WN52H");
 });
 
-test("phoneStatus：三种状态的文案", () => {
-  assert.equal(phoneStatus({ id: "a", state: "device" }), "已连接，暂不能操作");
-  assert.equal(phoneStatus({ id: "a", state: "unauthorized" }), "请在手机上允许 USB 调试");
-  assert.equal(phoneStatus({ id: "a", state: "offline" }), "离线，重新插拔试试");
+test("phoneStatus：可用的手机按是不是当前画面给两种文案", () => {
+  assert.equal(phoneStatus({ id: "a", state: "device" }, true), "当前画面 · 暂不能操作");
+  assert.equal(phoneStatus({ id: "a", state: "device" }, false), "可用，点一下切换");
+});
+
+test("phoneStatus：未授权、离线的文案不随当前设备变", () => {
+  for (const cur of [true, false]) {
+    assert.equal(phoneStatus({ id: "a", state: "unauthorized" }, cur), "请在手机上允许 USB 调试");
+    assert.equal(phoneStatus({ id: "a", state: "offline" }, cur), "离线，重新插拔试试");
+  }
+});
+
+test("canPick：只有可用的手机能点", () => {
+  assert.equal(canPick({ id: "a", state: "device" }), true);
+  assert.equal(canPick({ id: "a", state: "unauthorized" }), false);
+  assert.equal(canPick({ id: "a", state: "offline" }), false);
 });
 
 test("phoneDetail：只显示版本号，和模拟器行右侧的「15」一致", () => {
