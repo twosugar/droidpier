@@ -73,6 +73,8 @@ export const CLOSE_NO_EMULATOR = 4004;
 export const BIN_FRAME = 1;
 /** 二进制消息类型：截图 PNG（由 screenshot 请求触发，只发给请求方）。 */
 export const BIN_SCREENSHOT = 2;
+/** 二进制消息 kind：真机的 H.264 视频包，20 字节头（encodeVideoHeader）+ Annex B 数据。旧页面忽略。 */
+export const BIN_VIDEO = 3;
 
 /** 帧头字段（来自 emulator 的 streamScreenshot 响应）。 */
 export type FrameHeader = {
@@ -100,6 +102,30 @@ export function binKind(buf: ArrayBuffer | Uint8Array): number {
   const ab = buf instanceof Uint8Array ? buf.buffer : buf;
   const offset = buf instanceof Uint8Array ? buf.byteOffset : 0;
   return new DataView(ab, offset).getUint32(0, true);
+}
+
+/** 真机视频包头。没有时间戳：手机时钟和电脑不同，真机不算延迟。 */
+export type VideoHeader = { seq: number; config: boolean; key: boolean; width: number; height: number };
+
+/** 视频包头编码为 20 字节（5 个 u32 小端：kind=BIN_VIDEO、seq、flags、width、height；flags 第 0 位配置包、第 1 位关键帧）。 */
+export function encodeVideoHeader(h: VideoHeader): Uint8Array {
+  const buf = new Uint8Array(FRAME_HEADER_BYTES);
+  const view = new DataView(buf.buffer);
+  view.setUint32(0, BIN_VIDEO, true);
+  view.setUint32(4, h.seq >>> 0, true);
+  view.setUint32(8, (h.config ? 1 : 0) | (h.key ? 2 : 0), true);
+  view.setUint32(12, h.width >>> 0, true);
+  view.setUint32(16, h.height >>> 0, true);
+  return buf;
+}
+
+/** 解码视频包头。 */
+export function decodeVideoHeader(buf: ArrayBuffer | Uint8Array): VideoHeader {
+  const ab = buf instanceof Uint8Array ? buf.buffer : buf;
+  const offset = buf instanceof Uint8Array ? buf.byteOffset : 0;
+  const view = new DataView(ab, offset);
+  const flags = view.getUint32(8, true);
+  return { seq: view.getUint32(4, true), config: (flags & 1) !== 0, key: (flags & 2) !== 0, width: view.getUint32(12, true), height: view.getUint32(16, true) };
 }
 
 /** 解码帧头。 */
@@ -132,6 +158,9 @@ export type AvdInfo = {
 };
 
 /** 一台 USB / 无线连着的真机。state：device 可用，unauthorized 没在手机上允许 USB 调试，offline 其他（离线、recovery 等）。 */
+/** 这台设备支持什么，页面和 WebMCP 只看它决定显示哪些操作（docs/superpowers/specs/2026-11-13-real-device-design.md 6.1）。 */
+export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean };
+
 export type PhoneInfo = { id: string; state: "device" | "unauthorized" | "offline"; manufacturer?: string; model?: string; android?: string };
 
 /**
@@ -293,9 +322,9 @@ export type ClientMsg =
 /** 服务端发给客户端的消息。 */
 export type ServerMsg =
   /** serial：当前会话的模拟器串口号，对应 AvdInfo.serial。deviceId：adb 里的设备名（emulator-5554、真机序列号），旧网关不发。 */
-  | { t: "ready"; version: number; device: { width: number; height: number }; serial: number; deviceId?: string }
-  /** rebooting：模拟器系统正在重启，结束后回到 connected。 */
-  | { t: "status"; state: "connected" | "no-emulator" | "emulator-closed" | "booting" | "rebooting" }
+  | { t: "ready"; version: number; device: { width: number; height: number }; serial: number; deviceId?: string; kind?: "emulator" | "phone"; caps?: DeviceCaps }
+  /** rebooting：模拟器系统正在重启，结束后回到 connected。phone-closed：真机断开了（拔线、取消授权），插回后网关会自动重连。 */
+  | { t: "status"; state: "connected" | "no-emulator" | "emulator-closed" | "phone-closed" | "booting" | "rebooting" }
   | { t: "avds"; list: AvdInfo[] }
   /** 真机列表：只有网关带 --phones 启动时才发，hello 后发一次、之后有变化就发；没收到过就当网关不支持真机。 */
   | { t: "phones"; list: PhoneInfo[] }

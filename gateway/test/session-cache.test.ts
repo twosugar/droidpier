@@ -11,6 +11,7 @@ function fake(name: string) {
     device: { width: 1, height: 1 },
     serial: 5554,
     id: "emulator-5554",
+    kind: "emulator",
     frames: () => () => {},
     touch: async () => {},
     key: async () => {},

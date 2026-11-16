@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   BIN_FRAME,
   BIN_SCREENSHOT,
+  BIN_VIDEO,
+  encodeVideoHeader,
+  decodeVideoHeader,
   FRAME_HEADER_BYTES,
   encodeFrameHeader,
   decodeFrameHeader,
@@ -166,4 +169,13 @@ test("parseClientMsg 解析 stopAvd；rid、name 不对或 name 不合 AVD 名�
 test("parseClientMsg：deleteAvd 只在 stop 为 true 时带上 stop（运行中先停止再删）", () => {
   assert.deepEqual(parseClientMsg('{"t":"deleteAvd","rid":4,"name":"A","stop":true}'), { t: "deleteAvd", rid: 4, name: "A", stop: true });
   assert.deepEqual(parseClientMsg('{"t":"deleteAvd","rid":4,"name":"A","stop":"yes"}'), { t: "deleteAvd", rid: 4, name: "A" });
+});
+
+test("encodeVideoHeader / decodeVideoHeader 往返；kind 是 BIN_VIDEO，头 20 字节", () => {
+  const h = { seq: 7, config: false, key: true, width: 864, height: 1920 };
+  const buf = encodeVideoHeader(h);
+  assert.equal(buf.byteLength, 20);
+  assert.equal(binKind(buf), BIN_VIDEO);
+  assert.deepEqual(decodeVideoHeader(buf), h);
+  assert.deepEqual(decodeVideoHeader(encodeVideoHeader({ ...h, config: true, key: false })), { ...h, config: true, key: false });
 });

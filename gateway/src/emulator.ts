@@ -4,12 +4,25 @@ import { join } from "node:path";
 import { pidAlive, type Running } from "./discovery.ts";
 import { loadController } from "./sdk.ts";
 import { adb, emulatorId } from "./adb.ts";
-import type { FrameHeader, RotateDir, Rotation } from "../../shared/protocol.ts";
+import type { DeviceCaps, FrameHeader, RotateDir, Rotation } from "../../shared/protocol.ts";
 
 type Size = { width: number; height: number };
 
-/** 一台已连上的模拟器：订阅画面、注入输入、感知退出。 */
+/** 真机的一个视频包（gateway/src/phone-session.ts），宽高是这个包所属画面的尺寸。 */
+export type VideoPacket = { config: boolean; key: boolean; data: Buffer; width: number; height: number };
+
+/** 模拟器能做的全部操作。 */
+export const EMULATOR_CAPS: DeviceCaps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true };
+
+/** 一台已连上的设备（模拟器或真机）：订阅画面、注入输入、感知退出。 */
 export interface EmulatorSession {
+  /** emulator 走 frames()（RGBA）；phone 走 video()（H.264），frames() 不出帧。 */
+  kind: "emulator" | "phone";
+  caps: DeviceCaps;
+  /** 只有真机有：订阅视频包，新订阅者先收到最近一个配置包；返回取消函数。 */
+  video?(onPacket: (p: VideoPacket) => void): () => void;
+  /** 只有真机有：请服务端重新发配置包和关键帧。 */
+  requestKeyFrame?(): void;
   device: Size;
   /** 设备 id：adb 里的设备名，模拟器是 emulator-<serial>。 */
   id: string;
@@ -168,6 +181,8 @@ export async function connectEmulator(running: Running, timeoutMs = 3000): Promi
   watch.unref();
 
   const session: EmulatorSession = {
+    kind: "emulator",
+    caps: EMULATOR_CAPS,
     device,
     id: emulatorId(running.serial),
     serial: running.serial,
@@ -315,3 +330,6 @@ export async function connectEmulator(running: Running, timeoutMs = 3000): Promi
   };
   return session;
 }
+
+/** 模拟器和真机共用的会话接口（真机见 gateway/src/phone-session.ts）。 */
+export type DeviceSession = EmulatorSession;
