@@ -40,6 +40,22 @@ export function execAdb(bin: string, args: string[], timeoutMs: number, log: (s:
   });
 }
 
+/** 同 execAdb，但输出按原始字节返回（screencap 的 PNG 不能当字符串解码）。 */
+export function execAdbBuffer(bin: string, args: string[], timeoutMs: number, log: (s: string) => void): Promise<Buffer> {
+  return new Promise((res, rej) => {
+    const child = execFile(bin, args, { timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 32 * 2 ** 20, encoding: "buffer" }, (e, stdout) => {
+      children.delete(child);
+      if (!e) return res(stdout);
+      if ((e as { killed?: boolean }).killed) {
+        log(`adb ${args.join(" ")} 超过 ${timeoutMs / 1000} 秒没返回，已用 SIGKILL 结束`);
+        return rej(new AdbUnresponsive());
+      }
+      rej(e);
+    });
+    children.add(child);
+  });
+}
+
 export type AdbStream = { stop(): void };
 export type AdbStreamHandlers = { onData(chunk: string): void; onExit(code: number | null): void };
 
@@ -65,12 +81,13 @@ export function streamAdb(bin: string, args: string[], h: AdbStreamHandlers): Ad
  * 不带 -s 的（forward --list、devices）只找本机 adb server，不排队。
  * 装 APK、传文件要几分钟，走 long 这条单独的队列：不挡住 H5 列表这类短命令，长任务之间仍一次一个。
  */
-export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) => Promise<string>; stream?: (args: string[], h: AdbStreamHandlers) => AdbStream; timeoutMs?: number; log?: (s: string) => void } = {}) {
+export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) => Promise<string>; stream?: (args: string[], h: AdbStreamHandlers) => AdbStream; execBuffer?: (args: string[], timeoutMs?: number) => Promise<Buffer>; timeoutMs?: number; log?: (s: string) => void } = {}) {
   const log = opts.log ?? ((s: string) => console.log(s));
   const exec = opts.exec ?? ((args: string[], timeoutMs?: number) => execAdb(adbBin(), args, timeoutMs ?? opts.timeoutMs ?? ADB_TIMEOUT_MS, log));
+  const execBuffer = opts.execBuffer ?? ((args: string[], timeoutMs?: number) => execAdbBuffer(adbBin(), args, timeoutMs ?? opts.timeoutMs ?? ADB_TIMEOUT_MS, log));
   const tails = new Map<string, Promise<unknown>>();
 
-  function queued(key: string, job: () => Promise<string>): Promise<string> {
+  function queued<T>(key: string, job: () => Promise<T>): Promise<T> {
     const p = (tails.get(key) ?? Promise.resolve()).then(job);
     const tail = p.catch(() => {});
     tails.set(key, tail);
@@ -89,6 +106,8 @@ export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) =>
     stream: opts.stream ?? ((args: string[], h: AdbStreamHandlers) => streamAdb(adbBin(), args, h)),
     /** 这台设备上的 adb：参数是 `adb -s <设备 id>` 之后的部分。 */
     device: (id: string) => (args: string[]) => run(["-s", id, ...args]),
+    /** 这台设备上输出是二进制的短命令（exec-out screencap -p），和 device 排同一条队列。 */
+    deviceBuffer: (id: string) => (args: string[], timeoutMs?: number) => queued(id, () => execBuffer(["-s", id, ...args], timeoutMs)),
     /** 这台设备上的长任务（install、push），超时由调用方给。 */
     long: (id: string) => (args: string[], timeoutMs: number) => {
       const full = ["-s", id, ...args];

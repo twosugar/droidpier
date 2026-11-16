@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AdbUnresponsive, createAdb, emulatorId, execAdb, killAdbChildren, streamAdb } from "../src/adb.ts";
+import { AdbUnresponsive, createAdb, emulatorId, execAdb, execAdbBuffer, killAdbChildren, streamAdb } from "../src/adb.ts";
 import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -172,4 +172,38 @@ test("killAdbChildren 结束 streamAdb 起的长进程", async () => {
   await sleep(100);
   killAdbChildren();
   await Promise.race([exited, sleep(1000).then(() => { throw new Error("长进程没有被结束"); })]);
+});
+
+test("execAdbBuffer 原样返回二进制输出（截图 PNG）", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "emu-adb-"));
+  const bin = join(dir, "adb");
+  await writeFile(bin, "#!/bin/sh\nprintf '\\211PNG\\r\\n\\032\\n\\000\\377'\n");
+  await chmod(bin, 0o755);
+  const out = await execAdbBuffer(bin, ["exec-out", "screencap", "-p"], 2000, () => {});
+  assert.deepEqual([...out], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]);
+});
+
+test("execAdbBuffer 超时仍归为 AdbUnresponsive", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "emu-adb-"));
+  const bin = join(dir, "adb");
+  await writeFile(bin, "#!/bin/sh\nexec sleep 30\n");
+  await chmod(bin, 0o755);
+  await assert.rejects(execAdbBuffer(bin, ["exec-out", "screencap", "-p"], 300, () => {}), AdbUnresponsive);
+});
+
+test("deviceBuffer 和 device 共用同一条设备队列", async () => {
+  const order: string[] = [];
+  let release!: () => void;
+  const adb = createAdb({
+    exec: async (args) => (order.push(`str ${args.slice(2).join(" ")}`), await new Promise<void>((r) => (release = r)), ""),
+    execBuffer: async (args) => (order.push(`buf ${args.slice(2).join(" ")}`), Buffer.from([1])),
+  });
+  const a = adb.device("R5CR10WN52H")(["shell", "true"]);
+  const b = adb.deviceBuffer("R5CR10WN52H")(["exec-out", "screencap", "-p"]);
+  await sleep(10);
+  assert.deepEqual(order, ["str shell true"]);
+  release();
+  await a;
+  assert.deepEqual([...(await b)], [1]);
+  assert.deepEqual(order, ["str shell true", "buf exec-out screencap -p"]);
 });
