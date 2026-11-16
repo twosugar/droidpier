@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AdbUnresponsive, createAdb, emulatorId, execAdb, killAdbChildren } from "../src/adb.ts";
+import { AdbUnresponsive, createAdb, emulatorId, execAdb, killAdbChildren, streamAdb } from "../src/adb.ts";
 import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -150,4 +150,26 @@ test("设备 id 原样放进 -s，不加前缀（真机序列号）", async () =
 
 test("emulatorId 拼出模拟器在 adb 里的名字", () => {
   assert.equal(emulatorId(5554), "emulator-5554");
+});
+
+test("streamAdb 把输出按到达顺序交给 onData，进程结束时回调 onExit", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "emu-adb-"));
+  const bin = join(dir, "adb");
+  await writeFile(bin, "#!/bin/sh\necho a\nsleep 0.1\necho b\n");
+  await chmod(bin, 0o755);
+  let out = "";
+  const code = await new Promise<number | null>((res) => streamAdb(bin, ["track-devices"], { onData: (s) => (out += s), onExit: res }));
+  assert.equal(out, "a\nb\n");
+  assert.equal(code, 0);
+});
+
+test("killAdbChildren 结束 streamAdb 起的长进程", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "emu-adb-"));
+  const bin = join(dir, "adb");
+  await writeFile(bin, "#!/bin/sh\nexec sleep 30\n");
+  await chmod(bin, 0o755);
+  const exited = new Promise<void>((res) => streamAdb(bin, ["track-devices"], { onData: () => {}, onExit: () => res() }));
+  await sleep(100);
+  killAdbChildren();
+  await Promise.race([exited, sleep(1000).then(() => { throw new Error("长进程没有被结束"); })]);
 });

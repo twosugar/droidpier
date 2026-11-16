@@ -1,4 +1,4 @@
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
 import { adbBin } from "./platform.ts";
 
@@ -40,12 +40,32 @@ export function execAdb(bin: string, args: string[], timeoutMs: number, log: (s:
   });
 }
 
+export type AdbStream = { stop(): void };
+export type AdbStreamHandlers = { onData(chunk: string): void; onExit(code: number | null): void };
+
+/**
+ * 跑一条长期运行的 adb（track-devices、logcat）：不进设备队列、没有总超时，输出边到边交给 onData。
+ * 进程登记在 children 里，网关退出时由 killAdbChildren 一起结束。
+ */
+export function streamAdb(bin: string, args: string[], h: AdbStreamHandlers): AdbStream {
+  const child = spawn(bin, args, { stdio: ["ignore", "pipe", "ignore"] });
+  children.add(child);
+  child.stdout!.setEncoding("utf8");
+  child.stdout!.on("data", (s: string) => h.onData(s));
+  child.once("error", () => {});
+  child.once("close", (code) => {
+    children.delete(child);
+    h.onExit(code);
+  });
+  return { stop: () => void child.kill("SIGTERM") };
+}
+
 /**
  * adb 调用入口。带 `-s <设备>` 的命令按设备排队，同一台设备同一时间只有一个 adb 进程在跑；
  * 不带 -s 的（forward --list、devices）只找本机 adb server，不排队。
  * 装 APK、传文件要几分钟，走 long 这条单独的队列：不挡住 H5 列表这类短命令，长任务之间仍一次一个。
  */
-export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) => Promise<string>; timeoutMs?: number; log?: (s: string) => void } = {}) {
+export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) => Promise<string>; stream?: (args: string[], h: AdbStreamHandlers) => AdbStream; timeoutMs?: number; log?: (s: string) => void } = {}) {
   const log = opts.log ?? ((s: string) => console.log(s));
   const exec = opts.exec ?? ((args: string[], timeoutMs?: number) => execAdb(adbBin(), args, timeoutMs ?? opts.timeoutMs ?? ADB_TIMEOUT_MS, log));
   const tails = new Map<string, Promise<unknown>>();
@@ -65,6 +85,8 @@ export function createAdb(opts: { exec?: (args: string[], timeoutMs?: number) =>
 
   return {
     run,
+    /** 长期运行的 adb，见 streamAdb。 */
+    stream: opts.stream ?? ((args: string[], h: AdbStreamHandlers) => streamAdb(adbBin(), args, h)),
     /** 这台设备上的 adb：参数是 `adb -s <设备 id>` 之后的部分。 */
     device: (id: string) => (args: string[]) => run(["-s", id, ...args]),
     /** 这台设备上的长任务（install、push），超时由调用方给。 */
