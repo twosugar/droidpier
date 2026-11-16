@@ -68,6 +68,19 @@ scrcpy 看画面、`chrome://inspect` 调 WebView、Android Studio 或终端看 
 - scrcpy：最新 v5.0.1（2026-10-08），release 里单独提供 `scrcpy-server-v5.0.1` 和 `SHA256SUMS`，Apache-2.0。
   服务端通过 `app_process` 启动，提供视频、音频、控制三条连接；控制连接双向，手机剪贴板变化从这里回传
   （`doc/develop.md`）。下文的消息类型和字段以 v5.0.1 的 `doc/develop.md` 和服务端源码为准，实现前逐条核对。
+- **原型实测**（2026-11-13，Samsung SM-G9910 / Android 12 / USB，Chrome 152 内核，一次性原型，代码未入库）：
+  - `scrcpy-server-v5.0.1` 为 717KB（733930 字节），sha256 与官方 `SHA256SUMS` 一致；
+  - 启动时第一个参数（版本号）必须与服务端版本完全相同（`5.0.1`），否则服务端直接退出（`Options.java`）；
+  - `scid` 按 16 进制解析，socket 名为 `scrcpy_<8 位 16 进制>`；forward 模式下第一条连接先收到 1 个哑字节；
+  - 视频连接依次是：64 字节设备名、4 字节编码 id（h264 = `0x68323634`），之后每段 12 字节头：
+    最高位为 1 是「会话包」（`flags u32, width u32, height u32`，转屏和尺寸变化都会再发一次），
+    否则是 `pts|flags u64`（第 62 位配置包、第 61 位关键帧）+ `size u32` + 数据。v5 的开关叫 `send_stream_meta`；
+  - 控制消息：触摸 32 字节 `[2][action][pointerId i64][x i32][y i32][宽 u16][高 u16][压力 u16][actionButton i32][buttons i32]`，
+    按键 14 字节 `[0][action][keycode i32][repeat i32][meta i32]`，重置视频（请求关键帧）是单字节 `[17]`；
+  - WebCodecs 不传 `description`、按 Annex B 解码，配置包里的 SPS/PPS 拼在每个关键帧前即可，codec 串取 SPS 的
+    profile/constraint/level（实测 `avc1.64002a`）；
+  - `max_size=1920` 时画面 864x1920；静止时帧少，切页 51 fps、滑动 55 fps；网关收到到画上画布中位 1–2ms、
+    滑动时 p95 12ms；原型网关 CPU 0.1–0.2%。点击到画面变化的端到端延迟未测（要录屏）。
 
 ## 5. 方案选择
 
@@ -115,7 +128,7 @@ scrcpy 看画面、`chrome://inspect` 调 WebView、Android Studio 或终端看 
   - 本次网关运行期间连过的手机，拔线或重新授权后再出现，自动恢复连接；网关重启后不记得，要重新点。
   - 模拟器保持现状：1 秒一次的 `ticker` 在用户没选过设备时接管第一台模拟器；用户选过真机后，不再被新冒出来的模拟器抢走。
 - **PhoneSession（scrcpy）**：
-  - scrcpy-server v5.0.1 **打进网关可执行文件**（我的选择：约 90KB，离线可用，不在运行时下载；构建时按 `SHA256SUMS`
+  - scrcpy-server v5.0.1 **打进网关可执行文件**（我的选择：717KB，离线可用，不在运行时下载；构建时按 `SHA256SUMS`
     校验，仓库附 Apache-2.0 NOTICE）。连接时 `adb push` 到 `/data/local/tmp/droidpier-scrcpy-<版本>.jar`。
   - 用 `app_process` 启动，参数取：`scid=<随机>`、`tunnel_forward=true`、`audio=false`、`video_codec=h264`、
     `max_size=<页面请求的长边>`、`control=true`、`clipboard_autosync=true`、`stay_awake=true`、`power_on=true`、
@@ -123,14 +136,14 @@ scrcpy 看画面、`chrome://inspect` 调 WebView、Android Studio 或终端看 
     端口从现有的端口分配器拿，和 H5 转发共用一套记账。
   - **尺寸**：scrcpy 的 `max_size` 只能在启动时定。页面尺寸变化时，长边差不到 20% 就不动（浏览器缩放即可），
     超过才重启服务端（我的阈值，实现时可调）。重启期间页面保留最后一帧。
-  - **转屏**：手机转屏后视频流会带新的编码配置和新的宽高，网关据此向页面发 `orientation` 和新尺寸，不需要轮询。
+  - **转屏**：按 v5.0.1 源码，尺寸变化时视频流会再发一个会话包（带新宽高）和新的编码配置（原型只验证了启动和重置视频时的会话包，转屏未实测），网关据此向页面发 `orientation` 和新尺寸，不需要轮询。
   - **结束**：拔线（`track-devices` 报设备消失）、`unauthorized`、服务端退出都会关闭会话，页面显示对应状态；
     关闭时移除 forward，`cleanup=true` 让服务端自己删掉 jar。
 - **视频转发**：
   - 新二进制种类 `BIN_VIDEO`：头部 `[kind, seq, flags, width, height, ptsHi, ptsLo]`（u32 小端），flags 标记
     「编码配置」和「关键帧」，后面是 scrcpy 给的 H.264 数据。旧页面会忽略这个种类。
   - **背压**：不能像 RGBA 那样只留最新一帧（丢 P 帧会花屏）。WebSocket 发送缓冲超过阈值时，丢掉之后的帧直到下一个关键帧，
-    并通过控制连接请求一个新的关键帧（scrcpy 的 reset video 消息；实现前核对 v5.0.1 的消息号）。
+    并通过控制连接请求一个新的关键帧（scrcpy 的 reset video 消息，v5.0.1 里是单字节 `[17]`，原型已验证新页面连上时用它拿到关键帧）。
   - 暂停（页面隐藏）时停止转发，恢复时等关键帧再发。
 - **输入**（页面消息格式基本不变，网关把它翻译成 scrcpy 控制消息）：
   - `touch` → inject touch event。坐标换算到**当前视频帧**的宽高，scrcpy 要求附带的屏幕尺寸和当前视频尺寸一致，
@@ -201,7 +214,7 @@ scrcpy 看画面、`chrome://inspect` 调 WebView、Android Studio 或终端看 
 - 单测（`node --test`）：scrcpy 控制消息编码、视频包头解析、键名对照、坐标换算、logcat 行解析和过滤、`track-devices` 输出解析、
   背压丢帧到关键帧的逻辑。
 - 新增真机集成测试，`PHONE_IT=1 PHONE_IT_SERIAL=<序列号>` 才跑，和现有 `EMU_IT` 同样的方式跳过。
-- 真机验收（本机已有 Samsung SM-G9910、Android 版本待查）：画面、点击、滚动、中文输入、剪贴板双向、转屏、截图、装 APK、
+- 真机验收（本机已有 Samsung SM-G9910、Android 12、1080x2400）：画面、点击、滚动、中文输入、剪贴板双向、转屏、截图、装 APK、
   H5 调试（HK debug 包打开一个 WebView）、日志面板刷屏时的 CPU、拔线 / 重新授权的状态。和 scrcpy 同机对比延迟与帧率。
 - 模拟器回归：现有集成测试 + 手动跑一遍，确认帧率、延迟不退步。
 

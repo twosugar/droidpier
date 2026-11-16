@@ -57,6 +57,11 @@ The name adb gives a device and the gateway's key for it: `emulator-5554` for an
 (`R5CR10WN52H`) or `host:port` for a phone. Sent to the page as `ready.deviceId`.
 _Avoid_: serial (that is the emulator's console port), udid
 
+**Phone** (真机):
+A real Android device that adb sees over USB or Wi-Fi, listed under 真机 in the sidebar. Its Device id is its adb
+serial. Shown only when the gateway runs with `--phones` until phone support is complete.
+_Avoid_: physical device, real device (in code), handset
+
 **Running state**:
 What the device list knows about an AVD: `no` (not running), `grpc` (running with gRPC, the gateway can attach) or
 `no-grpc` (running without gRPC, started elsewhere, cannot be attached).
