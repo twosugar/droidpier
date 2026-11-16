@@ -23,7 +23,11 @@ import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
 
 type Sub = { size: { width: number; height: number }; onFrame: (h: FrameHeader, d: Buffer) => void; active: boolean };
 
+const EMU_CAPS = { rotate: true, reboot: true, stop: true, clipboard: true, input: true };
+
 class FakeSession implements EmulatorSession {
+  kind: "emulator" | "phone" = "emulator";
+  caps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true };
   device = { width: 1080, height: 2340 };
   serial = 5554;
   id = "emulator-5554";
@@ -261,7 +265,7 @@ test("hello 后收到 ready，且 device 等于假会话的尺寸", async (t) =>
   const c = await connect();
   hello(c);
   await until(() => c.msgs.length > 0);
-  assert.deepEqual(c.msgs[0], { t: "ready", version: PROTOCOL_VERSION, device: { width: 1080, height: 2340 }, serial: 5554, deviceId: "emulator-5554" });
+  assert.deepEqual(c.msgs[0], { t: "ready", version: PROTOCOL_VERSION, device: { width: 1080, height: 2340 }, serial: 5554, deviceId: "emulator-5554", kind: "emulator", caps: EMU_CAPS });
 });
 
 test("客户端不读时连推 100 帧，服务端发出的帧数不超过 3，且最后收到的那一帧的 seq 是 99", async (t) => {
@@ -412,12 +416,12 @@ test("模拟器退出后：已有连接收到 emulator-closed 并保持打开，
   assert.deepEqual(c1.msgs[2], { t: "status", state: "emulator-closed" });
   assert.equal(a.subs[0].active, false);
   await until(() => c1.msgs.length === 5);
-  assert.deepEqual(c1.msgs[3], { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554" });
+  assert.deepEqual(c1.msgs[3], { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554", kind: "emulator", caps: EMU_CAPS });
   assert.equal(c1.ws.readyState, WebSocket.OPEN);
   const c2 = await connect();
   hello(c2);
   await until(() => c2.msgs.length > 0);
-  assert.deepEqual(c2.msgs[0], { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554" });
+  assert.deepEqual(c2.msgs[0], { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554", kind: "emulator", caps: EMU_CAPS });
   await until(() => b.subs.length === 2);
   b.push(3);
   await until(() => c2.frames.length === 1 && c1.frames.length === 1);
@@ -682,7 +686,7 @@ test("start：所有连接收到 booting 和 boot 进度；就绪后切到新会
   for (const c of [c1, c2]) {
     assert.ok(c.msgs.some((m) => m.t === "boot" && m.progress === "ready"));
     await until(() => c.msgs.at(-1).t === "orientation");
-    assert.deepEqual(c.msgs.at(-2), { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554" });
+    assert.deepEqual(c.msgs.at(-2), { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554", kind: "emulator", caps: EMU_CAPS });
   }
   await until(() => b.subs.length === 2);
   b.push(9);
@@ -701,7 +705,7 @@ test("use：切到另一台运行中的 AVD，旧订阅取消，重新 ready", a
   c.ws.send(JSON.stringify({ t: "use", name: "B" }));
   await until(() => b.subs.length === 1);
   assert.equal(a.subs[0].active, false);
-  assert.deepEqual(c.msgs.at(-2), { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554" });
+  assert.deepEqual(c.msgs.at(-2), { t: "ready", version: PROTOCOL_VERSION, device: { width: 720, height: 1600 }, serial: 5554, deviceId: "emulator-5554", kind: "emulator", caps: EMU_CAPS });
   assert.deepEqual(c.msgs.at(-1), { t: "orientation", rotation: 0 });
 });
 
@@ -2422,4 +2426,203 @@ test("stopAvd：开机任务刚建、还没有串口时，等串口出来再停�
   assert.deepEqual(c.msgs.find((m) => m.t === "stopAvd"), { t: "stopAvd", rid: 26, ok: true });
   assert.equal(f.calls.includes("stop 0"), false);
   assert.ok(f.calls.includes("stop 5556"));
+});
+
+// ─────────────── 真机会话（PR 3） ───────────────
+
+import { BIN_VIDEO, decodeVideoHeader } from "../../shared/protocol.ts";
+import type { VideoPacket } from "../src/emulator.ts";
+
+class FakePhone extends FakeSession {
+  videoSubs: Array<(p: VideoPacket) => void> = [];
+  keyRequests = 0;
+  constructor(id = "R5CR10WN52H") {
+    super();
+    this.kind = "phone";
+    this.caps = { rotate: false, reboot: false, stop: false, clipboard: false, input: false };
+    this.id = id;
+    this.serial = 0;
+    this.avdName = undefined;
+    this.device = { width: 864, height: 1920 };
+  }
+  video(cb: (p: VideoPacket) => void) {
+    this.videoSubs.push(cb);
+    return () => { this.videoSubs = this.videoSubs.filter((x) => x !== cb); };
+  }
+  requestKeyFrame() { this.keyRequests++; }
+  pushPacket(kind: "config" | "key" | "delta", tag: number) {
+    for (const cb of this.videoSubs) cb({ config: kind === "config", key: kind === "key", data: Buffer.from([tag]), width: 864, height: 1920 });
+  }
+}
+
+const PHONE_OK: PhoneInfo = { id: "R5CR10WN52H", state: "device", manufacturer: "samsung", model: "SM-G9910", android: "12" };
+const videoTags = (c: Client) => c.binMsgs.filter((b) => binKind(b) === BIN_VIDEO).map((b) => new Uint8Array(b)[20]);
+
+/** 先接上模拟器，再切到真机。 */
+async function phoneSetup(t: import("node:test").TestContext, phone = new FakePhone(), emu = new FakeSession()) {
+  const p = fakePhones([PHONE_OK]);
+  const fa = fakeAvd({ [phone.id]: phone });
+  const s = await setup(t, emu, async () => emu, fa.ops, undefined, undefined, { phones: p.ops });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "use", name: phone.id }));
+  await until(() => c.msgs.some((m) => m.t === "ready" && m.kind === "phone"));
+  return { ...s, c, p, fa, phone, emu };
+}
+
+test("use 真机 id：ready 带 kind=phone 和 caps，之后收到 BIN_VIDEO，不收 BIN_FRAME", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  const ready = c.msgs.filter((m) => m.t === "ready").at(-1);
+  assert.deepEqual(ready, { t: "ready", version: PROTOCOL_VERSION, device: { width: 864, height: 1920 }, serial: 0, deviceId: "R5CR10WN52H", kind: "phone", caps: phone.caps });
+  const framesBefore = c.binMsgs.filter((b) => binKind(b) === 1).length;
+  phone.pushPacket("config", 1);
+  phone.pushPacket("key", 2);
+  await until(() => videoTags(c).length === 2);
+  assert.deepEqual(videoTags(c), [1, 2]);
+  assert.deepEqual(decodeVideoHeader(new Uint8Array(c.binMsgs.filter((b) => binKind(b) === BIN_VIDEO)[1])), { seq: 1, config: false, key: true, width: 864, height: 1920 });
+  assert.equal(c.binMsgs.filter((b) => binKind(b) === 1).length, framesBefore);
+});
+
+test("真机：订阅时请求一次关键帧；P 帧在关键帧之前不发", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  assert.equal(phone.keyRequests, 1);
+  phone.pushPacket("delta", 1);
+  phone.pushPacket("key", 2);
+  phone.pushPacket("delta", 3);
+  await until(() => videoTags(c).length === 2);
+  assert.deepEqual(videoTags(c), [2, 3]);
+});
+
+test("真机会话关闭：页面收到 phone-closed", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  phone.fireClosed();
+  await until(() => c.msgs.some((m) => m.t === "status" && m.state === "phone-closed"));
+});
+
+test("选过真机后，没有会话的连接不会被 ticker 接上模拟器", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  const readies = () => c.msgs.filter((m) => m.t === "ready").length;
+  const before = readies();
+  phone.fireClosed();
+  await sleep(120);
+  assert.equal(readies(), before);
+});
+
+test("选过的真机重新出现为 device：自动重连并接上", async (t) => {
+  const { c, p, phone, fa } = await phoneSetup(t);
+  phone.fireClosed();
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  await sleep(30);
+  const uses = () => fa.calls.filter((x) => x === "use R5CR10WN52H").length;
+  assert.equal(uses(), 1);
+  p.set([PHONE_OK]);
+  await until(() => uses() === 2);
+  await until(() => c.msgs.filter((m) => m.t === "ready" && m.kind === "phone").length === 2);
+});
+
+test("选过的真机掉线期间新开页面：收到 phone-closed，不会被接到模拟器", async (t) => {
+  const { connect, phone, p } = await phoneSetup(t);
+  phone.fireClosed();
+  // 拔线后列表里它也不再可用（否则新页面会触发重连，见下面「插回后才开页面」）
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  const c2 = await connect();
+  hello(c2);
+  await until(() => c2.msgs.some((m) => m.t === "status"));
+  await sleep(60);
+  assert.deepEqual(c2.msgs.filter((m) => m.t === "status").map((m) => m.state), ["phone-closed"]);
+  assert.ok(!c2.msgs.some((m) => m.t === "ready"));
+});
+
+test("rotate / reboot / stop 对真机回「这台设备不支持」，不调用会话", async (t) => {
+  const { c, phone, fa } = await phoneSetup(t);
+  for (const t2 of ["rotate", "reboot", "stop"]) c.ws.send(JSON.stringify({ t: t2 }));
+  await until(() => c.msgs.filter((m) => m.t === "error").length === 3);
+  assert.deepEqual(c.msgs.filter((m) => m.t === "error").map((m) => m.message), ["这台设备不支持旋转", "这台设备不支持重启", "这台设备不支持关机"]);
+  assert.ok(!phone.calls.some((x) => x.startsWith("rotate") || x.startsWith("reboot")));
+  assert.ok(!fa.calls.some((x) => x.startsWith("stop")));
+});
+
+test("use 一台不在真机列表里、名字也不合法的设备（如拔线后的 192.168.1.5:5555）：仍按原来的规则报「设备名不对」", async (t) => {
+  const { c } = await phoneSetup(t);
+  c.ws.send(JSON.stringify({ t: "use", name: "192.168.1.5:5555" }));
+  await until(() => c.msgs.some((m) => m.t === "error"));
+  assert.match(c.msgs.find((m) => m.t === "error").message, /^设备名不对/);
+});
+
+test("use 真机时连接失败：页面收到带真实原因的错误", async (t) => {
+  const p = fakePhones([PHONE_OK]);
+  const fa = fakeAvd({});
+  fa.ops.use = async () => { throw new Error("5 秒内连不上手机上的 scrcpy 服务端"); };
+  const s = await setup(t, new FakeSession(), undefined, fa.ops, undefined, undefined, { phones: p.ops });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "use", name: "R5CR10WN52H" }));
+  await until(() => c.msgs.some((m) => m.t === "error"));
+  assert.equal(c.msgs.find((m) => m.t === "error").message, "R5CR10WN52H 连不上：5 秒内连不上手机上的 scrcpy 服务端");
+});
+
+test("pause 后不再收到 BIN_VIDEO；resume 后从关键帧重新开始", async (t) => {
+  const { c, phone } = await phoneSetup(t);
+  phone.pushPacket("key", 1);
+  await until(() => videoTags(c).length === 1);
+  c.ws.send(JSON.stringify({ t: "pause" }));
+  await sleep(30);
+  phone.pushPacket("delta", 2);
+  c.ws.send(JSON.stringify({ t: "resume" }));
+  await until(() => phone.keyRequests === 2);
+  phone.pushPacket("delta", 3);
+  phone.pushPacket("key", 4);
+  await until(() => videoTags(c).length === 2);
+  assert.deepEqual(videoTags(c), [1, 4]);
+});
+
+test("真机掉线期间没有页面在线，插回后才开页面：自动连上", async (t) => {
+  const { c, connect, p, phone } = await phoneSetup(t);
+  c.ws.close();
+  await sleep(30);
+  phone.fireClosed();
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  p.set([PHONE_OK]);
+  await sleep(30);
+  const c2 = await connect();
+  hello(c2);
+  await until(() => c2.msgs.some((m) => m.t === "ready" && m.kind === "phone"));
+});
+
+test("自动重连失败：没会话的页面收到带原因的错误", async (t) => {
+  const { c, p, phone, fa } = await phoneSetup(t);
+  fa.ops.use = async () => { throw new Error("5 秒内连不上手机上的 scrcpy 服务端"); };
+  phone.fireClosed();
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  p.set([PHONE_OK]);
+  await until(() => c.msgs.some((m) => m.t === "error"));
+  assert.equal(c.msgs.find((m) => m.t === "error").message, "重新连接 R5CR10WN52H 失败：5 秒内连不上手机上的 scrcpy 服务端");
+});
+
+test("用户切到模拟器的同时真机插回：不会再连回真机，页面停在模拟器上", async (t) => {
+  const { c, p, phone, fa, emu } = await phoneSetup(t);
+  phone.fireClosed();
+  let releaseA!: () => void;
+  const orig = fa.ops.use;
+  const used: string[] = [];
+  fa.ops.use = async (name) => {
+    used.push(name);
+    if (name === "A") {
+      await new Promise<void>((r) => (releaseA = r));
+      return emu;
+    }
+    return orig(name);
+  };
+  c.ws.send(JSON.stringify({ t: "use", name: "A" }));
+  await until(() => used.includes("A"));
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  p.set([PHONE_OK]);
+  await sleep(30);
+  releaseA();
+  await until(() => c.msgs.filter((m) => m.t === "ready").at(-1)?.kind === "emulator");
+  await sleep(60);
+  assert.deepEqual(used, ["A"]);
+  assert.equal(c.msgs.filter((m) => m.t === "ready").at(-1)?.kind, "emulator");
 });

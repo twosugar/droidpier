@@ -17,6 +17,9 @@ import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
 import { adb, killAdbChildren } from "./adb.ts";
 import { createPhones } from "./phones.ts";
+import { connectPhone, type PhoneDeps } from "./phone-session.ts";
+import { materializeScrcpyServer, scrcpyServerPath } from "./scrcpy-server.ts";
+import net from "node:net";
 import { waitForReboot } from "./reboot.ts";
 import { cleanupAll, exitHandler } from "./exit.ts";
 import { allowedOrigins, PUBLIC_ORIGIN } from "./auth.ts";
@@ -147,7 +150,37 @@ const note = (s: string) => {
 let serial: number | undefined;
 let last: EmulatorSession | null = null;
 
+// 真机列表只在 --phones 时跟踪（真机支持做完前的开关）；discover 要靠它认出真机 id，所以先建
+const phones = phonesOn ? createPhones({ stream: adb.stream, exec: adb.device }) : null;
+phones?.start();
+
+/** 真机会话用到的 adb 操作，按设备 id 绑定。 */
+const phoneDeps = (id: string): PhoneDeps => ({
+  jarPath: () => materializeScrcpyServer(scrcpyServerPath(STANDALONE), tmpdir()),
+  push: (local, remote) => adb.long(id)(["push", local, remote], 60_000).then(() => {}),
+  freePort: findFreePort,
+  releasePort,
+  forward: (port, scid) => adb.device(id)(["forward", `tcp:${port}`, `localabstract:scrcpy_${scid}`]).then(() => {}),
+  removeForward: (port) => adb.device(id)(["forward", "--remove", `tcp:${port}`]).then(() => {}),
+  startServer: (cmd, h) => adb.stream(["-s", id, "shell", cmd], h),
+  connect: (port) => new Promise((res, rej) => {
+    const sock = net.connect(port, "127.0.0.1");
+    sock.once("connect", () => res(sock));
+    sock.once("error", rej);
+  }),
+  screencap: () => adb.deviceBuffer(id)(["exec-out", "screencap", "-p"], 10_000),
+  log: note,
+});
+
 async function discover(avdName?: string): Promise<EmulatorSession | null> {
+  // 真机：连不上时把原因抛给 use，页面能看到（模拟器那边吞成 null 是因为 ticker 会反复发现）
+  if (avdName && phones?.list().some((p) => p.id === avdName && p.state === "device")) {
+    const s = await connectPhone(avdName, phoneDeps(avdName));
+    last = s;
+    note(`已连接真机 ${avdName}（${s.device.width}x${s.device.height}）`);
+    s.onClosed(() => note(`真机 ${avdName} 已断开`));
+    return s;
+  }
   const running = await findOwnRunning(avdName);
   if (!running) {
     note(`没有找到带 gRPC 的运行中模拟器${avdName ? ` ${avdName}` : ""}（${discoveryDir()}）`);
@@ -184,9 +217,6 @@ const catalogDeps = realCatalogDeps({
   },
 });
 const first = await getSession();
-// 真机列表只在 --phones 时跟踪（真机支持做完前的开关）
-const phones = phonesOn ? createPhones({ stream: adb.stream, exec: adb.device }) : null;
-phones?.start();
 
 
 srv = await startServer({

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LatestFrame } from "./latest-frame.ts";
+import { createVideoSender } from "./video-sender.ts";
 import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath, proxyDevtools, type DevtoolsSession } from "./devtools-proxy.ts";
 import { createInspectorSlot, pickMapping, toPageCss, type InspectPointer, liveScale } from "./inspect.ts";
 import { checkHost, checkUpgrade, createTickets, type Tickets } from "./auth.ts";
@@ -358,7 +359,44 @@ export async function startServer(opts: {
   const broadcast = (m: ServerMsg, only: (c: Conn) => boolean = () => true) => {
     for (const c of live()) if (only(c)) send(c.ws, m);
   };
-  opts.phones?.onChange((list) => broadcast({ t: "phones", list }));
+  // 用户点过的真机：掉线期间不把模拟器接给没会话的页面，插回后自动重连（docs/superpowers/specs/2026-11-13-real-device-design.md 6.2）。
+  // 用户再点模拟器、或开一台 AVD 时清掉
+  let pinned: string | null = null;
+  const usablePhone = (name: string) => opts.phones?.list().some((p) => p.id === name && p.state === "device") ?? false;
+  const liveSession = (id: string) => [...conns].find((c) => c.session?.id === id)?.session;
+  // 换设备一次只做一件：用户 use、开机后接管、真机插回自动重连都排在这条链上；pinned 也在链里改，
+  // 否则自动重连可能在用户刚切到模拟器之后又连回真机，session-cache 会把用户的模拟器会话关掉
+  let switching: Promise<unknown> = Promise.resolve();
+  const serially = <T>(job: () => Promise<T>): Promise<T> => {
+    const p = switching.then(job, job);
+    switching = p.catch(() => {});
+    return p;
+  };
+  /** 换到这台设备并更新 pinned（真机记下 id，模拟器清掉）。 */
+  const useDevice = (name: string) => serially(async () => {
+    const s = await opts.avd!.use(name);
+    if (s) pinned = s.kind === "phone" ? s.id : null;
+    return s;
+  });
+  let reconnecting = false;
+  /** 选过的真机插回来了、又有页面在等：重连并接给没会话的页面。轮到它时再确认一遍还是这台手机。 */
+  const reconnectPinned = () => {
+    if (!pinned || reconnecting || !opts.avd || !usablePhone(pinned) || liveSession(pinned)) return;
+    if (!live().some((c) => !c.session)) return;
+    const id = pinned;
+    reconnecting = true;
+    serially(async () => (pinned === id && usablePhone(id) && !liveSession(id) ? opts.avd!.use(id) : null)).then(
+      (s) => { if (s && pinned === id) for (const c of live()) if (!c.session) c.attach(s); },
+      (e: Error) => {
+        log(`重新连接 ${id} 失败：${e.message}`);
+        broadcast({ t: "error", message: `重新连接 ${id} 失败：${e.message}` }, (c) => !c.session);
+      },
+    ).finally(() => { reconnecting = false; });
+  };
+  opts.phones?.onChange((list) => {
+    broadcast({ t: "phones", list });
+    reconnectPinned();
+  });
   const booting = () => [...jobs].some((j) => j.progress === "spawning" || j.progress === "booting");
   const sendBoot = (j: StartJob) => broadcast({ t: "boot", name: j.name, progress: j.progress, ...(j.error ? { error: j.error } : {}) });
   const switchTo = (s: EmulatorSession) => {
@@ -385,7 +423,7 @@ export async function startServer(opts: {
       for (const c of conns) {
         if (c.session !== s) continue;
         c.detach();
-        send(c.ws, { t: "status", state: "emulator-closed" });
+        send(c.ws, { t: "status", state: s.kind === "phone" ? "phone-closed" : "emulator-closed" });
       }
     });
   };
@@ -430,7 +468,7 @@ export async function startServer(opts: {
         async () => {
           jobs.delete(job);
           sendBoot(job);
-          const s = await opts.avd!.use(job.name).catch((e: Error) => (log(`接管 ${job.name} 失败：${e.message}`), null));
+          const s = await useDevice(job.name).catch((e: Error) => (log(`接管 ${job.name} 失败：${e.message}`), null));
           if (s) switchTo(s);
           else {
             broadcast({ t: "error", message: `${job.name} 已开机，但连不上它的 gRPC` });
@@ -541,6 +579,8 @@ export async function startServer(opts: {
     for (const j of jobs) sendBoot(j);
     if (polling || booting()) return;
     if (!live().some((c) => !c.session)) return;
+    // 用户选的真机掉线了：等它插回（phones.onChange 重连），不拿模拟器顶上
+    if (pinned) return;
     polling = true;
     try {
       const s = await opts.getSession().catch(() => null);
@@ -637,6 +677,19 @@ export async function startServer(opts: {
       unsubscribe?.();
       unsubscribe = undefined;
       if (paused || !conn.session) return;
+      const ses = conn.session;
+      if (ses.kind === "phone" && ses.video) {
+        // 真机是 H.264：按顺序发、积压时丢到下一个关键帧；手机时钟和电脑不同，不算延迟
+        const sender = createVideoSender({ send: (b) => ws.send(b), buffered: () => ws.bufferedAmount, requestKey: () => ses.requestKeyFrame?.() });
+        unsubscribe = ses.video((p) => {
+          conn.stats.recv++;
+          conn.stats.sent++;
+          conn.stats.bytes += p.data.length;
+          sender.push(p);
+        });
+        ses.requestKeyFrame?.();
+        return;
+      }
       // CSS×DPR 常是小数（比如页面缩放 125%），mmap 文件大小必须是整数；也不超过设备分辨率
       const { width: dw, height: dh } = conn.session!.device;
       const dev = conn.session!.rotation % 180 ? { width: dh, height: dw } : { width: dw, height: dh };
@@ -656,7 +709,7 @@ export async function startServer(opts: {
       // 按着的手指属于旧会话，新会话里没有按下
       lastTouch = null;
       watch(s);
-      send(ws, { t: "ready", version: PROTOCOL_VERSION, device: s.device, serial: s.serial, deviceId: s.id });
+      send(ws, { t: "ready", version: PROTOCOL_VERSION, device: s.device, serial: s.serial, deviceId: s.id, kind: s.kind, caps: s.caps });
       send(ws, { t: "orientation", rotation: s.rotation });
       if (isRebooting(s)) send(ws, { t: "status", state: "rebooting" });
       subscribe();
@@ -902,6 +955,7 @@ export async function startServer(opts: {
     const reboot = async () => {
       const s = conn.session;
       if (!s) return send(ws, { t: "error", message: "重启失败：没有连接设备" });
+      if (!s.caps.reboot) return send(ws, { t: "error", message: "这台设备不支持重启" });
       if (rebooting) return send(ws, { t: "error", message: "模拟器正在重启，等这一轮结束再试" });
       rebooting = { id: s.id };
       log(`页面确认重启 ${s.id}`);
@@ -951,6 +1005,17 @@ export async function startServer(opts: {
           if (license !== null) send(ws, { t: "licenses", licence: license });
         }
         if (opts.phones) send(ws, { t: "phones", list: opts.phones.list() });
+        if (pinned) {
+          // 掉线期间新开的页面不能被 getSession() 接到模拟器上
+          const s = liveSession(pinned);
+          if (s) attach(s);
+          else {
+            send(ws, { t: "status", state: "phone-closed" });
+            // 掉线期间没有页面在，插回时没人触发重连：这个页面来了就试一次
+            reconnectPinned();
+          }
+          return;
+        }
         let failure: string | null = null;
         const session = await opts.getSession().catch((e) => {
           failure = (e as Error).message;
@@ -997,6 +1062,10 @@ export async function startServer(opts: {
           if (conn.session) subscribe();
           break;
         case "rotate":
+          if (conn.session && !conn.session.caps.rotate) {
+            send(ws, { t: "error", message: "这台设备不支持旋转" });
+            break;
+          }
           // 排进输入队列：连点两次时第二次要读到第一次转完的方向
           // 新方向由 onRotation 广播
           enqueue("rotate", (s) => s.rotate(m.dir).then(
@@ -1038,11 +1107,16 @@ export async function startServer(opts: {
             send(ws, { t: "error", message: "没有连接设备" });
             break;
           }
+          if (!conn.session.caps.stop) {
+            send(ws, { t: "error", message: "这台设备不支持关机" });
+            break;
+          }
           opts.avd.stop(conn.session.serial).catch((e: Error) => send(ws, { t: "error", message: `关闭失败：${e.message}` }));
           break;
         case "use": {
           if (!opts.avd) break;
-          const bad = avdNameError(m.name, []);
+          // 真机 id 是 adb 序列号，不按 AVD 名的规则检查（main.ts 的 discover 认得它）
+          const bad = usablePhone(m.name) ? null : avdNameError(m.name, []);
           if (bad) {
             send(ws, { t: "error", message: `设备名不对：${bad}` });
             break;
@@ -1052,7 +1126,7 @@ export async function startServer(opts: {
             break;
           }
           let failure: string | null = null;
-          const s = await opts.avd.use(m.name).catch((e: Error) => ((failure = e.message), log(`切换到 ${m.name} 失败：${e.message}`), null));
+          const s = await useDevice(m.name).catch((e: Error) => ((failure = e.message), log(`切换到 ${m.name} 失败：${e.message}`), null));
           if (s) switchTo(s);
           else send(ws, { t: "error", message: failure ? `${m.name} 连不上：${failure}` : `${m.name} 没有在运行或没开 gRPC` });
           break;
