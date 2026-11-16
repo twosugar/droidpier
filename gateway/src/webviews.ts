@@ -181,7 +181,25 @@ export function createWebViews(deps: WebViewsDeps) {
       }
     }
 
-    // 新出现的 socket：建立转发；forward 失败时释放已分配的端口
+    // 转发可能被 adb 撤掉了（模拟器重启、adb 断开重连）。/json 看不出来：Node 的 fetch 复用 keep-alive 连接，
+    // 旧连接照样能读到列表，DevTools 新开的连接却被拒（2026-11-16 实测）。所以每轮对一遍 forward --list，没了就重建
+    // 读不到 forward --list 时这一轮不核对，不因为它让整个列表报错
+    const live = socketToPort.size ? await exec(["forward", "--list"]).catch(() => null) : null;
+    if (live !== null) {
+      // 每行是「设备 本机端 设备端」；-s 不过滤，列的是所有设备的转发，靠本机端口唯一认出自己的
+      const lines = new Set(live.split("\n").map((l) => l.trim().split(/\s+/).slice(1).join(" ")));
+      for (const [socket, port] of socketToPort) {
+        if (!lines.has(`tcp:${port} localabstract:${socket}`)) {
+          socketToPort.delete(socket);
+          // 模拟器重启后 pid 可能重复、同名 socket 换了 App：包名和旧页面也不能再用
+          socketToPkg.delete(socket);
+          socketToItems.delete(socket);
+          releasePort?.(port);
+        }
+      }
+    }
+
+    // 新出现的 socket（和转发没了的）：建立转发；forward 失败时释放已分配的端口
     for (const socket of current) {
       if (!socketToPort.has(socket)) {
         const port = await freePort();

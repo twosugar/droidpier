@@ -52,6 +52,8 @@ function makeDeps(opts: {
   let callCount = 0;
   let listCallCount = 0;
   let portCounter = 9300;
+  // 假 adb server 上的转发：本机端 → 设备端
+  const forwards = new Map<string, string>();
 
   const exec = async (args: string[]): Promise<string> => {
     execLog.push(args);
@@ -60,8 +62,9 @@ function makeDeps(opts: {
       if (listCallCount === 1) return opts.procNetUnix ?? PROC_NET_UNIX;
       return opts.procNetUnixSecond ?? opts.procNetUnix ?? PROC_NET_UNIX;
     }
-    if (args[0] === "forward" && args[1]?.startsWith("tcp:")) return "";
-    if (args[0] === "forward" && args[1] === "--remove") return "";
+    if (args[0] === "forward" && args[1]?.startsWith("tcp:")) return (forwards.set(args[1], args[2]), "");
+    if (args[0] === "forward" && args[1] === "--remove") return (forwards.delete(args[2]), "");
+    if (args[0] === "forward" && args[1] === "--list") return [...forwards].map(([l, r]) => `emulator-5554 ${l} ${r}\n`).join("");
     if (args[0] === "shell" && args[1] === "ps") {
       return (opts.pkgName ?? "com.example.app.debug") + "\n";
     }
@@ -76,7 +79,7 @@ function makeDeps(opts: {
 
   const freePort = async (): Promise<number> => portCounter++;
 
-  return { exec, execLog, fetchJson, freePort };
+  return { exec, execLog, fetchJson, freePort, forwards };
 }
 
 test("列表按 visible 排序并带上包名", async () => {
@@ -366,8 +369,12 @@ const TABS_JSON = [
 function browserDeps(fg: string | Error) {
   const execLog: string[][] = [];
   let port = 9300;
+  const forwards = new Map<string, string>();
   const exec = async (args: string[]): Promise<string> => {
     execLog.push(args);
+    if (args[0] === "forward" && args[1]?.startsWith("tcp:")) return (forwards.set(args[1], args[2]), "");
+    if (args[0] === "forward" && args[1] === "--remove") return (forwards.delete(args[2]), "");
+    if (args[0] === "forward" && args[1] === "--list") return [...forwards].map(([l, r]) => `emulator-5554 ${l} ${r}\n`).join("");
     if (args[0] === "shell" && args[2] === "/proc/net/unix") return "0000000000000000: 00000003 00000000 00000000 0001 03 22222 @chrome_devtools_remote";
     if (args[0] === "shell" && args.join(" ").includes("dumpsys activity")) {
       if (fg instanceof Error) throw fg;
@@ -538,4 +545,43 @@ test("forget：adb 重连后转发已被撤掉，下次 list 重新建转发，�
   const removesBefore = execLog.filter((a) => a[1] === "--remove").length;
   await wv.close();
   assert.equal(execLog.filter((a) => a[1] === "--remove").length, removesBefore + 1, "只移除新建的那个");
+});
+
+test("转发被 adb 撤掉了：下一轮对 forward --list 发现没了，重新建", async () => {
+  const deps = makeDeps({
+    procNetUnix: `0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642`,
+    pagesJson: PAGES_JSON,
+  });
+  const released: number[] = [];
+  const wv = createWebViews({ exec: deps.exec, fetchJson: deps.fetchJson, freePort: deps.freePort, releasePort: (p) => released.push(p) });
+  await wv.list();
+  const first = wv.portOf("webview_devtools_remote_6642");
+  assert.ok(first);
+  await wv.list();
+  assert.equal(wv.portOf("webview_devtools_remote_6642"), first, "转发还在时不动");
+  deps.forwards.clear(); // 模拟器重启、adb 重连
+  await wv.list();
+  const second = wv.portOf("webview_devtools_remote_6642");
+  assert.ok(second);
+  assert.equal(deps.forwards.get(`tcp:${second}`), "localabstract:webview_devtools_remote_6642", "重新建了转发");
+  assert.deepEqual(released, [first]);
+});
+
+test("forward --list 读失败时这一轮不核对，列表照常返回，转发不动", async () => {
+  const deps = makeDeps({
+    procNetUnix: `0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642`,
+    pagesJson: PAGES_JSON,
+  });
+  let failList = false;
+  const exec = async (args: string[]) => {
+    if (failList && args[0] === "forward" && args[1] === "--list") throw new Error("adb: error");
+    return deps.exec(args);
+  };
+  const wv = createWebViews({ exec, fetchJson: deps.fetchJson, freePort: deps.freePort });
+  await wv.list();
+  const port = wv.portOf("webview_devtools_remote_6642");
+  failList = true;
+  const pages = await wv.list();
+  assert.ok(pages.length > 0);
+  assert.equal(wv.portOf("webview_devtools_remote_6642"), port);
 });
