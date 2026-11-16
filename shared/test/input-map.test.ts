@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { toDevice, keyToMsg, shortcutToMsg, textToMsgs, pasteToMsgs, inputToMsgs, wheelToSwipe } from "../input-map.ts";
+import { toDevice, toVideo, keyToMsg, shortcutToMsg, textToMsgs, pasteToMsgs, inputToMsgs, wheelToSwipe } from "../input-map.ts";
 
 describe("toDevice", () => {
   it("正常换算", () => {
@@ -272,5 +272,29 @@ describe("shortcutToMsg", () => {
 
   it("浏览器自己的快捷键留给浏览器", () => {
     for (const key of ["r", "w", "t", "v", "c"]) assert.equal(shortcutToMsg({ key, ...cmd }), null);
+  });
+});
+
+describe("toVideo", () => {
+  const portrait = { width: 864, height: 1920 };
+  it("竖屏时等比映射", () => {
+    assert.deepEqual(toVideo({ x: 100, y: 200 }, portrait, 0, portrait), { x: 100, y: 200 });
+    assert.deepEqual(toVideo({ x: 432, y: 960 }, { width: 1080, height: 2400 }, 0, portrait), { x: 346, y: 768 });
+  });
+  it("横屏（90）时换到横向视频", () => {
+    assert.deepEqual(toVideo({ x: 100, y: 200 }, portrait, 90, { width: 1920, height: 864 }), { x: 1720, y: 100 });
+  });
+  it("是 toDevice 的反函数（0 / 90 / 180 / 270）", () => {
+    for (const rotation of [0, 90, 180, 270] as const) {
+      const video = rotation % 180 ? { width: 1920, height: 864 } : portrait;
+      const rect = { left: 0, top: 0, ...video };
+      for (const p of [{ x: 10, y: 20 }, { x: 700, y: 500 }, { x: 1500, y: 800 }].filter((q) => q.x < video.width && q.y < video.height)) {
+        const back = toVideo(toDevice(p, rect, portrait, rotation), portrait, rotation, video);
+        assert.ok(Math.abs(back.x - p.x) <= 1 && Math.abs(back.y - p.y) <= 1, `${rotation} ${JSON.stringify(p)} → ${JSON.stringify(back)}`);
+      }
+    }
+  });
+  it("夹到视频范围内", () => {
+    assert.deepEqual(toVideo({ x: 864, y: 1920 }, portrait, 0, portrait), { x: 863, y: 1919 });
   });
 });

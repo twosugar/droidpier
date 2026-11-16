@@ -26,6 +26,29 @@ export function toDevice(
   };
 }
 
+/**
+ * toDevice 的反函数：竖屏面板像素 → 当前视频帧像素（真机的 scrcpy 按视频帧坐标注入），四舍五入，夹到视频范围内。
+ * video 是画面实际的宽高（横屏时宽大于高）。
+ */
+export function toVideo(
+  p: { x: number; y: number },
+  device: { width: number; height: number },
+  rotation: Rotation,
+  video: { width: number; height: number }
+): { x: number; y: number } {
+  const rx = p.x / device.width;
+  const ry = p.y / device.height;
+  const [u, v] =
+    rotation === 90 ? [1 - ry, rx] :
+    rotation === 180 ? [1 - rx, 1 - ry] :
+    rotation === 270 ? [ry, 1 - rx] :
+    [rx, ry];
+  return {
+    x: Math.max(0, Math.min(video.width - 1, Math.round(u * video.width))),
+    y: Math.max(0, Math.min(video.height - 1, Math.round(v * video.height))),
+  };
+}
+
 /** 功能键集合。 */
 const FUNCTION_KEYS = new Set([
   "Enter", "Backspace", "Delete", "Tab", "Escape",
