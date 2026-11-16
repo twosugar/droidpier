@@ -6,7 +6,7 @@ import { DEFAULT_PORT } from "./page-url.ts";
  * 启动网关要用的参数。--local / --public 由 page-url.ts 直接看 argv。service 表示由 launchd 拉起（gateway/src/service.ts）。
  * autoUpdate：后台服务自己更新，前台运行只提示有新版本（gateway/src/updater.ts）；--no-auto-update 关掉。
  */
-export type CliOptions = { port: number; noOpen: boolean; allowOrigins: string[]; service: boolean; autoUpdate: boolean };
+export type CliOptions = { port: number; noOpen: boolean; allowOrigins: string[]; service: boolean; autoUpdate: boolean; phones: boolean };
 
 export type ServiceCommand = "start" | "stop" | "status" | "logs";
 
@@ -58,7 +58,7 @@ export function parseCli(args: string[]): CliResult {
 }
 
 function parseRun(args: string[]): Extract<CliResult, { kind: "run" | "error" }> {
-  const options: CliOptions = { port: DEFAULT_PORT, noOpen: false, allowOrigins: [], service: false, autoUpdate: true };
+  const options: CliOptions = { port: DEFAULT_PORT, noOpen: false, allowOrigins: [], service: false, autoUpdate: true, phones: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--local" || a === "--public") continue;
@@ -69,6 +69,9 @@ function parseRun(args: string[]): Extract<CliResult, { kind: "run" | "error" }>
       options.noOpen = true;
     } else if (a === "--no-auto-update") {
       options.autoUpdate = false;
+    } else if (a === "--phones") {
+      // 真机支持做完前的开关，不写进帮助（docs/superpowers/specs/2026-11-13-real-device-design.md 第 7 节）
+      options.phones = true;
     } else if (a === "--port") {
       const v = args[++i];
       const port = Number(v);

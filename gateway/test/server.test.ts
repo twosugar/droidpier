@@ -2261,3 +2261,50 @@ test("/healthz 带上自动更新开没开和上次检查的结果", async (t) =
   const body = await (await fetch(`http://127.0.0.1:${srv.port}/healthz`)).json();
   assert.deepEqual(body.update, { auto: true, last: { at: "2026-11-13T02:00:00.000Z", state: "latest" } });
 });
+
+// ─────────────── 真机列表（--phones） ───────────────
+
+import type { PhoneInfo } from "../../shared/protocol.ts";
+
+const PHONE: PhoneInfo = { id: "R5CR10WN52H", state: "device", manufacturer: "samsung", model: "SM-G9910", android: "12" };
+
+function fakePhones(initial: PhoneInfo[]) {
+  const cbs: Array<(l: PhoneInfo[]) => void> = [];
+  let list = initial;
+  return {
+    ops: { list: () => list, onChange: (cb: (l: PhoneInfo[]) => void) => void cbs.push(cb) },
+    set(l: PhoneInfo[]) { list = l; for (const cb of cbs) cb(l); },
+  };
+}
+
+test("带 phones 时 hello 后收到一次真机列表，排在 env 之后", async (t) => {
+  const p = fakePhones([PHONE]);
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, fakeSetup().ops, { phones: p.ops });
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "phones"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "phones"), { t: "phones", list: [PHONE] });
+  assert.ok(c.msgs.findIndex((m) => m.t === "env") < c.msgs.findIndex((m) => m.t === "phones"));
+});
+
+test("真机列表变化时广播给所有已 hello 的连接", async (t) => {
+  const p = fakePhones([]);
+  const { connect } = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { phones: p.ops });
+  const a = await connect();
+  const b = await connect();
+  hello(a);
+  hello(b);
+  await until(() => a.msgs.some((m) => m.t === "phones") && b.msgs.some((m) => m.t === "phones"));
+  p.set([PHONE]);
+  await until(() => [a, b].every((c) => c.msgs.filter((m) => m.t === "phones").length === 2));
+  assert.deepEqual(b.msgs.filter((m) => m.t === "phones").at(-1), { t: "phones", list: [PHONE] });
+});
+
+test("不带 phones 时不发真机列表", async (t) => {
+  const { connect } = await setup(t);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  await sleep(50);
+  assert.ok(!c.msgs.some((m) => m.t === "phones"));
+});

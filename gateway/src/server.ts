@@ -37,6 +37,7 @@ import {
   type FrameHeader,
   type InstallProgress,
   type Licence,
+  type PhoneInfo,
   type ServerMsg,
   type UpdateState,
   type UploadState,
@@ -145,6 +146,8 @@ export async function startServer(opts: {
   staticDir: string;
   getSession: () => Promise<EmulatorSession | null>;
   avd?: AvdOps;
+  /** 真机列表（gateway/src/phones.ts）；只有带 --phones 启动时才传。 */
+  phones?: { list(): PhoneInfo[]; onChange(cb: (list: PhoneInfo[]) => void): void };
   debug?: DebugDeps;
   setup?: SetupOps;
   /** WebView 调试 socket → 本机转发端口；不传时用当前设备的 debug.webviews，都没有时 /devtools/ 连接一律 4404。 */
@@ -342,6 +345,7 @@ export async function startServer(opts: {
   const broadcast = (m: ServerMsg, only: (c: Conn) => boolean = () => true) => {
     for (const c of live()) if (only(c)) send(c.ws, m);
   };
+  opts.phones?.onChange((list) => broadcast({ t: "phones", list }));
   const booting = () => [...jobs].some((j) => j.progress === "spawning" || j.progress === "booting");
   const sendBoot = (j: StartJob) => broadcast({ t: "boot", name: j.name, progress: j.progress, ...(j.error ? { error: j.error } : {}) });
   const switchTo = (s: EmulatorSession) => {
@@ -858,6 +862,7 @@ export async function startServer(opts: {
           for (const p of installs.values()) send(ws, { t: "install", progress: p });
           if (license !== null) send(ws, { t: "licenses", licence: license });
         }
+        if (opts.phones) send(ws, { t: "phones", list: opts.phones.list() });
         let failure: string | null = null;
         const session = await opts.getSession().catch((e) => {
           failure = (e as Error).message;

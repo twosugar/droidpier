@@ -16,6 +16,7 @@ import { createWebViews, defaultFetchJson, findFreePort, makeAdbExec, releasePor
 import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
 import { adb, killAdbChildren } from "./adb.ts";
+import { createPhones } from "./phones.ts";
 import { waitForReboot } from "./reboot.ts";
 import { cleanupAll, exitHandler } from "./exit.ts";
 import { allowedOrigins, PUBLIC_ORIGIN } from "./auth.ts";
@@ -66,7 +67,7 @@ if (cli.kind === "service") {
   const run = { start: () => serviceStart(d, { args: cli.args, noOpen: cli.noOpen }), stop: () => serviceStop(d), status: () => serviceStatus(d), logs: () => serviceLogs(d) };
   process.exit(await run[cli.command]());
 }
-const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate } = cli.options;
+const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate, phones: phonesOn } = cli.options;
 const label = serviceLabel(process.env);
 if (service && "label" in label) await rotateLog(serviceLogPath(label.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
 
@@ -183,10 +184,14 @@ const catalogDeps = realCatalogDeps({
   },
 });
 const first = await getSession();
+// 真机列表只在 --phones 时跟踪（真机支持做完前的开关）
+const phones = phonesOn ? createPhones({ stream: adb.stream, exec: adb.device }) : null;
+phones?.start();
 
 
 srv = await startServer({
   port,
+  phones: phones ?? undefined,
   version: VERSION,
   service,
   update: { autoUpdate: service && updater !== null, request: () => updater!.request(), last: () => updater?.last() ?? null },
@@ -246,6 +251,8 @@ if (!noOpen) openBrowser(pageUrl, (e) => console.log(`打开浏览器失败：${
 let cleaning: Promise<void> | null = null;
 const cleanup = () => (cleaning ??= (async () => {
   clearTimeout(stableTimer);
+  // 结束 adb track-devices，不留孤儿进程
+  phones?.stop();
   await cleanupAll({
     // 中止进行中的下载，等它删掉临时目录
     stopUpdater: updater ? () => updater.stop() : undefined,

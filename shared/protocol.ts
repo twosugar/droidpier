@@ -130,6 +130,9 @@ export type AvdInfo = {
   grpcPort?: number;
 };
 
+/** 一台 USB / 无线连着的真机。state：device 可用，unauthorized 没在手机上允许 USB 调试，offline 其他（离线、recovery 等）。 */
+export type PhoneInfo = { id: string; state: "device" | "unauthorized" | "offline"; manufacturer?: string; model?: string; android?: string };
+
 /**
  * 环境检查的一个缺失项。command 只有旧网关会带（sdkmanager / avdmanager 的手动命令），sizeMb 是大致下载量，
  * auto 表示用户确认后网关能自动装。
@@ -287,6 +290,8 @@ export type ServerMsg =
   /** rebooting：模拟器系统正在重启，结束后回到 connected。 */
   | { t: "status"; state: "connected" | "no-emulator" | "emulator-closed" | "booting" | "rebooting" }
   | { t: "avds"; list: AvdInfo[] }
+  /** 真机列表：只有网关带 --phones 启动时才发，hello 后发一次、之后有变化就发；没收到过就当网关不支持真机。 */
+  | { t: "phones"; list: PhoneInfo[] }
   | { t: "boot"; name: string; progress: string; error?: string }
   | { t: "error"; message: string }
   /** 紧接着以 CLOSE_VERSION 关闭连接。upgrade 是升级网关的命令。 */
