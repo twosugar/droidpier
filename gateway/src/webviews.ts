@@ -58,6 +58,8 @@ type WebViewsDeps = {
   /** GET /json/version；浏览器 socket 靠里面的 Android-Package 认包名，不传或读不到时按 socket 名推。 */
   fetchVersion?: (port: number) => Promise<any>;
   freePort: () => Promise<number>;
+  /** list() 等一个 socket 的 /json 最多多久，超过就先用上次的结果；默认 2000，测试注入短值。 */
+  jsonWaitMs?: number;
   /** 当前时间（毫秒），前台 App 缓存用；测试注入。 */
   now?: () => number;
   /** list()/close() 移除转发后调用，通知端口分配器释放保留位。 */
@@ -103,6 +105,8 @@ function parseRect(description: string | undefined): WebViewPage["rect"] {
   return { x, y, width, height };
 }
 
+/** list() 等 /json 的默认时长：WebView 正常时几十毫秒就回，DevTools 连着、页面在重载时会慢一些。 */
+const JSON_WAIT_MS = 2000;
 const FOREGROUND_CMD = ["shell", "dumpsys activity activities 2>/dev/null | grep -m1 ResumedActivity"];
 /** 前台 App 缓存多久：用户的模拟器上 adb 可能很慢甚至卡住，每次轮询都多跑一条 shell 太重。 */
 const FOREGROUND_TTL_MS = 10_000;
@@ -128,6 +132,11 @@ export function createWebViews(deps: WebViewsDeps) {
   const socketToPkg = new Map<string, string>();
   // socket → 上一次 /json 的结果：socket 还在但这次没答上来（DevTools 连着、页面正在重载时会慢）就沿用，免得页面在列表里闪没
   const socketToItems = new Map<string, any[]>();
+  // socket → 还没回来的 /json 请求。后台被冻结的 App 不再接收 DevTools 连接上的请求，每轮都新开连接、超时再丢下，
+  // 会在手机的 adbd 上越积越多，叠加真机画面的负载时把整条 USB 连接堵死（2026-11-16 SM-G9910 / Android 12 复现）。
+  // 所以同一个 socket 同一时间只留一个请求，它不回来就一直沿用上次的结果
+  const pendingJson = new Map<string, Promise<any[]>>();
+  const jsonWaitMs = deps.jsonWaitMs ?? JSON_WAIT_MS;
 
   // 连续失败退避：记录失败次数和下次允许调用的时间戳
   let consecutiveFailures = 0;
@@ -139,6 +148,7 @@ export function createWebViews(deps: WebViewsDeps) {
     socketToPort.delete(socket);
     socketToPkg.delete(socket);
     socketToItems.delete(socket);
+    pendingJson.delete(socket);
     releasePort?.(port);
     await exec(["forward", "--remove", `tcp:${port}`]);
   }
@@ -209,13 +219,23 @@ export function createWebViews(deps: WebViewsDeps) {
         pkg = socketToPkg.get(socket);
       }
 
-      let items: any[];
-      try {
-        items = await fetchJson(port);
-        socketToItems.set(socket, items);
-      } catch {
-        items = socketToItems.get(socket) ?? [];
+      let pending = pendingJson.get(socket);
+      if (!pending) {
+        const p = fetchJson(port).then((items) => {
+          if (pendingJson.get(socket) === p) socketToItems.set(socket, items);
+          return items;
+        }).finally(() => {
+          if (pendingJson.get(socket) === p) pendingJson.delete(socket);
+        });
+        p.catch(() => {});
+        pendingJson.set(socket, p);
+        pending = p;
       }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const items = await Promise.race([
+        pending.catch(() => null),
+        new Promise<null>((r) => (timer = setTimeout(() => r(null), jsonWaitMs))),
+      ]).finally(() => clearTimeout(timer)) ?? socketToItems.get(socket) ?? [];
 
       fetched.push({ socket, pid, pkg, items });
     }
@@ -360,16 +380,11 @@ export function releasePort(port: number): void {
   defaultAllocator.release(port);
 }
 
-/** 默认的 fetchJson：GET http://127.0.0.1:<port>/json，超时 2 秒。 */
+/** 默认的 fetchJson：GET http://127.0.0.1:<port>/json，不设超时（见函数内注释）。 */
 export async function defaultFetchJson(port: number): Promise<any[]> {
-  const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), 2000);
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/json`, { signal: ctrl.signal });
-    return await res.json();
-  } finally {
-    clearTimeout(tid);
-  }
+  // 不设超时、不中途丢下：等多久由 list() 决定，连接留着等 App 回来或转发被移除（见 createWebViews 的 pendingJson）
+  const res = await fetch(`http://127.0.0.1:${port}/json`);
+  return await res.json();
 }
 
 /** 默认的 fetchVersion：GET http://127.0.0.1:<port>/json/version，超时 2 秒。 */

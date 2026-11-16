@@ -477,3 +477,44 @@ test("parseAppBounds 取指定包名窗口的 mAppBounds，别的窗口和读不
   assert.equal(parseAppBounds(out, "com.example"), null);
   assert.equal(parseAppBounds("  Window #9 Window{8bb91e3 u0 com.android.chrome/x}:\n    mAppBounds=null", "com.android.chrome"), null);
 });
+
+// 后台被冻结的 App 不再接收 DevTools 连接上的请求：每轮都新开连接、超时再丢下，会在手机的 adbd 上越积越多，
+// 叠加真机画面的负载时把整条 USB 连接堵死（2026-11-16 SM-G9910 / Android 12 复现）
+const ONE_WEBVIEW = `
+0000000000000000: 00000003 00000000 00000000 0001 03 11111 @webview_devtools_remote_6642
+`.trim();
+
+test("/json 一直没回应：list 等一会儿就沿用上次的页面，之后不再对这个 socket 发新请求", async () => {
+  const { exec, freePort } = makeDeps({ procNetUnix: ONE_WEBVIEW });
+  let requests = 0;
+  const fetchJson = (): Promise<any[]> => (++requests === 1 ? Promise.resolve(PAGES_JSON) : new Promise(() => {}));
+  const wv = createWebViews({ exec, fetchJson, freePort, jsonWaitMs: 20 });
+  const first = await wv.list();
+  const second = await wv.list();
+  const third = await wv.list();
+  assert.deepEqual(second.map((p) => p.id), first.map((p) => p.id));
+  assert.deepEqual(third.map((p) => p.id), first.map((p) => p.id));
+  assert.equal(requests, 2);
+  await wv.close();
+});
+
+test("迟到的 /json 回来后：下一轮用它的结果，之后照常每轮请求", async () => {
+  const { exec, freePort } = makeDeps({ procNetUnix: ONE_WEBVIEW });
+  let requests = 0;
+  let answerLate!: (v: any[]) => void;
+  const later = [{ ...PAGES_JSON[0], id: "late" }];
+  const fetchJson = (): Promise<any[]> => {
+    requests++;
+    if (requests === 2) return new Promise((r) => (answerLate = r));
+    return Promise.resolve(requests === 1 ? PAGES_JSON : later);
+  };
+  const wv = createWebViews({ exec, fetchJson, freePort, jsonWaitMs: 20 });
+  await wv.list();
+  await wv.list();
+  answerLate(later);
+  await new Promise((r) => setImmediate(r));
+  const third = await wv.list();
+  assert.equal(third[0].id, "late");
+  assert.equal(requests, 3);
+  await wv.close();
+});
