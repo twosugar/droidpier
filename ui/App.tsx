@@ -1578,9 +1578,9 @@ function App() {
             </View>
             <Toolbar accessibilityLabel="系统导航"
               style={{ flexDirection: "row", gap: 4, padding: 3, borderRadius: 12, borderWidth: 1, borderColor: C.lineSoft, backgroundColor: C.panel }}>
-              <ToolBtn icon="back" label="返回" tip="点过屏幕后按 ⌘⌫" disabled={!shownIsLive()} onPress={() => key("GoBack")} />
-              <ToolBtn icon="home" label="主页" tip="点过屏幕后按 ⇧⌘H" disabled={!shownIsLive()} onPress={() => key("GoHome")} />
-              <ToolBtn icon="recents" label="最近" tip="点过屏幕后按 ⌘O" disabled={!shownIsLive()} onPress={() => key("AppSwitch")} />
+              <ToolBtn icon="back" label="返回" tip="点过屏幕后按 ⌘⌫" disabled={!shownIsLive() || caps()?.input === false} onPress={() => key("GoBack")} />
+              <ToolBtn icon="home" label="主页" tip="点过屏幕后按 ⇧⌘H" disabled={!shownIsLive() || caps()?.input === false} onPress={() => key("GoHome")} />
+              <ToolBtn icon="recents" label="最近" tip="点过屏幕后按 ⌘O" disabled={!shownIsLive() || caps()?.input === false} onPress={() => key("AppSwitch")} />
             </Toolbar>
           </View>
           <View style={{ position: "absolute", top: 8, left: 0, right: 0, alignItems: "center", gap: 8 }}>

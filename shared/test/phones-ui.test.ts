@@ -12,7 +12,7 @@ test("phoneLabel：只有型号时用型号，都没有时用设备 id", () => {
 });
 
 test("phoneStatus：可用的手机按是不是当前画面给两种文案", () => {
-  assert.equal(phoneStatus({ id: "a", state: "device" }, true), "当前画面 · 暂不能操作");
+  assert.equal(phoneStatus({ id: "a", state: "device" }, true), "当前画面");
   assert.equal(phoneStatus({ id: "a", state: "device" }, false), "可用，点一下切换");
 });
 

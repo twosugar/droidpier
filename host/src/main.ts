@@ -384,6 +384,10 @@ export async function createHost(player: Player) {
   let swipeGen = 0;
   let swipeLastX = 0;
   let swipeLastY = 0;
+  // 原生滚动（caps.scroll）的累加
+  let scrollAcc = { dx: 0, dy: 0 };
+  let scrollAt = { x: 0, y: 0 };
+  let scrollTimer: ReturnType<typeof setTimeout> | null = null;
 
   // 中断滚轮滑动：无论是否在发，都清掉还没触发的合并 timer 和累积；正在发时补发 touch-up
   function abortWheelSwipe(): void {
@@ -476,12 +480,25 @@ export async function createHost(player: Player) {
     e.preventDefault();
     if (pointerIsDown || !device.width) return;
     // deltaMode 转换：PIXEL(0) 不变；LINE(1) ×40px；PAGE(2) × canvas CSS 高度
-    let dy = e.deltaY;
-    if (e.deltaMode === 1) dy *= 40;
-    else if (e.deltaMode === 2) dy *= css.height;
-    if (dy === 0) return; // 纯横向滚动（Shift+wheel 等），忽略
+    const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? css.height : 1;
+    const dy = e.deltaY * unit;
     const rect = canvas.getBoundingClientRect();
     const at = toDevice({ x: e.clientX, y: e.clientY }, rect, device, rotation);
+    // 能收原生滚动的设备（真机）：16ms 内的滚轮累加成一条 scroll，横向也发
+    if (caps?.scroll) {
+      scrollAcc.dx += e.deltaX * unit;
+      scrollAcc.dy += dy;
+      scrollAt = at;
+      scrollTimer ??= setTimeout(() => {
+        scrollTimer = null;
+        const { dx, dy } = scrollAcc;
+        scrollAcc = { dx: 0, dy: 0 };
+        if (pointerIsDown || (dx === 0 && dy === 0)) return;
+        conn.send({ t: "scroll", x: scrollAt.x, y: scrollAt.y, dx, dy });
+      }, 16);
+      return;
+    }
+    if (dy === 0) return; // 纯横向滚动（Shift+wheel 等），忽略
     if (swipeSending) {
       swipePendingDelta += dy;
       swipePendingAt = at;
