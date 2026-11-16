@@ -1,0 +1,5 @@
+scrcpy-server-v5.0.1 is the unmodified server of scrcpy 5.0.1
+(https://github.com/Genymobile/scrcpy/releases/tag/v5.0.1),
+Copyright (C) 2018 Genymobile, Copyright (C) 2018-2026 Romain Vimont,
+distributed under the Apache License 2.0 (see LICENSE in this directory).
+Droidpier pushes it to a phone to capture the screen and inject input.
