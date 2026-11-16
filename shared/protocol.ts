@@ -159,7 +159,8 @@ export type AvdInfo = {
 
 /** 一台 USB / 无线连着的真机。state：device 可用，unauthorized 没在手机上允许 USB 调试，offline 其他（离线、recovery 等）。 */
 /** 这台设备支持什么，页面和 WebMCP 只看它决定显示哪些操作（docs/superpowers/specs/2026-11-13-real-device-design.md 6.1）。 */
-export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean };
+/** scroll：能收原生滚动（scroll 消息）；没有时页面用滑动模拟滚轮。 */
+export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean; scroll: boolean };
 
 export type PhoneInfo = { id: string; state: "device" | "unauthorized" | "offline"; manufacturer?: string; model?: string; android?: string };
 
@@ -278,6 +279,8 @@ export type ClientMsg =
   | { t: "text"; text: string }
   /** 只写设备剪贴板，不粘贴。 */
   | { t: "clip"; text: string }
+  /** 真机原生滚动：x、y 同 touch，dx、dy 是滚轮的 CSS 像素位移（往下滚 dy 为正）。只在 caps.scroll 为 true 时发，旧网关不认识。 */
+  | { t: "scroll"; x: number; y: number; dx: number; dy: number }
   | { t: "resize"; width: number; height: number }
   | { t: "avds" }
   | { t: "start"; name: string }
@@ -405,6 +408,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "clip":
       if (!isStr(o.text)) return null;
       return o as ClientMsg;
+    case "scroll":
+      if (!isNum(o.x) || !isNum(o.y) || !isNum(o.dx) || !isNum(o.dy)) return null;
+      return { t: "scroll", x: o.x, y: o.y, dx: o.dx, dy: o.dy };
     case "resize":
       if (!isNum(o.width) || !isNum(o.height)) return null;
       return o as ClientMsg;

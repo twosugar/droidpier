@@ -179,3 +179,9 @@ test("encodeVideoHeader / decodeVideoHeader 往返；kind 是 BIN_VIDEO，头 20
   assert.deepEqual(decodeVideoHeader(buf), h);
   assert.deepEqual(decodeVideoHeader(encodeVideoHeader({ ...h, config: true, key: false })), { ...h, config: true, key: false });
 });
+
+test("parseClientMsg：scroll 只收四个有限数，多余字段丢掉", () => {
+  assert.deepEqual(parseClientMsg('{"t":"scroll","x":1,"y":2,"dx":0,"dy":-120,"z":1}'), { t: "scroll", x: 1, y: 2, dx: 0, dy: -120 });
+  assert.equal(parseClientMsg('{"t":"scroll","x":1,"y":2,"dy":3}'), null);
+  assert.equal(parseClientMsg('{"t":"scroll","x":"1","y":2,"dx":0,"dy":3}'), null);
+});

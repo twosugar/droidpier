@@ -12,7 +12,7 @@ type Size = { width: number; height: number };
 export type VideoPacket = { config: boolean; key: boolean; data: Buffer; width: number; height: number };
 
 /** 模拟器能做的全部操作。 */
-export const EMULATOR_CAPS: DeviceCaps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true };
+export const EMULATOR_CAPS: DeviceCaps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true, scroll: false };
 
 /** 一台已连上的设备（模拟器或真机）：订阅画面、注入输入、感知退出。 */
 export interface EmulatorSession {
@@ -36,6 +36,8 @@ export interface EmulatorSession {
   touch(x: number, y: number, down: boolean): Promise<void>;
   key(key: string, eventType: "keydown" | "keyup" | "keypress"): Promise<void>;
   text(text: string): Promise<void>;
+  /** 只有 caps.scroll 的设备有：原生滚动，x、y 同 touch，dx、dy 是滚轮的 CSS 像素位移。 */
+  scroll?(x: number, y: number, dx: number, dy: number): Promise<void>;
   /** 转 90°（缺省顺时针），返回新的方向。 */
   rotate(dir?: RotateDir): Promise<Rotation>;
   /** 只写设备剪贴板，不粘贴。 */
