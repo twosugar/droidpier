@@ -83,7 +83,8 @@ A session on a Phone (`gateway/src/phone-session.ts`): the gateway pushes the bu
 (`gateway/vendor/scrcpy`, Apache-2.0) to the phone, starts it over adb and reads H.264 from its video socket. The page
 gets the stream as `BIN_VIDEO` and decodes it with WebCodecs. Touch, keys, text, native scroll and the clipboard go
 over scrcpy's control socket; the phone's clipboard changes come back the same way. Rotation follows the phone, and
-reboot and stop are not supported.
+stop is not supported. Reboot runs `adb reboot`: the session closes when the phone goes down, and the gateway opens a
+new one once `sys.boot_completed` is 1.
 _Avoid_: scrcpy session, mirror
 
 **Current device**:
