@@ -208,3 +208,48 @@ export function parseApps(psOut: string): string[] {
   }
   return [...apps].sort();
 }
+
+/** WebMCP 读日志每次导出这么多行再过滤：平常的设备上大约是最近一两分钟。 */
+export const READ_DUMP_LINES = 5000;
+/** 导出的内容超过 adb 输出上限（有很长的行，比如 OkHttp 打印整个响应体）时，改读这么多行。 */
+const READ_DUMP_FALLBACK = 1000;
+
+/** 用 run(行数) 导出 logcat：超过 adb 输出上限就少读一些再试一次。 */
+export async function dumpLogcat(run: (lines: number) => Promise<string>): Promise<string> {
+  const tooBig = (e: unknown) => (e as { code?: string }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  try {
+    return await run(READ_DUMP_LINES);
+  } catch (e) {
+    if (!tooBig(e)) throw e;
+  }
+  try {
+    return await run(READ_DUMP_FALLBACK);
+  } catch (e) {
+    if (tooBig(e)) throw new Error(`日志行太长，最近 ${READ_DUMP_FALLBACK} 行也超过了 adb 的输出上限：稍后再试`);
+    throw e;
+  }
+}
+
+/** AndroidRuntime 崩溃日志的第一行：Process: <包名>, PID: <pid>。 */
+const CRASH_PROC = /^Process: ([\w.]+), PID: (\d+)/;
+
+/**
+ * WebMCP 读日志：从一次 adb logcat -d 的输出里按条件挑最后 limit 行。按包名过滤时，pid 除了 pidof 查到的，还算上输出里这个包的
+ * Start proc 和崩溃日志里出现过的 pid，App 已经崩溃退出时也能读到它退出前的日志。
+ */
+export function readLogcat(dump: string, pkgPids: number[], f: LogFilter, limit: number): LogLine[] {
+  const parsed: LogLine[] = [];
+  const pids = new Set(pkgPids);
+  for (const raw of dump.split("\n")) {
+    const p = parseLogcatLine(raw.endsWith("\r") ? raw.slice(0, -1) : raw);
+    if (!p) continue;
+    parsed.push({ n: parsed.length + 1, ...p });
+    if (f.pkg === null) continue;
+    const start = p.tag === "ActivityManager" ? START_PROC.exec(p.msg) : null;
+    if (start?.[2] === f.pkg) pids.add(Number(start[1]));
+    const crash = p.tag === "AndroidRuntime" ? CRASH_PROC.exec(p.msg) : null;
+    if (crash?.[1] === f.pkg) pids.add(Number(crash[2]));
+  }
+  const match = { pids: f.pkg === null ? null : pids, level: f.level, text: f.text };
+  return parsed.filter((l) => matchLog(l, match)).slice(-limit);
+}

@@ -2745,6 +2745,57 @@ test("logcatApps 回前台 App 和运行中的 App", async (t) => {
   assert.deepEqual(c.msgs.find((m) => m.t === "logcatApps"), { t: "logcatApps", rid: 9, foreground: "com.a", apps: ["com.a", "com.b"] });
 });
 
+test("logcatRead 把设备、条件、行数交给网关读日志，原样回行；出错时回 error", async (t) => {
+  const calls: unknown[] = [];
+  const line: LogLine = { n: 1, time: "11-16 18:00:52.531", pid: 7, tid: 7, level: "E", tag: "App", msg: "boom" };
+  let fail = false;
+  const s = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, {
+    logcatRead: async (id, f, limit) => {
+      calls.push([id, f, limit]);
+      if (fail) throw new Error("adb 没有响应");
+      return [line];
+    },
+  });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  const filter = { pkg: "com.a", level: "E", text: "" };
+  c.ws.send(JSON.stringify({ t: "logcatRead", rid: 4, filter, limit: 20 }));
+  await until(() => c.msgs.some((m) => m.t === "logcatRead"));
+  assert.deepEqual(calls, [["emulator-5554", filter, 20]]);
+  assert.deepEqual(c.msgs.find((m) => m.t === "logcatRead"), { t: "logcatRead", rid: 4, lines: [line] });
+  fail = true;
+  c.ws.send(JSON.stringify({ t: "logcatRead", rid: 5, filter, limit: 20 }));
+  await until(() => c.msgs.some((m) => m.t === "logcatRead" && m.rid === 5));
+  assert.deepEqual(c.msgs.find((m) => m.t === "logcatRead" && m.rid === 5), { t: "logcatRead", rid: 5, lines: [], error: "adb 没有响应" });
+});
+
+test("logcatRead：手机上 adb 没有响应时说手机的情况，不让人去重启模拟器", async (t) => {
+  const phone = new FakeSession();
+  phone.kind = "phone";
+  const s = await setup(t, phone, undefined, undefined, undefined, undefined, {
+    logcatRead: async () => { throw new AdbUnresponsive(); },
+  });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "logcatRead", rid: 7, filter: LOG_ALL, limit: 10 }));
+  await until(() => c.msgs.some((m) => m.t === "logcatRead"));
+  const err = String(c.msgs.find((m) => m.t === "logcatRead").error);
+  assert.match(err, /手机/);
+  assert.doesNotMatch(err, /模拟器/);
+});
+
+test("没配读日志的网关回 logcatRead 错误", async (t) => {
+  const s = await setup(t);
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "logcatRead", rid: 6, filter: LOG_ALL, limit: 10 }));
+  await until(() => c.msgs.some((m) => m.t === "logcatRead"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "logcatRead"), { t: "logcatRead", rid: 6, lines: [], error: "网关不支持读日志" });
+});
+
 test("没配日志的网关收到 logcatOpen 回错误", async (t) => {
   const s = await setup(t);
   const c = await s.connect();

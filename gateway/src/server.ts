@@ -145,6 +145,8 @@ export type UpdateOps = {
 
 /** 网页模拟器所在路径，staticDir 的内容在这下面提供。 */
 const APP_PATH = "/app/";
+/** 手机上 adb 超时的说法：ADB_UNRESPONSIVE 是给模拟器的，会叫人去重启模拟器。 */
+const PHONE_ADB_UNRESPONSIVE = "手机的 adb 没有响应：重新插拔手机，或稍后再试";
 
 /** 启动网关的 HTTP + WebSocket 服务，只监听 127.0.0.1。 */
 /** 页面连接的发送缓冲超过这么多，日志批次就先不发、只计数（plans/2026-11-16-real-device-pr5-logcat.md 取舍 7）。 */
@@ -184,6 +186,8 @@ export async function startServer(opts: {
   logcat?: { subscribe(id: string, f: LogFilter, onBatch: (lines: LogLine[], reset: boolean) => void): LogcatSub };
   /** 日志面板的包名下拉：前台 App 和运行中的 App。 */
   apps?: (id: string) => Promise<{ foreground: string | null; apps: string[] }>;
+  /** WebMCP 读日志：导出这台设备最近的 logcat，按条件取最后 limit 行。 */
+  logcatRead?: (id: string, f: LogFilter, limit: number) => Promise<LogLine[]>;
 }): Promise<{
   port: number;
   close(): Promise<void>;
@@ -1241,6 +1245,18 @@ export async function startServer(opts: {
           const s = conn.session;
           const r = s && opts.apps ? await opts.apps(s.id).catch(() => null) : null;
           send(ws, { t: "logcatApps", rid: m.rid, foreground: r?.foreground ?? null, apps: r?.apps ?? [] });
+          break;
+        }
+        case "logcatRead": {
+          const s = conn.session;
+          if (!opts.logcatRead) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: "网关不支持读日志" });
+          else if (!s) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: "没有连接设备" });
+          else {
+            await opts.logcatRead(s.id, m.filter, m.limit).then(
+              (lines) => send(ws, { t: "logcatRead", rid: m.rid, lines }),
+              (e: Error) => send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: e instanceof AdbUnresponsive && s.kind === "phone" ? PHONE_ADB_UNRESPONSIVE : e.message }),
+            );
+          }
           break;
         }
         case "stopAvd": {

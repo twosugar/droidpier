@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLogcatHub, parseApps, type LogcatDeps } from "../src/logcat.ts";
+import { createLogcatHub, dumpLogcat, parseApps, readLogcat, type LogcatDeps } from "../src/logcat.ts";
 import type { AdbStreamHandlers } from "../src/adb.ts";
 import type { LogFilter, LogLine } from "../../shared/logcat.ts";
 
@@ -233,4 +233,36 @@ test("parseApps：只取 u0_a 用户的进程，去掉 :子进程，丢掉不像
     "u0_a138      com.sec.android.app.launcher",
   ].join("\n");
   assert.deepEqual(parseApps(out), ["com.android.systemui", "com.qualcomm.qti.services.systemhelper", "com.sec.android.app.launcher"]);
+});
+
+test("readLogcat：按级别和关键词过滤，只留最后 limit 行", () => {
+  const dump = line(1, "A", "x1", "E") + line(1, "A", "x2", "I") + line(1, "A", "x3", "E") + line(1, "B", "y", "E");
+  assert.deepEqual(readLogcat(dump, [], { pkg: null, level: "E", text: "x" }, 1).map((l) => l.msg), ["x3"]);
+});
+
+test("readLogcat：App 已退出时用 Start proc / 崩溃日志里的 pid", () => {
+  const dump = line(1456, "ActivityManager", "Start proc 300:com.a/u0a300 for pre-top-activity {com.a/com.a.Main}")
+    + line(300, "App", "before crash")
+    + line(400, "AndroidRuntime", "Process: com.a, PID: 400", "E") + line(400, "AndroidRuntime", "java.lang.NullPointerException", "E")
+    + line(500, "Other", "noise");
+  assert.deepEqual(readLogcat(dump, [], { pkg: "com.a", level: "V", text: "" }, 100).map((l) => l.msg),
+    ["before crash", "Process: com.a, PID: 400", "java.lang.NullPointerException"]);
+});
+
+test("readLogcat：pidof 给的 pid 也算", () => {
+  assert.deepEqual(readLogcat(line(7, "App", "hi"), [7], { pkg: "com.a", level: "V", text: "" }, 10).map((l) => l.msg), ["hi"]);
+});
+
+test("dumpLogcat：5000 行超过 adb 输出上限时改读 1000 行；其他错误原样抛", async () => {
+  const asked: number[] = [];
+  const tooBig = Object.assign(new Error("stdout maxBuffer length exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+  const out = await dumpLogcat(async (n) => {
+    asked.push(n);
+    if (n > 1000) throw tooBig;
+    return "ok";
+  });
+  assert.equal(out, "ok");
+  assert.deepEqual(asked, [5000, 1000]);
+  await assert.rejects(dumpLogcat(async () => { throw tooBig; }), /日志行太长/);
+  await assert.rejects(dumpLogcat(async () => { throw new Error("device offline"); }), /device offline/);
 });
