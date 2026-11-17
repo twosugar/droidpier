@@ -104,8 +104,9 @@ export function createPhones(deps: {
         tracked = [];
         emit();
         const wait = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length - 1)];
+        // 没装 adb 时每次都立刻失败：只记一轮连续失败的第一次，收到设备表（failures 清零）后再失败才重新记
+        if (failures === 0) log(`adb track-devices 退出（${code ?? "信号"}），之后每隔几秒重试，恢复前不再提示`);
         failures++;
-        log(`adb track-devices 退出（${code ?? "信号"}），${wait / 1000} 秒后重连`);
         void sleep(wait).then(() => { if (!stopped) run(); });
       },
     });

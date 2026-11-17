@@ -147,3 +147,21 @@ test("createPhones：查询失败不缓存，重新插拔后会再查", async ()
   assert.equal(f.execCalls.length, 2);
   assert.equal(p.list()[0].android, "12");
 });
+
+test("createPhones：adb 一直起不来时只记第一次，收到设备表后再失败会重新记", async () => {
+  const f = fakes();
+  const logs: string[] = [];
+  const p = createPhones({ ...f.deps, log: (s) => logs.push(s) });
+  p.start();
+  for (let i = 0; i < 3; i++) {
+    f.streams[i].onExit(-2);
+    await tick();
+    f.wake();
+    await tick();
+  }
+  assert.equal(logs.filter((l) => l.includes("track-devices")).length, 1);
+  f.streams[3].onData(frame(""));
+  f.streams[3].onExit(1);
+  await tick();
+  assert.equal(logs.filter((l) => l.includes("track-devices")).length, 2);
+});
