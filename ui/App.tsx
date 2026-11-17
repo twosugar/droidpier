@@ -15,7 +15,7 @@ import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
 import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
 import { AUTO_START, autoOpen } from "./console-auto";
 import { addressEdit, addressShown, addressSubmit, type AddressDraft } from "./address-field";
-import { setupCardShown } from "./setup-card";
+import { emulatorButtonShown, missingEmulatorItems, setupCardShown, setupNeeded } from "./setup-card";
 import { deviceLive } from "./avd-delete";
 import { applyBatch, levelColor, type LogRow } from "./log-store";
 import type { LogFilter, LogLevel, LogLine } from "../shared/logcat";
@@ -1097,6 +1097,8 @@ function App() {
     if (createOpen()) loadCatalog();
   });
   const setupDismissed = signal(false);
+  // 用户点了「安装模拟器」：卡片本来不该自己弹出（ui/setup-card.ts 的 setupNeeded）时也显示
+  const setupWanted = signal(false);
   let setupRev = -1;
   const applySetup = (p: Setup) => {
     if (isStaleStatus(p.rev, setupRev)) return;
@@ -1404,7 +1406,7 @@ function App() {
   };
   const emptyText = () => {
     const a = shown();
-    if (!a) return (avds() ?? []).length > 0 ? "在左侧选一台设备" : "本机还没有模拟器设备，先新建一台";
+    if (!a) return (avds() ?? []).length > 0 ? "在左侧选一台设备" : "插上手机并打开 USB 调试，或新建一台模拟器";
     if (a.running === "grpc") return "运行中，画面上现在是别的设备";
     if (a.running === "no-grpc") return "这台设备已在运行，但启动时没有开启 gRPC，Droidpier 接管不了。把它关掉后在这里重新启动。";
     const b = boots()[a.name];
@@ -1442,7 +1444,8 @@ function App() {
     const e = env();
     if (!e) return null;
     const failed = installs().some((p) => p.phase === "failed");
-    return setupCardShown({ ok: e.ok, busy: setupBusy(), failed, hasInstalls: installs().length > 0, dismissed: setupDismissed() }) ? e : null;
+    const needed = setupNeeded(e, (avds() ?? []).length);
+    return setupCardShown({ ok: e.ok, needed, wanted: setupWanted(), busy: setupBusy(), failed, hasInstalls: installs().length > 0, dismissed: setupDismissed() }) ? e : null;
   };
   const startInstall = () => {
     const c = confirm();
@@ -1591,6 +1594,9 @@ function App() {
                 <View style={{ gap: 8, paddingHorizontal: 8, alignItems: "flex-start" }}>
                   <Text style={{ color: C.muted, fontSize: 13, lineHeight: 20 }}>本机还没有模拟器设备</Text>
                   <Btn label="创建设备" disabled={setupBusy() || !env()} onPress={openCreate} />
+                  <If when={env() && emulatorButtonShown(env()!, (avds() ?? []).length, !!showSetup())}>
+                    <Btn label={`安装模拟器（缺 ${missingEmulatorItems(env()!)} 项）`} onPress={() => { animateNext(); setupDismissed.set(false); setupWanted.set(true); }} />
+                  </If>
                 </View>
               }>
                 <If when={listed().length > 0} else={<Text style={{ color: C.muted, fontSize: 13, lineHeight: 20, paddingHorizontal: 8 }}>{`没有名字含“${query().trim()}”的设备`}</Text>}>
@@ -1601,7 +1607,9 @@ function App() {
             <If when={showPhones(phones())}>
               <Text style={{ color: C.muted, fontSize: 11, fontWeight: "600", paddingHorizontal: 8, paddingTop: 12, paddingBottom: 2 }}>真机</Text>
               <If when={(phones() ?? []).length > 0} else={
-                <Text style={{ color: C.muted, fontSize: 13, lineHeight: 20, paddingHorizontal: 8 }}>插上手机，并在手机上打开 USB 调试</Text>
+                <Text style={{ color: C.muted, fontSize: 13, lineHeight: 20, paddingHorizontal: 8 }}>
+                  {env()?.missing.some((m) => m.id === "platform-tools") ? "先在环境检查里安装 platform-tools（adb），才能看到手机" : "插上手机，并在手机上打开 USB 调试"}
+                </Text>
               }>
                 <Each of={phones() ?? []} key={(p) => p.id}>{(p) => <PhoneRow phone={p} />}</Each>
               </If>
@@ -1718,7 +1726,7 @@ function App() {
                 )}
               </If>
               <If when={showSetup()}>
-                {(e) => <SetupCard env={e()} installs={installs()} onInstall={(c) => confirm.set(c)} onCreate={openCreate} onDismiss={() => { animateNext(); setupDismissed.set(true); }} />}
+                {(e) => <SetupCard env={e()} installs={installs()} onInstall={(c) => confirm.set(c)} onCreate={openCreate} onDismiss={() => { animateNext(); setupDismissed.set(true); setupWanted.set(false); }} />}
               </If>
             </View>
           </If>
