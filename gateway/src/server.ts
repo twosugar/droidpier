@@ -161,7 +161,7 @@ export async function startServer(opts: {
   staticDir: string;
   getSession: () => Promise<EmulatorSession | null>;
   avd?: AvdOps;
-  /** 真机列表（gateway/src/phones.ts）；只有带 --phones 启动时才传。 */
+  /** 真机列表（gateway/src/phones.ts）；测试里不需要真机时不传。 */
   phones?: { list(): PhoneInfo[]; onChange(cb: (list: PhoneInfo[]) => void): void };
   debug?: DebugDeps;
   setup?: SetupOps;

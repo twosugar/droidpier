@@ -176,14 +176,14 @@ const PHONES: PhoneInfo[] = [
   { id: "OFF1", state: "offline" },
 ];
 
-test("设备列表：devices 是 AVD，phones 是真机，当前真机 current 为 true；没开 --phones 时 phones 为空", async () => {
+test("设备列表：devices 是 AVD，phones 是真机，当前真机 current 为 true；旧网关（没有真机列表）时 phones 为空", async () => {
   const r = await harness({ phones: PHONES, current: { kind: "phone", deviceId: "R5CR10WN52H" } }).run("droidpier_list_devices");
   assert.equal((r.devices as unknown[]).length, 3);
   assert.deepEqual((r.phones as Array<{ id: string; current: boolean }>).map((p) => [p.id, p.current]), [["R5CR10WN52H", true], ["AUTH1", false], ["OFF1", false]]);
   assert.deepEqual((await harness({ phones: null }).run("droidpier_list_devices")).phones, []);
 });
 
-test("启动设备：可用的真机切过去；未授权、离线的不发消息并说下一步；没开 --phones 时找不到", async () => {
+test("启动设备：可用的真机切过去；未授权、离线的不发消息并说下一步；旧网关时找不到", async () => {
   const { h, run } = harness({ phones: PHONES });
   assert.equal((await run("droidpier_start_device", { name: "R5CR10WN52H" })).ok, true);
   assert.match(String((await run("droidpier_start_device", { name: "AUTH1" })).error), /允许 USB 调试/);

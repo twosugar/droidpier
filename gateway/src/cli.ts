@@ -6,7 +6,7 @@ import { DEFAULT_PORT } from "./page-url.ts";
  * 启动网关要用的参数。--local / --public 由 page-url.ts 直接看 argv。service 表示由 launchd 拉起（gateway/src/service.ts）。
  * autoUpdate：后台服务自己更新，前台运行只提示有新版本（gateway/src/updater.ts）；--no-auto-update 关掉。
  */
-export type CliOptions = { port: number; noOpen: boolean; allowOrigins: string[]; service: boolean; autoUpdate: boolean; phones: boolean };
+export type CliOptions = { port: number; noOpen: boolean; allowOrigins: string[]; service: boolean; autoUpdate: boolean };
 
 export type ServiceCommand = "start" | "stop" | "status" | "logs";
 
@@ -51,17 +51,18 @@ export function parseCli(args: string[]): CliResult {
     if (rest.includes("--allow-origin")) return { kind: "error", message: "--allow-origin 只用于本地测试，不能用在 droidpier start；在前台运行：droidpier --allow-origin <来源>" };
     const r = parseRun(rest);
     if (r.kind === "error") return r;
-    // --no-open 只管这一次打不打开页面；后台服务本来就不开浏览器
-    return { kind: "service", command, args: rest.filter((a) => a !== "--no-open"), noOpen: r.options.noOpen };
+    // --no-open 只管这一次打不打开页面；后台服务本来就不开浏览器。--phones 已不起作用，不再写进登录项
+    return { kind: "service", command, args: rest.filter((a) => a !== "--no-open" && a !== "--phones"), noOpen: r.options.noOpen };
   }
   return parseRun(args);
 }
 
 function parseRun(args: string[]): Extract<CliResult, { kind: "run" | "error" }> {
-  const options: CliOptions = { port: DEFAULT_PORT, noOpen: false, allowOrigins: [], service: false, autoUpdate: true, phones: false };
+  const options: CliOptions = { port: DEFAULT_PORT, noOpen: false, allowOrigins: [], service: false, autoUpdate: true };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--local" || a === "--public") continue;
+    // --phones 是真机开关的遗留参数，老的登录项里可能还有
+    if (a === "--local" || a === "--public" || a === "--phones") continue;
     if (a === "--service") {
       options.service = true;
       options.noOpen = true;
@@ -69,9 +70,6 @@ function parseRun(args: string[]): Extract<CliResult, { kind: "run" | "error" }>
       options.noOpen = true;
     } else if (a === "--no-auto-update") {
       options.autoUpdate = false;
-    } else if (a === "--phones") {
-      // 真机支持做完前的开关，不写进帮助（docs/superpowers/specs/2026-11-13-real-device-design.md 第 7 节）
-      options.phones = true;
     } else if (a === "--port") {
       const v = args[++i];
       const port = Number(v);

@@ -342,7 +342,7 @@ export type ServerMsg =
   /** rebooting：模拟器系统正在重启，结束后回到 connected。phone-closed：真机断开了（拔线、取消授权），插回后网关会自动重连。 */
   | { t: "status"; state: "connected" | "no-emulator" | "emulator-closed" | "phone-closed" | "booting" | "rebooting" }
   | { t: "avds"; list: AvdInfo[] }
-  /** 真机列表：只有网关带 --phones 启动时才发，hello 后发一次、之后有变化就发；没收到过就当网关不支持真机。 */
+  /** 真机列表：hello 后发一次、之后有变化就发；没收到过就当网关不支持真机（旧网关）。 */
   | { t: "phones"; list: PhoneInfo[] }
   | { t: "boot"; name: string; progress: string; error?: string }
   | { t: "error"; message: string }

@@ -1025,7 +1025,7 @@ function App() {
   const fps = signal(0);
   const latency = signal(0);
   const avds = signal<Avd[] | null>(null);
-  // null：网关没发过真机列表（旧网关或没带 --phones），不显示「真机」分组
+  // null：网关没发过真机列表（旧网关），不显示「真机」分组
   const phones = signal<PhoneInfo[] | null>(null);
   // 当前设备的身份和能力（ready 带来）：真机的 serial 是 0，按 deviceId 认设备；deviceSize 是 ready.device，真机不在 AVD 列表里，设备框比例靠它
   const deviceId = signal("");

@@ -29,7 +29,7 @@ export function phoneDetail(p: PhoneInfo): string {
   return p.android ?? "";
 }
 
-/** 没收到过 phones 消息（旧网关、没带 --phones）就不显示分组；收到过空列表要显示，提示插手机。 */
+/** 没收到过 phones 消息（旧网关）就不显示分组；收到过空列表要显示，提示插手机。 */
 export function showPhones(list: PhoneInfo[] | null): boolean {
   return list !== null;
 }

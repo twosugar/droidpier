@@ -2284,7 +2284,7 @@ test("/healthz 带上自动更新开没开和上次检查的结果", async (t) =
   assert.deepEqual(body.update, { auto: true, last: { at: "2026-11-13T02:00:00.000Z", state: "latest" } });
 });
 
-// ─────────────── 真机列表（--phones） ───────────────
+// ─────────────── 真机列表 ───────────────
 
 import type { PhoneInfo } from "../../shared/protocol.ts";
 

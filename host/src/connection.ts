@@ -91,7 +91,7 @@ export function createConnection(opts: {
   /** 设备里复制了新内容。 */
   onClip?: (text: string) => void;
   onAvds?: (list: AvdInfo[]) => void;
-  /** 真机列表（网关带 --phones 时才有）。 */
+  /** 真机列表（旧网关不发）。 */
   onPhones?: (list: PhoneInfo[]) => void;
   /** 日志面板的一批行；reset 为 true 时先清空，dropped 是网关因积压没发的行数。 */
   onLogcat?: (lines: LogLine[], reset: boolean, dropped: number) => void;

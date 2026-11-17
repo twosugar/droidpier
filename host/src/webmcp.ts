@@ -46,7 +46,7 @@ export type ToolDeps = {
   installApk: (file: File, signal: AbortSignal) => Promise<{ state: string; error?: string }>;
   /** 页面上问用户；用户点了允许返回 true。 */
   confirm: (text: string) => boolean;
-  /** 真机列表；null 表示网关没开 --phones。 */
+  /** 真机列表；null 表示旧网关，不支持真机。 */
   phones: () => PhoneInfo[] | null;
   /** 当前设备；没连接时为 null。 */
   current: () => { kind: "emulator" | "phone"; deviceId: string } | null;

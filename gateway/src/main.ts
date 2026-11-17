@@ -72,7 +72,7 @@ if (cli.kind === "service") {
   const run = { start: () => serviceStart(d, { args: cli.args, noOpen: cli.noOpen }), stop: () => serviceStop(d), status: () => serviceStatus(d), logs: () => serviceLogs(d) };
   process.exit(await run[cli.command]());
 }
-const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate, phones: phonesOn } = cli.options;
+const { port, noOpen, allowOrigins: extraOrigins, service, autoUpdate } = cli.options;
 const label = serviceLabel(process.env);
 if (service && "label" in label) await rotateLog(serviceLogPath(label.label), realRotateIo).catch((e: Error) => console.log(`日志轮转失败：${e.message}`));
 
@@ -152,8 +152,8 @@ const note = (s: string) => {
 let serial: number | undefined;
 let last: EmulatorSession | null = null;
 
-// 真机列表只在 --phones 时跟踪（真机支持做完前的开关）；discover 要靠它认出真机 id，所以先建
-const phones = phonesOn ? createPhones({ stream: adb.stream, exec: adb.device }) : null;
+// 真机列表：discover 要靠它认出真机 id，所以先建
+const phones = createPhones({ stream: adb.stream, exec: adb.device });
 
 // pidof 在 App 没运行时返回码非零，当作没有 pid
 const logcatPidof = (id: string, pkg: string) =>
@@ -173,7 +173,7 @@ const apps = async (id: string) => ({
   foreground: await adb.device(id)(FOREGROUND_CMD).then(parseResumedPkg, () => null),
   apps: await adb.device(id)(["shell", "ps", "-A", "-o", "USER,NAME"]).then(parseApps, () => []),
 });
-phones?.start();
+phones.start();
 
 /** 真机会话用到的 adb 操作，按设备 id 绑定。 */
 const phoneDeps = (id: string): PhoneDeps => ({
@@ -197,7 +197,7 @@ const phoneDeps = (id: string): PhoneDeps => ({
 
 async function discover(avdName?: string): Promise<EmulatorSession | null> {
   // 真机：连不上时把原因抛给 use，页面能看到（模拟器那边吞成 null 是因为 ticker 会反复发现）
-  if (avdName && phones?.list().some((p) => p.id === avdName && p.state === "device")) {
+  if (avdName && phones.list().some((p) => p.id === avdName && p.state === "device")) {
     const s = await connectPhone(avdName, phoneDeps(avdName));
     last = s;
     note(`已连接真机 ${avdName}（${s.device.width}x${s.device.height}）`);
@@ -244,7 +244,7 @@ const first = await getSession();
 
 srv = await startServer({
   port,
-  phones: phones ?? undefined,
+  phones,
   logcat,
   apps,
   logcatRead,
@@ -316,7 +316,7 @@ let cleaning: Promise<void> | null = null;
 const cleanup = () => (cleaning ??= (async () => {
   clearTimeout(stableTimer);
   // 结束 adb track-devices，不留孤儿进程
-  phones?.stop();
+  phones.stop();
   await cleanupAll({
     // 中止进行中的下载，等它删掉临时目录
     stopUpdater: updater ? () => updater.stop() : undefined,
