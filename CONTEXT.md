@@ -130,6 +130,13 @@ The state where the emulator's adbd stops answering (`AdbUnresponsive`, code `ad
 restart the emulator.
 _Avoid_: adb down, adb error
 
+**Log panel** (日志):
+The device's logcat beside the device frame, filtered by app, minimum level and text. The gateway runs one
+`adb logcat` per device only while some page has the panel open, keeps the recent lines, and filters for each page
+itself, so a page receives only the lines it shows. Needs gateway level 3; with an older gateway the key is hidden.
+When both are open it shares the right side with the console as two tabs.
+_Avoid_: logcat window, console (that is the H5 console)
+
 ### H5 debugging
 
 **H5 page**:
