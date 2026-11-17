@@ -24,6 +24,7 @@ import {
 import { classifyFailure, refineLocalFailure, type LocalPermission } from "./launch.ts";
 import { createPending } from "./pending.ts";
 import type { GatewayInfo, UpdateReport } from "./gateway-update.ts";
+import type { LogLine } from "../../shared/logcat.ts";
 
 /**
  * 页面看到的连接状态。bad-origin 之后不再重连；
@@ -92,6 +93,8 @@ export function createConnection(opts: {
   onAvds?: (list: AvdInfo[]) => void;
   /** 真机列表（网关带 --phones 时才有）。 */
   onPhones?: (list: PhoneInfo[]) => void;
+  /** 日志面板的一批行；reset 为 true 时先清空，dropped 是网关因积压没发的行数。 */
+  onLogcat?: (lines: LogLine[], reset: boolean, dropped: number) => void;
   /** DevTools 进入、退出选择元素模式（shared/protocol.ts 的 inspectMode）。 */
   onInspectMode?: (on: boolean, mapped: boolean) => void;
   onBoot?: (b: BootMsg) => void;
@@ -225,6 +228,8 @@ export function createConnection(opts: {
         opts.onAvds?.(m.list);
       } else if (m.t === "phones") {
         opts.onPhones?.(m.list);
+      } else if (m.t === "logcat") {
+        opts.onLogcat?.(m.lines, m.reset, m.dropped ?? 0);
       } else if (m.t === "inspectMode") {
         opts.onInspectMode?.(m.on, m.mapped);
       } else if (m.t === "boot") {
@@ -242,7 +247,7 @@ export function createConnection(opts: {
         opts.onUpload?.(m);
       } else if (m.t === "reboot") {
         opts.onReboot?.(m.result, m.error);
-      } else if (m.t === "webviews" || m.t === "inspect" || m.t === "navigate" || m.t === "renameAvd" || m.t === "deleteAvd") {
+      } else if (m.t === "webviews" || m.t === "inspect" || m.t === "navigate" || m.t === "renameAvd" || m.t === "deleteAvd" || m.t === "logcatApps") {
         pending.settle(m.rid, m);
       } else if (m.t === "error") {
         if ("code" in m) {

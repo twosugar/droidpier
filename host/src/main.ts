@@ -15,12 +15,15 @@ import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
 import { registerTools } from "./webmcp.ts";
 import { gatewayBanner, shouldRequestUpdate, timeoutText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
+import type { LogFilter } from "../../shared/logcat.ts";
 import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type DeviceCaps, type Licence, type Rotation } from "../../shared/protocol.ts";
 
 // 从这个功能级别起网关一定认 renameAvd、deleteAvd（shared/protocol.ts 的 GATEWAY_LEVEL）
 const AVD_EDIT_LEVEL = 1;
 // 从这个级别起网关认 stopAvd 和 deleteAvd 的 stop
 const AVD_STOP_LEVEL = 2;
+// 从这个级别起网关有日志面板（logcatOpen 等）；更旧的网关不显示「日志」按钮
+const LOGCAT_LEVEL = 3;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -194,7 +197,8 @@ export async function createHost(player: Player) {
 
   const supported = isSupportedBrowser((navigator as { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands);
   if (!supported) state = "unsupported-browser";
-  const statusEvent = () => player.hostEvent("emu.status", { state, serial, deviceId, kind, caps, device, upgrade, rev: ++rev });
+  const logcatOn = () => (gateway?.level ?? 0) >= LOGCAT_LEVEL;
+  const statusEvent = () => player.hostEvent("emu.status", { state, serial, deviceId, kind, caps, device, upgrade, logcat: logcatOn(), rev: ++rev });
   const gatewayEvent = () => {
     gatewayNote = gateway === undefined ? null : gatewayBanner(gateway, GATEWAY_LEVEL, updateReport, INSTALL);
     player.hostEvent("emu.gateway", { banner: gatewayNote, rev: ++rev });
@@ -286,6 +290,7 @@ export async function createHost(player: Player) {
       for (const f of w) f(list);
     },
     onPhones: (list) => phones.onPhones(list),
+    onLogcat: (lines, reset, dropped) => player.hostEvent("emu.logcat", { lines, reset, dropped }),
     onBoot: (b) => {
       const now = Date.now();
       const prev = boots.get(b.name);
@@ -323,6 +328,8 @@ export async function createHost(player: Player) {
       gateway = info;
       updateReport = null;
       gatewayEvent();
+      // 日志按钮看网关级别：级别现在才知道
+      statusEvent();
       requestUpdate();
     },
     onUpdate: (r) => {
@@ -792,9 +799,19 @@ export async function createHost(player: Player) {
       }
       if (name === "emu.status") {
         return {
-          state, serial, deviceId, kind, caps, device, upgrade, rev, rotation, gateway: gatewayNote, ...stats, avds, phones: phones.current(), boots: [...boots.values()].map((b) => b.last),
+          state, serial, deviceId, kind, caps, device, upgrade, logcat: logcatOn(), rev, rotation, gateway: gatewayNote, ...stats, avds, phones: phones.current(), boots: [...boots.values()].map((b) => b.last),
           env, installs, license, uploads: uploads.list(),
         };
+      }
+      if (name === "emu.logcatOpen" || name === "emu.logcatFilter") {
+        const filter = (args as { filter?: LogFilter } | undefined)?.filter;
+        if (!filter) throw new Error(`${name} 缺少 filter`);
+        return { ok: conn.send({ t: name === "emu.logcatOpen" ? "logcatOpen" : "logcatFilter", filter }) };
+      }
+      if (name === "emu.logcatClose") return { ok: conn.send({ t: "logcatClose" }) };
+      // 旧网关不认这条，等满超时后同样回空列表
+      if (name === "emu.logcatApps") {
+        return conn.request({ t: "logcatApps" }).then((r) => ({ foreground: r.foreground, apps: r.apps }), () => ({ foreground: null, apps: [] }));
       }
       if (name === "emu.uploadsClear") {
         uploads.clear();
