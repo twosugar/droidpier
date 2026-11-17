@@ -1,7 +1,7 @@
 ---
 title: Primera ejecución
 description: Inicia el gateway con un solo comando, deja que revise el Android SDK, permite el acceso a la red local en Chrome y ve tu emulador en el navegador.
-sourceHash: c1c836eb6e73
+sourceHash: 1e23b6c52a07
 ---
 
 Ejecuta un comando en Terminal, abre `https://droid.devpier.dev/app/` y permite el acceso a la red local cuando Chrome lo pida.
@@ -26,7 +26,7 @@ Al iniciarse, el gateway comprueba si un dispositivo puede arrancar: necesita el
 Cuando el gateway se ejecuta en segundo plano, esta lista va a su registro. Ejecuta `droidpier logs` para verla.
 
 <!-- verify: phase 3 -->
-La página muestra la misma lista, con el tamaño de descarga de cada elemento. Cuando un dispositivo puede arrancar, no muestra nada.
+La página muestra la misma lista, con el tamaño de descarga de cada elemento. Cuando un dispositivo puede arrancar, no muestra nada. Si `adb` está instalado y aún no tienes ningún dispositivo virtual, la página tampoco muestra la lista por sí sola, así que puedes usar un teléfono de inmediato. Consulta [Teléfonos](/es/docs/guides/phones/). La lista de dispositivos tiene entonces un botón que muestra la lista.
 
 | Falta | Qué haces en la página |
 |---|---|

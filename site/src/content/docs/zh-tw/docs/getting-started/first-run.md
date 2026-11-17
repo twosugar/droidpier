@@ -1,7 +1,7 @@
 ---
 title: 首次執行
 description: 用一道命令啟動閘道，讓它檢查 Android SDK，在 Chrome 中允許本機網路存取，然後在瀏覽器中查看你的模擬器。
-sourceHash: c1c836eb6e73
+sourceHash: 1e23b6c52a07
 ---
 
 在終端機中執行一條命令，開啟 `https://droid.devpier.dev/app/`，並在 Chrome 詢問時允許存取本機網路。
@@ -26,7 +26,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 閘道在背景執行時，這份清單寫在它的記錄檔裡。執行 `droidpier logs` 查看。
 
 <!-- verify: phase 3 -->
-頁面會顯示同樣的清單，並標出每項的下載大小。能啟動裝置時，頁面不顯示這份清單。
+頁面會顯示同樣的清單，並標出每項的下載大小。能啟動裝置時，頁面不顯示這份清單。如果已安裝 `adb`，而你還沒有虛擬裝置，頁面同樣不會自動顯示這份清單，所以你可以馬上使用手機。請參閱[手機](/zh-tw/docs/guides/phones/)。這時裝置清單裡會有一個按鈕，用來顯示這份清單。
 
 | 缺少的項目 | 你在頁面上要做的 |
 |---|---|

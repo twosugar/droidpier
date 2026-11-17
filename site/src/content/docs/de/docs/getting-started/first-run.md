@@ -1,7 +1,7 @@
 ---
 title: Erster Start
 description: Starten Sie das Gateway mit einem Befehl, lassen Sie es das Android SDK prüfen, erlauben Sie den Zugriff auf das lokale Netzwerk in Chrome und sehen Sie Ihren Emulator.
-sourceHash: c1c836eb6e73
+sourceHash: 1e23b6c52a07
 ---
 
 Führen Sie einen Befehl im Terminal aus, öffnen Sie `https://droid.devpier.dev/app/` und erlauben Sie den Zugriff auf das lokale Netzwerk, wenn Chrome fragt.
@@ -26,7 +26,7 @@ Beim Start prüft das Gateway, ob ein Gerät starten kann: Dazu braucht es den A
 Läuft das Gateway im Hintergrund, steht diese Liste in seinem Log. Mit `droidpier logs` sehen Sie sie.
 
 <!-- verify: phase 3 -->
-Die Seite zeigt dieselbe Liste, mit der Downloadgröße jedes Elements. Kann ein Gerät starten, zeigt sie nichts.
+Die Seite zeigt dieselbe Liste, mit der Downloadgröße jedes Elements. Kann ein Gerät starten, zeigt sie nichts. Ist `adb` installiert und haben Sie noch kein virtuelles Gerät, zeigt die Seite die Liste ebenfalls nicht von selbst, sodass Sie sofort ein Smartphone nutzen können. Siehe [Smartphones](/de/docs/guides/phones/). In der Geräteliste gibt es dann eine Schaltfläche, die die Liste anzeigt.
 
 | Fehlt | Was Sie auf der Seite tun |
 |---|---|

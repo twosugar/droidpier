@@ -1,7 +1,7 @@
 ---
 title: Celulares
 description: Use um celular Android por USB na página - o que ele precisa, como alternar para ele e o que funciona de forma diferente de um emulador.
-sourceHash: ebd5c708ed2b
+sourceHash: 9d3199c6c7cf
 ---
 
 Além dos dispositivos virtuais Android, a página pode mostrar um celular Android real conectado ao seu Mac por um cabo USB. A página continua mostrando um dispositivo por vez: o celular ou um emulador.
@@ -54,4 +54,6 @@ A página funciona com um celular da mesma forma que com um emulador:
 
 ## Só celulares, sem emulador
 
-A verificação de configuração da página continua listando o emulador e uma imagem de sistema quando eles estão faltando. Se você usa apenas celulares, só precisa do `platform-tools`: instale-o e feche o cartão de configuração.
+Se você usa apenas celulares, só precisa do `platform-tools`. Depois de instalado, e enquanto você não tiver nenhum dispositivo virtual, a página não mostra a verificação de configuração por conta própria, mesmo que o emulador e uma imagem de sistema estejam faltando. Para configurar um emulador depois, clique no botão abaixo da lista de dispositivos vazia. Ele informa quantos itens estão faltando e abre a verificação de configuração, onde você os instala.
+
+Sem o `platform-tools`, o grupo Celulares pede que você o instale primeiro, a partir da verificação de configuração.

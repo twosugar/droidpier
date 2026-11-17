@@ -1,7 +1,7 @@
 ---
 title: Téléphones
 description: Utiliser un téléphone Android en USB dans la page - ce qu’il faut, comment passer sur le téléphone et ce qui fonctionne autrement qu’avec un émulateur.
-sourceHash: ebd5c708ed2b
+sourceHash: 9d3199c6c7cf
 ---
 
 En plus des appareils virtuels Android, la page peut afficher un vrai téléphone Android branché à votre Mac par un câble USB. La page affiche toujours un appareil à la fois : le téléphone ou un émulateur.
@@ -54,4 +54,6 @@ La page fonctionne avec un téléphone comme avec un émulateur :
 
 ## Seulement des téléphones, pas d’émulateur
 
-La vérification de la configuration sur la page signale toujours l’émulateur et une image système quand ils manquent. Si vous n’utilisez que des téléphones, il ne vous faut que `platform-tools` : installez-le, puis fermez la carte de configuration.
+Si vous n’utilisez que des téléphones, il ne vous faut que `platform-tools`. Une fois qu’il est installé et si vous n’avez aucun appareil virtuel, la page n’affiche pas d’elle-même la vérification de la configuration, même si l’émulateur et une image système manquent. Pour configurer un émulateur plus tard, cliquez sur le bouton situé sous la liste d’appareils vide. Il indique combien d’éléments manquent et ouvre la vérification de la configuration, où vous les installez.
+
+Sans `platform-tools`, le groupe Téléphones vous invite à l’installer d’abord, depuis la vérification de la configuration.

@@ -1,7 +1,7 @@
 ---
 title: Telefoni
 description: Usa un telefono Android via USB nella pagina - cosa serve, come passare al telefono e cosa funziona in modo diverso rispetto a un emulatore.
-sourceHash: ebd5c708ed2b
+sourceHash: 9d3199c6c7cf
 ---
 
 Oltre ai dispositivi virtuali Android, la pagina può mostrare un vero telefono Android collegato al tuo Mac con un cavo USB. La pagina mostra comunque un dispositivo alla volta: il telefono o un emulatore.
@@ -54,4 +54,6 @@ La pagina funziona con un telefono come con un emulatore:
 
 ## Solo telefoni, nessun emulatore
 
-Il controllo della configurazione nella pagina continua a elencare l’emulatore e un’immagine di sistema quando mancano. Se usi solo telefoni, ti serve solo `platform-tools`: installalo e chiudi la scheda di configurazione.
+Se usi solo telefoni, ti serve solo `platform-tools`. Una volta installato, e se non hai nessun dispositivo virtuale, la pagina non mostra da sola il controllo della configurazione, anche se mancano l’emulatore e un’immagine di sistema. Per configurare un emulatore più tardi, fai clic sul pulsante sotto l’elenco dei dispositivi vuoto. Indica quanti elementi mancano e apre il controllo della configurazione, dove li installi.
+
+Senza `platform-tools`, il gruppo Telefoni ti chiede di installarlo prima, dal controllo della configurazione.

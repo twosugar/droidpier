@@ -1,7 +1,7 @@
 ---
 title: Smartphones
 description: Ein Android-Smartphone per USB in der Seite nutzen - was es dafür braucht, wie Sie zu ihm wechseln und was sich gegenüber einem Emulator anders verhält.
-sourceHash: ebd5c708ed2b
+sourceHash: 9d3199c6c7cf
 ---
 
 Neben virtuellen Android-Geräten kann die Seite auch ein echtes Android-Smartphone zeigen, das per USB-Kabel an Ihren Mac angeschlossen ist. Die Seite zeigt weiterhin jeweils ein Gerät: das Smartphone oder einen Emulator.
@@ -54,4 +54,6 @@ Die Seite arbeitet mit einem Smartphone genauso wie mit einem Emulator:
 
 ## Nur Smartphones, kein Emulator
 
-Die Einrichtungsprüfung auf der Seite listet den Emulator und ein Systemabbild weiterhin auf, wenn sie fehlen. Wenn Sie nur Smartphones nutzen, brauchen Sie nur `platform-tools`: Installieren Sie es und schließen Sie die Einrichtungskarte.
+Wenn Sie nur Smartphones nutzen, brauchen Sie nur `platform-tools`. Ist es installiert und haben Sie kein virtuelles Gerät, zeigt die Seite die Einrichtungsprüfung nicht von selbst, obwohl der Emulator und ein Systemabbild fehlen. Um später einen Emulator einzurichten, klicken Sie unter der leeren Geräteliste auf die Schaltfläche. Sie nennt, wie viele Elemente fehlen, und öffnet die Einrichtungsprüfung, in der Sie sie installieren.
+
+Ohne `platform-tools` fordert die Smartphone-Gruppe Sie auf, es zuerst zu installieren, und zwar über die Einrichtungsprüfung.

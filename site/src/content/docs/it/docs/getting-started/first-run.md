@@ -1,7 +1,7 @@
 ---
 title: Primo avvio
 description: Avvia il gateway con un solo comando, lascia che controlli l’Android SDK, consenti l’accesso alla rete locale in Chrome e vedi il tuo emulatore nel browser.
-sourceHash: c1c836eb6e73
+sourceHash: 1e23b6c52a07
 ---
 
 Esegui un comando nel Terminale, apri `https://droid.devpier.dev/app/` e consenti l’accesso alla rete locale quando Chrome lo chiede.
@@ -26,7 +26,7 @@ All’avvio, il gateway verifica che un dispositivo possa partire: servono l’e
 Quando il gateway è in background, questo elenco finisce nel suo log. Esegui `droidpier logs` per vederlo.
 
 <!-- verify: phase 3 -->
-La pagina mostra lo stesso elenco, con la dimensione del download di ogni elemento. Quando un dispositivo può partire, non mostra nulla.
+La pagina mostra lo stesso elenco, con la dimensione del download di ogni elemento. Quando un dispositivo può partire, non mostra nulla. Se `adb` è installato e non hai ancora un dispositivo virtuale, la pagina non mostra da sola nemmeno l’elenco, quindi puoi usare subito un telefono. Vedi [Telefoni](/it/docs/guides/phones/). L’elenco dei dispositivi ha allora un pulsante che mostra l’elenco.
 
 | Mancante | Cosa fai nella pagina |
 |---|---|

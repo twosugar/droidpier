@@ -1,7 +1,7 @@
 ---
 title: 首次运行
 description: 用一条命令启动网关，让它检查 Android SDK，在 Chrome 中允许本地网络访问，然后在浏览器中查看你的模拟器。
-sourceHash: c1c836eb6e73
+sourceHash: 1e23b6c52a07
 ---
 
 在终端中运行一条命令，打开 `https://droid.devpier.dev/app/`，并在 Chrome 询问时允许访问本地网络。
@@ -26,7 +26,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh
 网关在后台运行时，这份清单写在它的日志里。运行 `droidpier logs` 查看。
 
 <!-- verify: phase 3 -->
-页面会显示同样的清单，并标出每项的下载大小。能启动设备时，页面不显示这份清单。
+页面会显示同样的清单，并标出每项的下载大小。能启动设备时，页面不显示这份清单。如果已安装 `adb` 且还没有虚拟设备，页面也不会自动显示这份清单，所以你可以直接使用手机。参见[手机](/zh-cn/docs/guides/phones/)。设备列表中会有一个按钮用来显示这份清单。
 
 | 缺失项 | 你在页面上要做的 |
 |---|---|

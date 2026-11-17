@@ -1,7 +1,7 @@
 ---
 title: Premier lancement
 description: Démarrez la passerelle en une commande, laissez-la vérifier l’Android SDK, autorisez l’accès au réseau local dans Chrome et voyez votre émulateur.
-sourceHash: c1c836eb6e73
+sourceHash: 1e23b6c52a07
 ---
 
 Exécutez une commande dans Terminal, ouvrez `https://droid.devpier.dev/app/` et autorisez l’accès au réseau local quand Chrome le demande.
@@ -26,7 +26,7 @@ Au démarrage, la passerelle vérifie qu’un appareil peut démarrer : il lui f
 Quand la passerelle tourne en arrière-plan, cette liste va dans son journal. Lancez `droidpier logs` pour la voir.
 
 <!-- verify: phase 3 -->
-La page affiche la même liste, avec la taille de téléchargement de chaque élément. Quand un appareil peut démarrer, elle n’affiche rien.
+La page affiche la même liste, avec la taille de téléchargement de chaque élément. Quand un appareil peut démarrer, elle n’affiche rien. Si `adb` est installé et que vous n’avez pas encore d’appareil virtuel, la page n’affiche pas non plus la liste d’elle-même, ce qui vous permet d’utiliser un téléphone tout de suite. Voir [Téléphones](/fr/docs/guides/phones/). La liste d’appareils comporte alors un bouton qui affiche la liste.
 
 | Manquant | Ce que vous faites sur la page |
 |---|---|
