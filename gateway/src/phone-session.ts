@@ -23,7 +23,7 @@ import { SCRCPY_VERSION } from "./scrcpy-server.ts";
 const REMOTE_JAR = `/data/local/tmp/droidpier-scrcpy-${SCRCPY_VERSION}.jar`;
 
 /** 真机转屏跟随手机，重启、关机还不支持（docs/superpowers/plans/2026-11-16-real-device-pr4-input.md）。 */
-const PHONE_CAPS: DeviceCaps = { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: true };
+const PHONE_CAPS: DeviceCaps = { rotate: false, reboot: true, stop: false, clipboard: true, input: true, scroll: true };
 
 /** 服务端起来之前 adb forward 照样接受连接、随后关掉；这么久收不到数据就算连不上。 */
 const CONNECT_TIMEOUT_MS = 5000;
@@ -55,6 +55,8 @@ export type PhoneDeps = {
   connect(port: number): Promise<Duplex>;
   /** adb exec-out screencap -p 的 PNG。 */
   screencap(): Promise<Buffer>;
+  /** adb reboot：手机断开后视频连接结束，会话照常关闭；重连由网关的重启流程负责（gateway/src/server.ts 的 reboot）。 */
+  reboot(): Promise<void>;
   now?(): number;
   connectTimeoutMs?: number;
   log?(s: string): void;
@@ -207,7 +209,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
       send(injectScroll(p.x, p.y, size, dx / PX_PER_SCROLL, -dy / PX_PER_SCROLL));
     },
     rotate: unsupported,
-    reboot: unsupported,
+    reboot: () => deps.reboot(),
     screenshot: () => deps.screencap(),
     onRotation: (cb) => void rotationCbs.push(cb),
     onClosed: (cb) => void closedCbs.push(cb),

@@ -190,6 +190,8 @@ const phoneDeps = (id: string): PhoneDeps => ({
     sock.once("error", rej);
   }),
   screencap: () => adb.deviceBuffer(id)(["exec-out", "screencap", "-p"], 10_000),
+  // USB 慢时 adb reboot 可能超过短命令的 5 秒；报错由重启流程按「已在重启」处理（gateway/src/server.ts 的 reboot）
+  reboot: () => adb.long(id)(["reboot"], 15_000).then(() => {}),
   log: note,
 });
 

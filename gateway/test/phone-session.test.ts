@@ -32,7 +32,7 @@ function sock() {
 }
 
 /** 假依赖：connect 依次交出 sockets 里预先排好的套接字；video 连上后自动推 HELLO + 会话包。 */
-function fakes(opts: { refusals?: number; firstSession?: [number, number]; never?: boolean } = {}) {
+function fakes(opts: { refusals?: number; firstSession?: [number, number]; never?: boolean; rebootError?: string } = {}) {
   const calls: string[] = [];
   const video = sock();
   const control = sock();
@@ -67,6 +67,10 @@ function fakes(opts: { refusals?: number; firstSession?: [number, number]; never
       return control.s;
     },
     screencap: async () => Buffer.from("PNG"),
+    reboot: async () => {
+      calls.push("reboot");
+      if (opts.rebootError) throw new Error(opts.rebootError);
+    },
     now: () => now,
     log: () => {},
   };
@@ -90,7 +94,7 @@ test("connectPhone：按顺序 push、forward、起服务端、连视频再连�
   assert.equal(s.serial, 0);
   assert.deepEqual(s.device, { width: 864, height: 1920 });
   assert.equal(s.rotation, 90);
-  assert.deepEqual(s.caps, { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: true });
+  assert.deepEqual(s.caps, { rotate: false, reboot: true, stop: false, clipboard: true, input: true, scroll: true });
 });
 
 test("connectPhone：服务端还没监听（连上就断）时重试", async () => {
@@ -184,11 +188,10 @@ test("视频连接断开 → 同样关闭；close() 之后再断开不重复回�
   assert.ok(f.calls.includes("stopServer"));
 });
 
-test("rotate / reboot 抛「这台设备不支持」；touch 不报错；screenshot 走 screencap", async () => {
+test("rotate 抛「这台设备不支持」；touch 不报错；screenshot 走 screencap", async () => {
   const f = fakes();
   const s = await connectPhone("R5CR10WN52H", f.deps);
   await assert.rejects(s.rotate(), /这台设备不支持/);
-  await assert.rejects(s.reboot(), /这台设备不支持/);
   await s.touch(1, 2, true);
   assert.equal((await s.screenshot()).toString(), "PNG");
 });
@@ -352,4 +355,20 @@ test("text：离上次粘贴已经够久时不等", async () => {
   await s.text("长");
   assert.ok(Date.now() - t0 < 20);
   assert.equal(out().length, 1);
+});
+
+test("reboot：执行 adb reboot，会话先不关（等手机断开时由连接结束关掉）", async () => {
+  const f = fakes();
+  const s = await connectPhone("R5CR10WN52H", f.deps);
+  let closed = false;
+  s.onClosed(() => void (closed = true));
+  await s.reboot();
+  assert.equal(f.calls.filter((c) => c === "reboot").length, 1);
+  assert.equal(closed, false);
+});
+
+test("reboot：adb reboot 失败时原样抛出", async () => {
+  const f = fakes({ rebootError: "device offline" });
+  const s = await connectPhone("R5CR10WN52H", f.deps);
+  await assert.rejects(s.reboot(), /device offline/);
 });
