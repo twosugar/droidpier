@@ -366,7 +366,7 @@ export async function startServer(opts: {
   // 正在重启的设备：同时只有一台、一次
   let rebooting: { id: string } | null = null;
   const isRebooting = (s: EmulatorSession) => rebooting?.id === s.id;
-  const REBOOTING = "模拟器正在重启，等它开机后再试";
+  const REBOOTING = "设备正在重启，等它开机后再试";
   const send = (ws: WebSocket, m: ServerMsg) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
   };
@@ -396,7 +396,8 @@ export async function startServer(opts: {
   let reconnecting = false;
   /** 选过的真机插回来了、又有页面在等：重连并接给没会话的页面。轮到它时再确认一遍还是这台手机。 */
   const reconnectPinned = () => {
-    if (!pinned || reconnecting || !opts.avd || !usablePhone(pinned) || liveSession(pinned)) return;
+    // 重启中的手机由重启流程自己重连：开机动画阶段 adb 就上线了，那时 scrcpy 起不来，在这里重连只会失败一次就不再试
+    if (!pinned || reconnecting || !opts.avd || rebooting?.id === pinned || !usablePhone(pinned) || liveSession(pinned)) return;
     if (!live().some((c) => !c.session)) return;
     const id = pinned;
     reconnecting = true;
@@ -438,7 +439,7 @@ export async function startServer(opts: {
       for (const c of conns) {
         if (c.session !== s) continue;
         c.detach();
-        send(c.ws, { t: "status", state: s.kind === "phone" ? "phone-closed" : "emulator-closed" });
+        send(c.ws, { t: "status", state: isRebooting(s) ? "rebooting" : s.kind === "phone" ? "phone-closed" : "emulator-closed" });
       }
     });
   };
@@ -1005,26 +1006,57 @@ export async function startServer(opts: {
       const s = conn.session;
       if (!s) return send(ws, { t: "error", message: "重启失败：没有连接设备" });
       if (!s.caps.reboot) return send(ws, { t: "error", message: "这台设备不支持重启" });
-      if (rebooting) return send(ws, { t: "error", message: "模拟器正在重启，等这一轮结束再试" });
+      if (rebooting) return send(ws, { t: "error", message: "设备正在重启，等这一轮结束再试" });
       rebooting = { id: s.id };
       log(`页面确认重启 ${s.id}`);
       const onIt = (c: Conn) => c.session === s;
+      // 手机重启时会话会关掉、连接被解绑（模拟器不会），先记下这些页面，开机后接回去
+      const waiting = live().filter(onIt);
       broadcast({ t: "status", state: "rebooting" }, onIt);
       // 重启后设备里的 adb reverse 和 WebView socket 都没了，旧的转发不能再用
       dropDebug(s.id);
       let result: "done" | "adb-down" | "failed";
       let error: string | undefined;
       try {
-        await s.reboot();
+        try {
+          await s.reboot();
+        } catch (e) {
+          // 手机：adb reboot 报错或超时多半是 USB 连接先断了，手机已经在重启；照样等开机，真没重启的话等满两分钟是 adb-down
+          if (s.kind !== "phone") throw e;
+          log(`${s.id} 的 adb reboot 报错（${(e as Error).message}），按已在重启处理`);
+        }
         result = await (opts.rebootWait?.(s.id) ?? Promise.resolve("adb-down" as const));
       } catch (e) {
         result = "failed";
         error = (e as Error).message;
       }
       rebooting = null;
+      if (liveSession(s.id)) {
+        // 按 id 找：会话对象可能已经换过（比如重启期间有人切回这台），旧对象上已经没有页面了
+        const onDevice = (c: Conn) => c.session?.id === s.id;
+        log(`${s.id} 重启结束：${result}${error ? `（${error}）` : ""}`);
+        broadcast({ t: "status", state: "connected" }, onDevice);
+        broadcast({ t: "reboot", result, ...(error ? { error } : {}) }, onDevice);
+        return;
+      }
+      const back = waiting.filter((c) => c.ws.readyState === c.ws.OPEN && !c.session);
+      if (result === "done" && opts.avd && live().some((c) => !c.session)) {
+        try {
+          // 和插回重连一样排在换设备的链上；用户这期间切到了别的设备就不再连回来。
+          // 重启期间新开的页面也在等这台手机，一起接上
+          const next = await serially(async () => (pinned === s.id ? opts.avd!.use(s.id) : null));
+          if (next) for (const c of live()) if (!c.session) c.attach(next);
+        } catch (e) {
+          result = "failed";
+          error = (e as Error).message;
+        }
+      }
       log(`${s.id} 重启结束：${result}${error ? `（${error}）` : ""}`);
-      broadcast({ t: "status", state: "connected" }, onIt);
-      broadcast({ t: "reboot", result, ...(error ? { error } : {}) }, onIt);
+      // 没接上的页面（包括重启期间新开的）都离开「重启中」；重启结果只发给点了重启时就在的页面
+      for (const c of live()) if (!c.session) send(c.ws, { t: "status", state: s.kind === "phone" ? "phone-closed" : "emulator-closed" });
+      for (const c of back) send(c.ws, { t: "reboot", result, ...(error ? { error } : {}) });
+      // 没连回来的（失败、两分钟没开机完）交还给插回重连
+      reconnectPinned();
     };
 
     ws.on("message", async (raw, isBinary) => {
@@ -1059,7 +1091,7 @@ export async function startServer(opts: {
           const s = liveSession(pinned);
           if (s) attach(s);
           else {
-            send(ws, { t: "status", state: "phone-closed" });
+            send(ws, { t: "status", state: rebooting?.id === pinned ? "rebooting" : "phone-closed" });
             // 掉线期间没有页面在，插回时没人触发重连：这个页面来了就试一次
             reconnectPinned();
           }
@@ -1178,6 +1210,11 @@ export async function startServer(opts: {
           }
           if (deleting.has(m.name)) {
             send(ws, { t: "error", message: DELETING });
+            break;
+          }
+          // 手机开机动画阶段就以 device 出现了，这时切过去会抢在重启流程前面接管（重启流程开机完成后自己会连回来）
+          if (rebooting?.id === m.name) {
+            send(ws, { t: "error", message: REBOOTING });
             break;
           }
           let failure: string | null = null;
@@ -1417,7 +1454,7 @@ export async function startServer(opts: {
       installing ? "正在安装 SDK"
       : booting() ? "设备正在开机"
       : deleting.size ? "正在删除设备"
-      : rebooting ? "模拟器正在重启"
+      : rebooting ? "设备正在重启"
       : transfers.size ? "正在传文件"
       : null,
     notifyUpdate: (r) => broadcast({ t: "update", ...r }),

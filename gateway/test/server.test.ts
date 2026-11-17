@@ -2462,10 +2462,10 @@ const PHONE_OK: PhoneInfo = { id: "R5CR10WN52H", state: "device", manufacturer: 
 const videoTags = (c: Client) => c.binMsgs.filter((b) => binKind(b) === BIN_VIDEO).map((b) => new Uint8Array(b)[20]);
 
 /** 先接上模拟器，再切到真机。 */
-async function phoneSetup(t: import("node:test").TestContext, phone = new FakePhone(), emu = new FakeSession()) {
+async function phoneSetup(t: import("node:test").TestContext, phone = new FakePhone(), emu = new FakeSession(), more: Partial<Parameters<typeof startServer>[0]> = {}) {
   const p = fakePhones([PHONE_OK]);
   const fa = fakeAvd({ [phone.id]: phone });
-  const s = await setup(t, emu, async () => emu, fa.ops, undefined, undefined, { phones: p.ops });
+  const s = await setup(t, emu, async () => emu, fa.ops, undefined, undefined, { phones: p.ops, ...more });
   const c = await s.connect();
   hello(c);
   await until(() => c.msgs.some((m) => m.t === "ready"));
@@ -2804,4 +2804,139 @@ test("没配日志的网关收到 logcatOpen 回错误", async (t) => {
   c.ws.send(JSON.stringify({ t: "logcatOpen", filter: LOG_ALL }));
   await until(() => c.msgs.some((m) => m.t === "error"));
   assert.equal(c.msgs.find((m) => m.t === "error").message, "网关不支持日志");
+});
+
+// ─────────────── 真机重启（PR 7） ───────────────
+
+/** 能重启的真机，重启等待由测试放行。 */
+async function phoneRebootSetup(t: import("node:test").TestContext) {
+  const { g, wait } = gatedWait();
+  const phone = new FakePhone();
+  phone.caps = { ...phone.caps, reboot: true };
+  const r = await phoneSetup(t, phone, new FakeSession(), { rebootWait: wait });
+  const uses: string[] = [];
+  const orig = r.fa.ops.use;
+  r.fa.ops.use = async (name) => (uses.push(name), orig(name));
+  return { ...r, g, uses };
+}
+
+test("真机重启：会话关闭时页面看到 rebooting，开机完成后重新连上并收到 done", async (t) => {
+  const { c, g, phone, uses } = await phoneRebootSetup(t);
+  const readies = () => c.msgs.filter((m) => m.t === "ready" && m.kind === "phone").length;
+  const before = readies();
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  assert.equal(phone.reboots, 1);
+  phone.fireClosed();
+  await sleep(30);
+  const states = c.msgs.filter((m) => m.t === "status").map((m) => m.state);
+  assert.ok(states.includes("rebooting"));
+  assert.ok(!states.includes("phone-closed"));
+  g.finish("done");
+  await until(() => c.msgs.some((m) => m.t === "reboot"));
+  assert.deepEqual(uses, ["R5CR10WN52H"]);
+  assert.equal(readies(), before + 1);
+  assert.deepEqual(c.msgs.find((m) => m.t === "reboot"), { t: "reboot", result: "done" });
+});
+
+test("真机重启：重启期间手机列表变化不触发重连", async (t) => {
+  const { c, g, p, phone, uses } = await phoneRebootSetup(t);
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  phone.fireClosed();
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  p.set([PHONE_OK]);
+  await sleep(60);
+  assert.deepEqual(uses, []);
+  assert.ok(!c.msgs.some((m) => m.t === "error"));
+  g.finish("done");
+  await until(() => c.msgs.some((m) => m.t === "reboot"));
+  assert.deepEqual(uses, ["R5CR10WN52H"]);
+});
+
+test("真机重启：重启后重连失败发 failed，之后手机列表变化时按老办法连上", async (t) => {
+  const { c, g, p, phone, fa, uses, connect } = await phoneRebootSetup(t);
+  const ok = fa.ops.use;
+  let first = true;
+  fa.ops.use = async (name) => {
+    if (first) {
+      first = false;
+      uses.push(name);
+      throw new Error("5 秒内连不上手机上的 scrcpy 服务端");
+    }
+    return ok(name);
+  };
+  const before = c.msgs.filter((m) => m.t === "ready" && m.kind === "phone").length;
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  phone.fireClosed();
+  const late = await connect();
+  hello(late);
+  await until(() => late.msgs.some((m) => m.t === "status"));
+  g.finish("done");
+  await until(() => c.msgs.some((m) => m.t === "reboot"));
+  const r = c.msgs.find((m) => m.t === "reboot");
+  assert.equal(r.result, "failed");
+  assert.match(r.error, /scrcpy/);
+  // 重启期间新开的页面也不能停在「重启中」
+  await until(() => late.msgs.filter((m) => m.t === "status").at(-1)?.state === "phone-closed");
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  p.set([PHONE_OK]);
+  await until(() => c.msgs.filter((m) => m.t === "ready" && m.kind === "phone").length === before + 1);
+});
+
+test("真机重启：两分钟没开机完成发 adb-down，不重连", async (t) => {
+  const { c, g, p, phone, uses } = await phoneRebootSetup(t);
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  phone.fireClosed();
+  // 两分钟没开机完成时手机还不在 adb 的在线列表里
+  p.set([{ ...PHONE_OK, state: "offline" }]);
+  g.finish("adb-down");
+  await until(() => c.msgs.some((m) => m.t === "reboot"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "reboot"), { t: "reboot", result: "adb-down" });
+  assert.deepEqual(uses, []);
+});
+
+test("真机重启：重启期间新开的页面看到 rebooting，重连后也被接上", async (t) => {
+  const { c, g, phone, connect } = await phoneRebootSetup(t);
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  phone.fireClosed();
+  const c2 = await connect();
+  hello(c2);
+  await until(() => c2.msgs.some((m) => m.t === "status"));
+  assert.deepEqual(c2.msgs.filter((m) => m.t === "status").map((m) => m.state), ["rebooting"]);
+  g.finish("done");
+  await until(() => c2.msgs.some((m) => m.t === "ready" && m.kind === "phone"));
+});
+
+test("真机重启：重启中途有人 use 这台手机，回「设备正在重启」，不打断重启流程", async (t) => {
+  const { c, g, phone, connect, uses } = await phoneRebootSetup(t);
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  phone.fireClosed();
+  const late = await connect();
+  hello(late);
+  await until(() => late.msgs.some((m) => m.t === "status"));
+  late.ws.send(JSON.stringify({ t: "use", name: phone.id }));
+  await until(() => late.msgs.some((m) => m.t === "error"));
+  assert.match(late.msgs.find((m) => m.t === "error").message, /正在重启/);
+  assert.deepEqual(uses, []);
+  g.finish("done");
+  await until(() => c.msgs.some((m) => m.t === "reboot"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "reboot"), { t: "reboot", result: "done" });
+  await until(() => late.msgs.some((m) => m.t === "ready" && m.kind === "phone"));
+});
+
+test("真机重启：adb reboot 报错时手机多半已经在重启，照样等开机并重连", async (t) => {
+  const { c, g, phone, uses } = await phoneRebootSetup(t);
+  phone.reboot = async () => { phone.reboots++; throw new AdbUnresponsive(); };
+  c.ws.send(JSON.stringify({ t: "reboot" }));
+  await until(() => g.calls.length === 1);
+  phone.fireClosed();
+  g.finish("done");
+  await until(() => c.msgs.some((m) => m.t === "reboot"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "reboot"), { t: "reboot", result: "done" });
+  assert.deepEqual(uses, ["R5CR10WN52H"]);
 });
