@@ -53,4 +53,6 @@ The page works with a phone the same way it works with an emulator:
 
 ## Only phones, no emulator
 
-The setup check on the page still lists the emulator and a system image when they are missing. If you only use phones, you need only `platform-tools`: install that, and close the setup card.
+If you only use phones, you need only `platform-tools`. Once it is installed and you have no virtual device, the page does not show the setup check by itself, even though the emulator and a system image are missing. To set up an emulator later, click the button under the empty device list. It names how many items are missing and opens the setup check, where you install them.
+
+Without `platform-tools`, the Phones group asks you to install it first, from the setup check.

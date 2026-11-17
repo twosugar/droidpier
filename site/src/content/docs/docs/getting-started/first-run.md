@@ -25,7 +25,7 @@ On start, the gateway checks whether a device can start: it needs the Android em
 When the gateway runs in the background, this list goes to its log. Run `droidpier logs` to see it.
 
 <!-- verify: phase 3 -->
-The page shows the same list, with the download size of each item. When a device can start, it shows nothing.
+The page shows the same list, with the download size of each item. When a device can start, it shows nothing. If `adb` is installed and you have no virtual device yet, the page does not show the list by itself either, so you can use a phone right away. See [Phones](/docs/guides/phones/). The device list then has a button that shows the list.
 
 | Missing | What you do on the page |
 |---|---|
