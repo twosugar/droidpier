@@ -130,6 +130,12 @@ The state where the emulator's adbd stops answering (`AdbUnresponsive`, code `ad
 restart the emulator.
 _Avoid_: adb down, adb error
 
+**WebMCP tools**:
+The `droidpier_*` tools the page registers for an AI assistant in the browser (`host/src/webmcp.ts`). They decide what
+they can do from the device's caps alone, and ask the user on the page before anything with consequences (install,
+stop, reboot). `droidpier_read_logcat` takes a fresh logcat dump each call and does not depend on the Log panel.
+_Avoid_: MCP server, agent tools
+
 **Log panel** (日志):
 The device's logcat beside the device frame, filtered by app, minimum level and text. The gateway runs one
 `adb logcat` per device only while some page has the panel open, keeps the recent lines, and filters for each page
