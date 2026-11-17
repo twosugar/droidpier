@@ -1,4 +1,4 @@
-import { cleanup, colorScheme, effect, host, Image, type JSX, keymap, LayoutAnimation, mount, openUrl, reduceMotion, Scroll, setColorScheme, signal, Text, View } from "nsh";
+import { cleanup, colorScheme, effect, host, Image, type JSX, keymap, LayoutAnimation, List, type ListRef, mount, openUrl, reduceMotion, Scroll, setColorScheme, signal, Text, View } from "nsh";
 import { Button, ContextMenu, Dialog, Input, Menu, MenuItem, MenuSeparator, Radio, RadioGroup, Select, Toggle, Toolbar, ToolbarGroup, Tooltip } from "nsh/base";
 import { middleEllipsis } from "./ellipsis";
 import { isStaleStatus } from "./status-rev";
@@ -17,6 +17,8 @@ import { AUTO_START, autoOpen } from "./console-auto";
 import { addressEdit, addressShown, addressSubmit, type AddressDraft } from "./address-field";
 import { setupCardShown } from "./setup-card";
 import { deviceLive } from "./avd-delete";
+import { applyBatch, levelColor, type LogRow } from "./log-store";
+import type { LogFilter, LogLevel, LogLine } from "../shared/logcat";
 
 type State =
   | "connecting" | "connected" | "no-emulator" | "emulator-closed" | "phone-closed" | "booting" | "rebooting" | "disconnected"
@@ -259,6 +261,151 @@ function MsgLine(props: { msg: Msg; onReboot: () => void }) {
   );
 }
 
+const LOG_LEVELS: Array<{ value: LogLevel; title: string }> = [
+  { value: "V", title: "全部级别" },
+  { value: "D", title: "调试及以上" },
+  { value: "I", title: "信息及以上" },
+  { value: "W", title: "警告及以上" },
+  { value: "E", title: "错误及以上" },
+  { value: "F", title: "只看严重" },
+];
+const ALL_APPS = "\u0000all";
+/** 日志一行的高度：固定行高、一行显示不下就截断。换行的话虚拟列表按估计高度摆放，测出实际高度前行会叠在一起（2026-11-16 实测）。 */
+const LOG_ROW_H = 17;
+
+/** 一行日志：时间、pid-tid、级别、tag: 内容；级别和 tag 按级别上色。 */
+function LogRowView(props: { row: () => LogRow }) {
+  return (
+    <If when={!("skipped" in props.row())} else={
+      <Text style={{ height: LOG_ROW_H, paddingHorizontal: 10, color: C.muted, fontSize: 11, lineHeight: LOG_ROW_H, fontStyle: "italic", numberOfLines: 1 }}>{`省略了 ${(props.row() as { skipped: number }).skipped} 行（页面跟不上）`}</Text>
+    }>
+      {(() => {
+        const l = () => props.row() as LogLine;
+        const color = () => C[levelColor(l().level)];
+        const cell = { fontSize: 11, lineHeight: LOG_ROW_H, fontFamily: "monospace", numberOfLines: 1 } as const;
+        return (
+          <View style={{ height: LOG_ROW_H, flexDirection: "row", gap: 6, paddingHorizontal: 10 }}>
+            <Text style={{ ...cell, flexShrink: 0, color: C.muted }}>{`${l().time.slice(6)} ${l().pid}`}</Text>
+            <Text style={{ ...cell, flexShrink: 0, maxWidth: "35%", color: color(), fontWeight: "600" }}>{`${l().level} ${l().tag}`}</Text>
+            <Text style={{ ...cell, flex: 1, minWidth: 0, color: l().level === "E" || l().level === "F" ? C.danger : C.text }}>{l().msg}</Text>
+          </View>
+        );
+      })()}
+    </If>
+  );
+}
+
+/** 日志面板：网关按过滤条件推 logcat（gateway/src/logcat.ts）；暂停、清空、跟随都在页面做（plans/2026-11-16-real-device-pr5-logcat.md 取舍 5）。
+ * open：打开或重新打开订阅（换设备、网关重连时由 App 调）；sink 收网关推来的批次。 */
+function LogPanel(props: { device: () => string; live: () => boolean; onClose: () => void; sink: (fn: ((b: { lines: LogLine[]; reset: boolean; dropped: number }) => void) | null) => void }) {
+  const rows = signal<LogRow[]>([]);
+  const held = signal<LogRow[]>([]);
+  const paused = signal(false);
+  const follow = signal(true);
+  const pkg = signal<string | null>(null);
+  const level = signal<LogLevel>("V");
+  const text = signal("");
+  const apps = signal<{ foreground: string | null; apps: string[] }>({ foreground: null, apps: [] });
+  let list: ListRef | undefined;
+  const filter = (): LogFilter => ({ pkg: pkg(), level: level(), text: text() });
+
+  props.sink((b) => {
+    if (paused()) held.set(applyBatch(b.reset ? [] : held(), b));
+    else rows.set(applyBatch(rows(), b));
+    if (b.reset && paused()) rows.set([]);
+  });
+  // 面板关掉后，还没回来的 logcatApps 不能再去订阅，否则网关里的 logcat 没人看也一直跑
+  let disposed = false;
+  cleanup(() => {
+    disposed = true;
+    props.sink(null);
+    void host.call("emu.logcatClose", {});
+  });
+
+  const loadApps = () => call<{ foreground: string | null; apps: string[] }>("emu.logcatApps", {}).then((a) => apps.set(a), () => {});
+  // 换设备或重新连上时：先查前台 App 当默认，再按条件订阅
+  effect(() => {
+    const d = props.device();
+    if (!d || !props.live()) return;
+    void loadApps().then(() => {
+      if (disposed || props.device() !== d) return;
+      pkg.set(apps().foreground);
+      void host.call("emu.logcatOpen", { filter: filter() });
+    });
+  });
+  const refilter = () => void host.call("emu.logcatFilter", { filter: filter() });
+  let textTimer: ReturnType<typeof setTimeout> | undefined;
+  cleanup(() => clearTimeout(textTimer));
+
+  effect(() => {
+    rows();
+    if (follow()) list?.scrollToEnd({ animated: false });
+  });
+
+  const appItems = () => [
+    { value: ALL_APPS, title: "全部 App" },
+    ...[...new Set([...(apps().foreground ? [apps().foreground!] : []), ...apps().apps])].map((a) => ({ value: a, title: a === apps().foreground ? `${a}（前台）` : a })),
+  ];
+  const selectStyle = { popupStyle: { backgroundColor: C.panel, borderRadius: 8, borderWidth: 1, borderColor: C.line, padding: 4, minWidth: 220, maxHeight: 360 } };
+  const trigger = (label: () => string, width: number) => (
+    <View style={{ width, height: 30, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg }}
+      hoverStyle={{ borderColor: C.lineStrong }} focusStyle={{ borderColor: C.muted }}>
+      <Text style={{ flex: 1, color: C.text, fontSize: 12, numberOfLines: 1 }}>{label()}</Text>
+      <Icon name="chevron" size={14} tint={C.muted} />
+    </View>
+  );
+  const renderItem = (item: { title: string }) => (
+    <View style={{ height: 28, justifyContent: "center", paddingHorizontal: 8, borderRadius: 6 }} hoverStyle={{ backgroundColor: C.hover }}>
+      <Text style={{ color: C.text, fontSize: 12, numberOfLines: 1 }}>{item.title}</Text>
+    </View>
+  );
+
+  return (
+    <View role="region" accessibilityLabel="日志" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+      <View role="toolbar" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderColor: C.lineSoft }}>
+        <Select items={appItems()} value={pkg() ?? ALL_APPS} accessibilityLabel="按 App 过滤" {...selectStyle} renderItem={renderItem}
+          searchable searchPlaceholder="搜包名" searchAccessibilityLabel="搜包名"
+          onOpenChange={({ open }) => { if (open) void loadApps(); }}
+          onChange={({ value }) => { pkg.set(value === ALL_APPS ? null : value); refilter(); }}
+          trigger={trigger(() => pkg() ?? "全部 App", 190)} />
+        <Select items={LOG_LEVELS} value={level()} accessibilityLabel="最低级别" {...selectStyle} renderItem={renderItem}
+          onChange={({ value }) => { level.set(value as LogLevel); refilter(); }}
+          trigger={trigger(() => LOG_LEVELS.find((l) => l.value === level())!.title, 112)} />
+        <View style={{ flex: 1, minWidth: 120, height: 30, flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg }}>
+          <Icon name="search" size={14} tint={C.muted} />
+          <Input value={text()} placeholder="搜 tag 或内容" accessibilityLabel="搜 tag 或内容" autoCapitalize="none" autoCorrect={false}
+            onChange={({ value }) => {
+              text.set(value);
+              clearTimeout(textTimer);
+              textTimer = setTimeout(refilter, 300);
+            }}
+            style={{ flex: 1, minWidth: 0, height: 28, color: C.text, fontSize: 12 }} />
+        </View>
+        <IconBtn icon={paused() ? "play" : "pause"} label={paused() ? "继续" : "暂停"} onPress={() => {
+          if (paused()) {
+            rows.set(applyBatch(rows(), { lines: held().filter((r): r is LogLine => !("skipped" in r)), reset: false, dropped: 0 }));
+            held.set([]);
+          }
+          paused.set(!paused());
+        }} />
+        <IconBtn icon="trash" label="清空" onPress={() => { rows.set([]); held.set([]); }} />
+        <IconBtn icon="toEnd" label={follow() ? "跟随中" : "跟随最新"} onPress={() => { follow.set(true); list?.scrollToEnd({ animated: false }); }} />
+        <IconBtn icon="close" label="关闭日志" onPress={props.onClose} />
+      </View>
+      <List each={rows()} keyExtractor={(r) => String(r.n)} estimatedItemSize={LOG_ROW_H} style={{ flex: 1, minHeight: 0, backgroundColor: C.surface }}
+        ref={(r) => (list = r)} scrollEventThrottle={100}
+        onScroll={(e) => {
+          // 往上翻离开底部就不再跟随；滚回底部又自动跟随
+          const atEnd = e.offset.y + e.size.height >= e.contentSize.height - 40;
+          if (atEnd !== follow()) follow.set(atEnd);
+        }}
+        empty={<Text style={{ padding: 16, color: C.muted, fontSize: 12 }}>{paused() ? "已暂停" : "还没有日志"}</Text>}>
+        {(row) => <LogRowView row={row} />}
+      </List>
+    </View>
+  );
+}
+
 /** H5 控制台：页面列表由 App 轮询后传进来（pages 为 null 表示还没读到）；refresh 让 App 立刻再读一次。
  * 只看前台页面所在的 App；还没在审查时自动审查它的前台页面，下拉框切到同一 App 的其他页面。
  * onInspect：控制台已在页面里打开。 */
@@ -359,8 +506,7 @@ function H5Console(props: {
   };
 
   return (
-    <View role="region" accessibilityLabel="H5 控制台"
-      style={{ flex: 1.2, minWidth: 0, borderLeftWidth: 1, borderColor: C.lineSoft }}>
+    <View role="region" accessibilityLabel="H5 控制台" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
       <View role="toolbar" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderColor: C.lineSoft }}>
         <Select items={items()} value={activeKey() ?? undefined} accessibilityLabel="调试页面" disabled={items().length === 0}
           onChange={({ value }) => {
@@ -455,6 +601,10 @@ const ICON_PATHS = {
   monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  logs: '<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
+  pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  toEnd: '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
 };
 type IconName = keyof typeof ICON_PATHS;
 const iconSrc = (name: IconName) =>
@@ -901,6 +1051,16 @@ function App() {
   };
   const cmdCopyResult = signal<"ok" | "fail" | null>(null);
   const h5Open = signal(false);
+  // 日志面板（网关级别 ≥ 3 才有）；和 H5 控制台都开着时右侧用标签页切换，隐藏的那个留在页面里（DevTools 的 iframe 挪动会重新加载）
+  const logOpen = signal(false);
+  const logcatOk = signal(false);
+  const sideTab = signal<"h5" | "log">("h5");
+  let logSink: ((b: { lines: LogLine[]; reset: boolean; dropped: number }) => void) | null = null;
+  host.on("emu.logcat", (b: { lines: LogLine[]; reset: boolean; dropped: number }) => logSink?.(b));
+  const toggleLog = () => {
+    logOpen.set(!logOpen());
+    if (logOpen()) sideTab.set("log");
+  };
   const rotation = signal(0);
   host.on("emu.orientation", (p: { rotation: number }) => rotation.set(p.rotation));
   const env = signal<Env | null>(null);
@@ -1070,12 +1230,13 @@ function App() {
   });
 
   let statusRev = -1;
-  type DeviceStatus = { deviceId?: string; kind?: "emulator" | "phone"; caps?: DeviceCaps | null; device?: { width: number; height: number } };
+  type DeviceStatus = { deviceId?: string; kind?: "emulator" | "phone"; caps?: DeviceCaps | null; device?: { width: number; height: number }; logcat?: boolean };
   const applyDevice = (p: DeviceStatus) => {
     deviceId.set(p.deviceId ?? "");
     kind.set(p.kind ?? "emulator");
     caps.set(p.caps ?? null);
     if (p.device) deviceSize.set(p.device);
+    logcatOk.set(p.logcat === true);
   };
   host.on("emu.status", (p: { state: State; serial: number; upgrade: string | null; rev: number } & DeviceStatus) => {
     if (isStaleStatus(p.rev, statusRev)) return;
@@ -1249,6 +1410,7 @@ function App() {
       autoState = autoOpen(autoState, { kind: "closed", pkg: livePage()?.pkg ?? null }).state;
     }
     h5Open.set(!h5Open());
+    if (h5Open()) sideTab.set("h5");
   };
   // 前台出现 H5 页面时自动打开控制台，每次出现一次（ui/console-auto.ts）
   let autoState = AUTO_START;
@@ -1481,6 +1643,14 @@ function App() {
                 </Toggle>
               </ToolGroup>
             </If>
+            <If when={logcatOk() && device() !== ""}>
+              <ToolGroup label="日志">
+                <Toggle pressed={logOpen()} onChange={toggleLog} accessibilityLabel="日志" tooltip={<Tip label="日志（logcat）" />}
+                  hoverStyle={{ backgroundColor: C.hover }} focusStyle={{ borderColor: C.muted }} pressedStyle={{ backgroundColor: C.accentSoft }} activeStyle={pressed(0.9)} style={{ ...TOOL_BTN, ...ease() }}>
+                  <Icon name="logs" size={17} tint={logOpen() ? C.accentText : C.keyText} />
+                </Toggle>
+              </ToolGroup>
+            </If>
             <Menu align="end" offset={6} popupStyle={menuPopup()} popupStartingStyle={popOut(-4)} popupEndingStyle={popOut(-4)} trigger={
               <Button accessibilityLabel="更多操作" tooltip={<Tip label="更多操作" />} hoverStyle={{ backgroundColor: C.hover }} focusStyle={{ borderColor: C.muted }}
                 activeStyle={pressed(0.9)} style={{ ...TOOL_BTN, borderColor: C.lineSoft, backgroundColor: C.panel, ...ease() }}>
@@ -1656,9 +1826,31 @@ function App() {
             </If>
           </View>
         </View>
-        <If when={h5Open()}>
-          <H5Console pages={pages} listError={listError} refresh={refresh} inspected={inspected} onReboot={() => rebootAsk.set(true)}
-            onInspect={(key, title) => inspected.set({ key, title, device: deviceId() })} onClose={toggleH5} onCopy={copyHref} picking={picking} />
+        <If when={h5Open() || logOpen()}>
+          <View style={{ flex: 1.2, minWidth: 0, borderLeftWidth: 1, borderColor: C.lineSoft }}>
+            <If when={h5Open() && logOpen()}>
+              <View role="tablist" style={{ flexDirection: "row", gap: 4, paddingHorizontal: 10, paddingTop: 8, borderBottomWidth: 1, borderColor: C.lineSoft }}>
+                {(["h5", "log"] as const).map((t) => (
+                  <View role="tab" accessibilityLabel={t === "h5" ? "H5 调试" : "日志"} accessibilityState={{ selected: sideTab() === t }} onPress={() => sideTab.set(t)}
+                    hoverStyle={{ backgroundColor: C.hover }}
+                    style={{ paddingHorizontal: 12, paddingVertical: 6, borderTopLeftRadius: 6, borderTopRightRadius: 6, borderBottomWidth: 2, borderColor: sideTab() === t ? C.accentText : "transparent" }}>
+                    <Text style={{ color: sideTab() === t ? C.text : C.muted, fontSize: 12, fontWeight: "600" }}>{t === "h5" ? "H5 调试" : "日志"}</Text>
+                  </View>
+                ))}
+              </View>
+            </If>
+            <If when={h5Open()}>
+              <View style={{ flex: 1, minHeight: 0, display: logOpen() && sideTab() === "log" ? "none" : "flex" }}>
+                <H5Console pages={pages} listError={listError} refresh={refresh} inspected={inspected} onReboot={() => rebootAsk.set(true)}
+                  onInspect={(key, title) => inspected.set({ key, title, device: deviceId() })} onClose={toggleH5} onCopy={copyHref} picking={picking} />
+              </View>
+            </If>
+            <If when={logOpen()}>
+              <View style={{ flex: 1, minHeight: 0, display: h5Open() && sideTab() === "h5" ? "none" : "flex" }}>
+                <LogPanel device={deviceId} live={() => state() === "connected"} onClose={toggleLog} sink={(fn) => (logSink = fn)} />
+              </View>
+            </If>
+          </View>
         </If>
         </View>
       </View>
