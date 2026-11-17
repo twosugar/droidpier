@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   GATEWAY_LEVEL,
+  LOGCAT_READ_MAX,
   BIN_FRAME,
   BIN_SCREENSHOT,
   BIN_VIDEO,
@@ -204,4 +205,13 @@ test("parseClientMsg：logcatClose、logcatApps", () => {
   assert.equal(parseClientMsg('{"t":"logcatApps"}'), null);
 });
 
-test("GATEWAY_LEVEL 是 3（日志面板）", () => assert.equal(GATEWAY_LEVEL, 3));
+test("parseClientMsg：logcatRead 校验 rid、filter、limit", () => {
+  const filter = { pkg: "com.a", level: "E", text: "" };
+  assert.deepEqual(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter, limit: 50 })), { t: "logcatRead", rid: 1, filter, limit: 50 });
+  assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter, limit: 0 })), null);
+  assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter, limit: LOGCAT_READ_MAX + 1 })), null);
+  assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter, limit: 1.5 })), null);
+  assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter: { pkg: "a b", level: "E", text: "" }, limit: 5 })), null);
+});
+
+test("GATEWAY_LEVEL 是 4（WebMCP 读日志）", () => assert.equal(GATEWAY_LEVEL, 4));
