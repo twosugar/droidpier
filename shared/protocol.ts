@@ -243,6 +243,8 @@ export type EnvReport = {
   sameDisk: boolean;
   /** 检查本身出错（不是缺东西）：ok 为 false，页面显示这段文字。 */
   error?: string;
+  /** AVD 目录里能读到镜像配置的设备数（不管镜像在不在）。没装模拟器程序时设备列表是空的，页面靠它认出模拟器用户；旧网关没有这个字段。 */
+  avds?: number;
 };
 
 /** 一项安装的进度。license：在等页面上的用户同意许可证。 */

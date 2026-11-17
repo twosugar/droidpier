@@ -133,7 +133,7 @@ export async function checkEnv(deps: EnvDeps): Promise<EnvReport> {
   }
   const [sdkDisk, avdDisk] = await Promise.all([deps.disk(sdk), deps.disk(deps.avdHome)]);
   return {
-    ok: missing.length === 0, missing, sdkRoot: sdk, avdHome: deps.avdHome,
+    ok: missing.length === 0, missing, sdkRoot: sdk, avdHome: deps.avdHome, avds: avds.length,
     freeMb: sdkDisk.freeMb, avdFreeMb: avdDisk.freeMb, sameDisk: sdkDisk.dev === avdDisk.dev,
   };
 }

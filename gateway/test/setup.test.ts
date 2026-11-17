@@ -187,3 +187,9 @@ test("磁盘：分别量 SDK 和 AVD 目录所在的盘（目录还不存在时�
   assert.equal(r.avdFreeMb, 7000);
   assert.equal(r.sameDisk, false);
 });
+
+test("报告 AVD 目录里有几台设备：没装模拟器程序时页面靠它认出模拟器用户", async () => {
+  assert.equal((await checkEnv(fakeFs({}))).avds, 0);
+  const r = await checkEnv(fakeFs({ ...avd("Pixel_5", "system-images/android-34/google_apis/arm64-v8a/"), ...avd("Pixel_9", "system-images/android-36/google_apis/arm64-v8a/") }));
+  assert.equal(r.avds, 2);
+});
