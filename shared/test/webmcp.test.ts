@@ -1,12 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTools, shotToDevice, swipeSteps, type ToolDeps } from "../../host/src/webmcp.ts";
-import type { ClientMsg, Rotation } from "../protocol.ts";
+import { createTools, formatLogLines, shotToDevice, swipeSteps, type ToolDeps } from "../../host/src/webmcp.ts";
+import type { ClientMsg, DeviceCaps, PhoneInfo, Rotation } from "../protocol.ts";
+import type { LogFilter, LogLine } from "../logcat.ts";
 
 const DEVICE = { width: 1080, height: 2400 };
 
-function harness(o: { connected?: boolean; rotation?: Rotation; shot?: { width: number; height: number }; allow?: boolean } = {}) {
-  const h = { sent: [] as ClientMsg[], controls: [] as ClientMsg[], asked: [] as string[], rotation: o.rotation ?? 0 as Rotation };
+const ALL_CAPS: DeviceCaps = { rotate: true, reboot: true, stop: true, clipboard: true, input: true, scroll: false };
+const PHONE_CAPS: DeviceCaps = { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: true };
+const LINE: LogLine = { n: 1, time: "11-16 18:00:52.531", pid: 100, tid: 101, level: "E", tag: "App", msg: "boom" };
+
+function harness(o: {
+  connected?: boolean; rotation?: Rotation; shot?: { width: number; height: number }; allow?: boolean;
+  phones?: PhoneInfo[] | null; current?: { kind: "emulator" | "phone"; deviceId: string } | null; caps?: DeviceCaps | null;
+  logcatSupported?: boolean; readLogcat?: (f: LogFilter, limit: number) => Promise<{ lines: LogLine[]; error?: string }>;
+} = {}) {
+  const h = { sent: [] as ClientMsg[], controls: [] as ClientMsg[], asked: [] as string[], rotation: o.rotation ?? 0 as Rotation, reads: [] as unknown[] };
   const shot = o.shot ?? { width: 540, height: 1200 };
   const deps: ToolDeps = {
     connected: () => o.connected ?? true,
@@ -20,6 +29,11 @@ function harness(o: { connected?: boolean; rotation?: Rotation; shot?: { width: 
     navigate: async () => ({ ok: true }),
     installApk: async () => ({ state: "done" }),
     confirm: (t) => (h.asked.push(t), o.allow ?? true),
+    phones: () => (o.phones === undefined ? [] : o.phones),
+    current: () => (o.current === undefined ? { kind: "emulator", deviceId: "emulator-5554" } : o.current),
+    caps: () => (o.caps === undefined ? ALL_CAPS : o.caps),
+    logcatSupported: () => o.logcatSupported ?? true,
+    readLogcat: (f, limit) => (h.reads.push([f, limit]), o.readLogcat ? o.readLogcat(f, limit) : Promise.resolve({ lines: [LINE] })),
   };
   const tools = new Map(createTools(deps).map((t) => [t.name, t]));
   const run = (name: string, input: Record<string, unknown> = {}, signal = new AbortController().signal) =>
@@ -30,7 +44,7 @@ function harness(o: { connected?: boolean; rotation?: Rotation; shot?: { width: 
 test("工具名符合 WebMCP 规范：只有字母数字和 _-.，不超过 128，且不重复", () => {
   const { tools } = harness();
   for (const name of tools.keys()) assert.match(name, /^[A-Za-z0-9_.-]{1,128}$/);
-  assert.equal(tools.size, 13);
+  assert.equal(tools.size, 14);
 });
 
 test("shotToDevice：截图像素按方向换算到设备面板，超出截图返回 null", () => {
@@ -154,4 +168,94 @@ test("启动设备：没运行的启动，已接管的切换，无法接管的�
   const r = await run("droidpier_start_device", { name: "Busy" });
   assert.equal(r.ok, false);
   assert.deepEqual(h.controls, [{ t: "start", name: "Pixel" }, { t: "use", name: "On" }]);
+});
+
+const PHONES: PhoneInfo[] = [
+  { id: "R5CR10WN52H", state: "device", manufacturer: "samsung", model: "SM-G9910", android: "12" },
+  { id: "AUTH1", state: "unauthorized" },
+  { id: "OFF1", state: "offline" },
+];
+
+test("设备列表：devices 是 AVD，phones 是真机，当前真机 current 为 true；没开 --phones 时 phones 为空", async () => {
+  const r = await harness({ phones: PHONES, current: { kind: "phone", deviceId: "R5CR10WN52H" } }).run("droidpier_list_devices");
+  assert.equal((r.devices as unknown[]).length, 3);
+  assert.deepEqual((r.phones as Array<{ id: string; current: boolean }>).map((p) => [p.id, p.current]), [["R5CR10WN52H", true], ["AUTH1", false], ["OFF1", false]]);
+  assert.deepEqual((await harness({ phones: null }).run("droidpier_list_devices")).phones, []);
+});
+
+test("启动设备：可用的真机切过去；未授权、离线的不发消息并说下一步；没开 --phones 时找不到", async () => {
+  const { h, run } = harness({ phones: PHONES });
+  assert.equal((await run("droidpier_start_device", { name: "R5CR10WN52H" })).ok, true);
+  assert.match(String((await run("droidpier_start_device", { name: "AUTH1" })).error), /允许 USB 调试/);
+  assert.match(String((await run("droidpier_start_device", { name: "OFF1" })).error), /重新插拔/);
+  assert.deepEqual(h.controls, [{ t: "use", name: "R5CR10WN52H" }]);
+  assert.match(String((await harness({ phones: null }).run("droidpier_start_device", { name: "R5CR10WN52H" })).error), /没有叫/);
+});
+
+test("真机不支持旋转、关机、重启：直接返回不支持，不问用户、不发消息", async () => {
+  const { h, run } = harness({ caps: PHONE_CAPS, current: { kind: "phone", deviceId: "R5CR10WN52H" } });
+  for (const name of ["droidpier_rotate", "droidpier_stop_device", "droidpier_reboot"]) {
+    const r = await run(name);
+    assert.equal(r.ok, false);
+    assert.match(String(r.error), /不支持/);
+  }
+  assert.equal(h.asked.length, 0);
+  assert.equal(h.sent.length + h.controls.length, 0);
+});
+
+test("旧网关没有能力表时按模拟器处理：旋转照常发", async () => {
+  const { h, run } = harness({ caps: null });
+  assert.equal((await run("droidpier_rotate")).ok, true);
+  assert.deepEqual(h.sent, [{ t: "rotate" }]);
+});
+
+test("读日志：旧网关不发请求，直接说网关版本较旧", async () => {
+  const { h, run } = harness({ logcatSupported: false });
+  const r = await run("droidpier_read_logcat");
+  assert.equal(r.ok, false);
+  assert.match(String(r.error), /网关版本较旧/);
+  assert.equal(h.reads.length, 0);
+});
+
+test("读日志：默认全部 App、全部级别、200 行；行是「时间 pid 级别 tag: 内容」", async () => {
+  const { h, run } = harness();
+  const r = await run("droidpier_read_logcat");
+  assert.deepEqual(h.reads, [[{ pkg: null, level: "V", text: "" }, 200]]);
+  assert.deepEqual(r, { ok: true, lines: ["11-16 18:00:52.531 100 E App: boom"], truncated: false });
+  await run("droidpier_read_logcat", { package: "com.a", level: "W", text: "net", limit: 5 });
+  assert.deepEqual(h.reads[1], [{ pkg: "com.a", level: "W", text: "net" }, 5]);
+});
+
+test("读日志：参数不对返回原因；网关回 error 时 ok 为 false", async () => {
+  const { run } = harness();
+  assert.equal((await run("droidpier_read_logcat", { limit: 2000 })).ok, false);
+  assert.equal((await run("droidpier_read_logcat", { level: "X" })).ok, false);
+  const r = await harness({ readLogcat: async () => ({ lines: [], error: "adb 没有响应" }) }).run("droidpier_read_logcat");
+  assert.deepEqual(r, { ok: false, error: "adb 没有响应" });
+});
+
+test("formatLogLines：单行截到 2000 字符；总量超过 10 万字符时丢最旧的并标 truncated", () => {
+  const long = formatLogLines([{ ...LINE, msg: "x".repeat(3000) }]);
+  assert.equal(long.lines[0].length, 2000);
+  assert.ok(long.lines[0].endsWith("…"));
+  const many = formatLogLines(Array.from({ length: 60 }, (_, i) => ({ ...LINE, n: i, msg: String(i).padEnd(3000, "y") })));
+  assert.equal(many.truncated, true);
+  assert.equal(many.lines.length, 50);
+  assert.ok(many.lines[49].includes("App: 59y"));
+  assert.ok(many.lines[0].includes("App: 10y"));
+});
+
+test("读日志：包名不像包名时当场报错，不发请求（网关会丢掉这种消息，页面要干等超时）", async () => {
+  const { h, run } = harness();
+  const r = await run("droidpier_read_logcat", { package: "my app" });
+  assert.equal(r.ok, false);
+  assert.match(String(r.error), /包名/);
+  assert.equal(h.reads.length, 0);
+});
+
+test("读日志：没有符合条件的行时附一句为什么，免得当成没有错误", async () => {
+  const r = await harness({ readLogcat: async () => ({ lines: [] }) }).run("droidpier_read_logcat", { package: "com.a", level: "E" });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.lines, []);
+  assert.match(String(r.note), /最近约 5000 行/);
 });

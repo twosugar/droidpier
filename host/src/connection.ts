@@ -247,7 +247,7 @@ export function createConnection(opts: {
         opts.onUpload?.(m);
       } else if (m.t === "reboot") {
         opts.onReboot?.(m.result, m.error);
-      } else if (m.t === "webviews" || m.t === "inspect" || m.t === "navigate" || m.t === "renameAvd" || m.t === "deleteAvd" || m.t === "logcatApps") {
+      } else if (m.t === "webviews" || m.t === "inspect" || m.t === "navigate" || m.t === "renameAvd" || m.t === "deleteAvd" || m.t === "logcatApps" || m.t === "logcatRead") {
         pending.settle(m.rid, m);
       } else if (m.t === "error") {
         if ("code" in m) {

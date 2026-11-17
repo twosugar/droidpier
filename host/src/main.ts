@@ -24,6 +24,8 @@ const AVD_EDIT_LEVEL = 1;
 const AVD_STOP_LEVEL = 2;
 // 从这个级别起网关有日志面板（logcatOpen 等）；更旧的网关不显示「日志」按钮
 const LOGCAT_LEVEL = 3;
+// 从这个级别起网关能给 WebMCP 读日志（logcatRead）；更旧的网关上 droidpier_read_logcat 直接说网关要更新
+const LOGCAT_READ_LEVEL = 4;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -696,6 +698,11 @@ export async function createHost(player: Player) {
       }
     },
     confirm: (text) => window.confirm(text),
+    phones: () => phones.current(),
+    current: () => (state === "connected" ? { kind, deviceId } : null),
+    caps: () => caps,
+    logcatSupported: () => (gateway?.level ?? 0) >= LOGCAT_READ_LEVEL,
+    readLogcat: (filter, limit) => conn.request({ t: "logcatRead", filter, limit }).then((r) => ({ lines: r.lines, error: r.error })),
   });
 
   const sent = (m: ClientMsg) => ({ ok: conn.send(m) });
