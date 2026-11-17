@@ -1,7 +1,7 @@
 ---
 title: المتطلبات
 description: ما تحتاج إليه قبل تثبيت Droidpier - جهاز Mac بمعالج Apple Silicon، وChrome أو Edge، ومحاكي Android مع صورة نظام arm64.
-sourceHash: 39e85ecc70b3
+sourceHash: 7da34a19a32e
 ---
 
 يشغّل Droidpier محاكي Android الرسمي على جهاز Mac الخاص بك ويعرضه في علامة تبويب في المتصفح. لا شيء يعمل على خادم بعيد. تثبّت برنامجًا محليًا صغيرًا (البوابة)، وتحتاج إلى محاكي Android وصورة نظام على جهاز Mac نفسه.
@@ -23,7 +23,7 @@ sourceHash: 39e85ecc70b3
 | المكوّن | الاستخدام | حجم التنزيل التقريبي |
 |---|---|---|
 | `emulator` | يشغّل جهاز Android الافتراضي | نحو 400 MB |
-| `platform-tools` | `adb`، للتحقق من حالة الإقلاع وإيقاف الأجهزة | نحو 16 MB |
+| `platform-tools` | `adb`، للتحقق من حالة الإقلاع وإيقاف الأجهزة والتواصل مع الهواتف | نحو 16 MB |
 | صورة نظام، مثل `system-images;android-34;google_apis;arm64-v8a` | نظام Android الذي يشغّله الجهاز. يصلح أي إصدار من Android؛ وإذا لم تكن هناك صورة مثبّتة، تعرض الصفحة Android 14 (API 34) | نحو 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -34,6 +34,10 @@ sourceHash: 39e85ecc70b3
 
 <!-- verify: phase 3 -->
 إذا كان شيء ما مفقودًا، تخبرك البوابة بما هو، وتسألك قبل أن تنزّل أي شيء. راجع [التشغيل الأول](/ar/docs/getting-started/first-run/).
+
+## الهواتف
+
+لاستخدام هاتف Android عبر USB بدلًا من المحاكي، تحتاج فقط إلى `platform-tools` من الجدول أعلاه، وهاتف بنظام Android 5.0 أو أحدث، وتفعيل تصحيح أخطاء USB. راجع [الهواتف](/ar/docs/guides/phones/).
 
 ## الذاكرة
 

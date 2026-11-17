@@ -1,10 +1,10 @@
 ---
 title: Geräte
 description: Listen Sie Ihre virtuellen Android-Geräte auf, starten und stoppen Sie sie über die Seite und übernehmen Sie einen Emulator, der bereits läuft.
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-Ein Gerät ist hier ein Android Virtual Device (AVD) auf Ihrem Mac. Die Seite zeigt jeweils ein Gerät.
+Ein Gerät ist hier ein Android Virtual Device (AVD) auf Ihrem Mac. Die Seite zeigt jeweils ein Gerät. Für ein per USB angeschlossenes Android-Smartphone siehe [Smartphones](/de/docs/guides/phones/).
 
 ## Die Geräteliste
 

@@ -1,7 +1,7 @@
 ---
 title: Dépannage
 description: Résoudre les problèmes courants - Chrome a bloqué l’accès au réseau local, port déjà utilisé, aucun émulateur trouvé, la page ne se connecte pas, versions incompatibles.
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome a bloqué l’accès au réseau local {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ La passerelle continue de tourner quand aucun émulateur n’est trouvé et en i
 
 <!-- verify: phase 3 -->
 Si la passerelle signale que `emulator`, `platform-tools`, une image système ou un appareil manque, terminez la configuration sur la page. Voir [Premier lancement](/fr/docs/getting-started/first-run/#2-let-it-check-your-android-sdk).
+
+## Un téléphone n’est pas listé ou ne se connecte pas
+
+- **Absent de la liste** : vérifiez que le débogage USB est activé et essayez un autre câble ou un autre port. Certains câbles ne servent qu’à recharger. `adb devices` devrait lister le téléphone.
+- **Non autorisé** : déverrouillez le téléphone et autorisez le débogage USB pour ce Mac. Si aucune demande n’apparaît, révoquez les autorisations de débogage USB dans les options pour les développeurs du téléphone, puis rebranchez-le.
+- **Hors ligne** : débranchez le téléphone puis rebranchez-le.
+- **Pas revenu deux minutes après un redémarrage** : une fois le téléphone démarré, débranchez-le puis rebranchez-le.
+
+Voir [Téléphones](/fr/docs/guides/phones/).
 
 ## L’image système d’un appareil est manquante
 

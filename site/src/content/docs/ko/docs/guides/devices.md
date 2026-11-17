@@ -1,10 +1,10 @@
 ---
 title: 기기
 description: Android 가상 기기 목록을 보고, 페이지에서 기기를 시작하고 중지하며, 이미 실행 중인 에뮬레이터를 넘겨받습니다.
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-여기서 기기는 Mac에 있는 Android 가상 기기(AVD)를 말합니다. 페이지는 한 번에 한 기기를 보여 줍니다.
+여기서 기기는 Mac에 있는 Android 가상 기기(AVD)를 말합니다. 페이지는 한 번에 한 기기를 보여 줍니다. USB로 연결한 Android 실기기는 [휴대폰](/ko/docs/guides/phones/)을 참고하세요.
 
 ## 기기 목록
 

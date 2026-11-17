@@ -1,7 +1,7 @@
 ---
 title: 故障排除
 description: 解决常见问题——Chrome 阻止本地网络访问、端口被占用、未找到模拟器、页面无法连接、版本不匹配。
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome 阻止了本地网络访问 {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 <!-- verify: phase 3 -->
 如果网关报告缺少 `emulator`、`platform-tools`、系统镜像或设备，请到页面上完成安装。请参阅[首次运行](/zh-cn/docs/getting-started/first-run/#2-let-it-check-your-android-sdk)。
+
+## 手机没有出现在列表中或无法连接
+
+- **不在列表中**：检查 USB 调试是否已打开，并换一根线或换一个接口试试。有些线只能充电。`adb devices` 应该能列出这部手机。
+- **未授权**：解锁手机，并允许这台 Mac 使用 USB 调试。如果没有弹出提示，请在手机的开发者选项中撤销 USB 调试授权，然后重新插上手机。
+- **离线**：拔掉手机再重新插上。
+- **重启两分钟后仍未恢复**：等手机启动完成后，拔掉再重新插上。
+
+请参阅[手机](/zh-cn/docs/guides/phones/)。
 
 ## 设备的系统镜像缺失
 

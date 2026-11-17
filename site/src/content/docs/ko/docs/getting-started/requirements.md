@@ -1,7 +1,7 @@
 ---
 title: 요구 사항
 description: Droidpier를 설치하기 전에 필요한 것 - Apple Silicon Mac, Chrome 또는 Edge, arm64 시스템 이미지가 있는 Android 에뮬레이터.
-sourceHash: 39e85ecc70b3
+sourceHash: 7da34a19a32e
 ---
 
 Droidpier는 공식 Android 에뮬레이터를 내 Mac에서 실행하고 브라우저 탭에 보여 줍니다. 원격 서버에서는 아무것도 실행되지 않습니다. 작은 로컬 프로그램(게이트웨이)을 설치하고, 같은 Mac에 Android 에뮬레이터와 시스템 이미지가 있어야 합니다.
@@ -23,7 +23,7 @@ Droidpier는 공식 Android 에뮬레이터를 내 Mac에서 실행하고 브라
 | 구성 요소 | 용도 | 대략적인 다운로드 크기 |
 |---|---|---|
 | `emulator` | Android 가상 기기 실행 | 약 400 MB |
-| `platform-tools` | `adb`. 부팅 상태 확인과 기기 중지에 사용 | 약 16 MB |
+| `platform-tools` | `adb`. 부팅 상태 확인, 기기 중지, 휴대폰과의 통신에 사용 | 약 16 MB |
 | 시스템 이미지(예: `system-images;android-34;google_apis;arm64-v8a`) | 기기에서 실행되는 Android 시스템. Android 버전은 상관없으며, 하나도 없으면 페이지가 Android 14(API 34)를 제안합니다 | 약 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -34,6 +34,10 @@ Java, 명령줄 도구(`sdkmanager`, `avdmanager`), Android Studio는 필요 없
 
 <!-- verify: phase 3 -->
 빠진 것이 있으면 게이트웨이가 무엇이 빠졌는지 알려 주고, 무엇이든 다운로드하기 전에 먼저 묻습니다. [첫 실행](/ko/docs/getting-started/first-run/)을 참고하세요.
+
+## 휴대폰
+
+에뮬레이터 대신 USB로 연결한 Android 휴대폰을 쓰려면 위 표에서 `platform-tools`만 있으면 됩니다. 그 밖에 Android 5.0 이상의 휴대폰과, 켜 둔 USB 디버깅이 필요합니다. [휴대폰](/ko/docs/guides/phones/)을 참고하세요.
 
 ## 메모리
 

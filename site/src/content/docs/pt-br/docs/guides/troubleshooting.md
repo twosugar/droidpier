@@ -1,7 +1,7 @@
 ---
 title: Solução de problemas
 description: Corrija problemas comuns - o Chrome bloqueou o acesso à rede local, porta já em uso, nenhum emulador encontrado, a página não se conecta, versões incompatíveis.
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## O Chrome bloqueou o acesso à rede local {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ O gateway continua rodando quando não encontra emulador e mostra o motivo: no T
 
 <!-- verify: phase 3 -->
 Se o gateway informar que `emulator`, `platform-tools`, uma imagem de sistema ou um dispositivo está faltando, conclua a configuração na página. Veja [Primeira execução](/pt-br/docs/getting-started/first-run/#2-let-it-check-your-android-sdk).
+
+## Um celular não aparece na lista ou não se conecta
+
+- **Não está na lista**: confira se a depuração USB está ativada e tente outro cabo ou outra porta. Alguns cabos servem só para carregar. `adb devices` deve listar o celular.
+- **Não autorizado**: desbloqueie o celular e permita a depuração USB para este Mac. Se nenhum aviso aparecer, revogue as autorizações de depuração USB nas opções do desenvolvedor do celular e conecte-o de novo.
+- **Offline**: desconecte o celular e conecte-o de novo.
+- **Não voltou dois minutos após reiniciar**: depois que o celular terminar de inicializar, desconecte-o e conecte-o de novo.
+
+Veja [Celulares](/pt-br/docs/guides/phones/).
 
 ## A imagem de sistema de um dispositivo está faltando
 

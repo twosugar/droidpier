@@ -1,7 +1,7 @@
 ---
 title: Fehlerbehebung
 description: Häufige Probleme beheben - Chrome hat den Zugriff auf das lokale Netzwerk blockiert, Port bereits belegt, kein Emulator gefunden, die Seite verbindet sich nicht, Versionskonflikt.
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome hat den Zugriff auf das lokale Netzwerk blockiert {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ Das Gateway läuft weiter, wenn kein Emulator gefunden wird, und gibt den Grund 
 
 <!-- verify: phase 3 -->
 Wenn das Gateway meldet, dass `emulator`, `platform-tools`, ein Systemabbild oder ein Gerät fehlt, schließen Sie die Einrichtung auf der Seite ab. Siehe [Erster Start](/de/docs/getting-started/first-run/#2-let-it-check-your-android-sdk).
+
+## Ein Smartphone wird nicht aufgelistet oder verbindet sich nicht
+
+- **Nicht in der Liste**: Prüfen Sie, ob USB-Debugging eingeschaltet ist, und probieren Sie ein anderes Kabel oder einen anderen Anschluss. Manche Kabel laden nur. `adb devices` sollte das Smartphone auflisten.
+- **Nicht autorisiert**: Entsperren Sie das Smartphone und erlauben Sie USB-Debugging für diesen Mac. Erscheint keine Abfrage, widerrufen Sie in den Entwickleroptionen des Smartphones die USB-Debugging-Autorisierungen und stecken Sie es dann erneut ein.
+- **Offline**: Ziehen Sie das Kabel ab und stecken Sie es wieder ein.
+- **Nach einem Neustart nach zwei Minuten nicht zurück**: Sobald das Smartphone hochgefahren ist, ziehen Sie das Kabel ab und stecken Sie es wieder ein.
+
+Siehe [Smartphones](/de/docs/guides/phones/).
 
 ## Das Systemabbild eines Geräts fehlt
 

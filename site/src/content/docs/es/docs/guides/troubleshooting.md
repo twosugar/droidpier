@@ -1,7 +1,7 @@
 ---
 title: Solución de problemas
 description: Resuelve problemas comunes - Chrome bloqueó el acceso a la red local, puerto en uso, no se encontró ningún emulador, la página no se conecta, versiones que no coinciden.
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome bloqueó el acceso a la red local {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ El gateway sigue ejecutándose cuando no encuentra ningún emulador e indica el 
 
 <!-- verify: phase 3 -->
 Si el gateway informa que falta `emulator`, `platform-tools`, una imagen del sistema o un dispositivo, termina la configuración en la página. Consulta [Primera ejecución](/es/docs/getting-started/first-run/#2-let-it-check-your-android-sdk).
+
+## Un teléfono no aparece en la lista o no se conecta
+
+- **No está en la lista**: comprueba que la depuración por USB esté activada y prueba con otro cable o puerto. Algunos cables solo cargan. `adb devices` debería mostrar el teléfono.
+- **No autorizado**: desbloquea el teléfono y permite la depuración por USB para esta Mac. Si no aparece ningún aviso, revoca las autorizaciones de depuración por USB en las opciones de desarrollador del teléfono y vuelve a conectarlo.
+- **Sin conexión**: desconecta el teléfono y vuelve a conectarlo.
+- **No ha vuelto dos minutos después de un reinicio**: cuando el teléfono haya arrancado, desconéctalo y vuelve a conectarlo.
+
+Consulta [Teléfonos](/es/docs/guides/phones/).
 
 ## Falta la imagen del sistema de un dispositivo
 

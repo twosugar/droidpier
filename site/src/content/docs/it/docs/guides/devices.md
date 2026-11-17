@@ -1,10 +1,10 @@
 ---
 title: Dispositivi
 description: Elenca i tuoi dispositivi virtuali Android, avviali e arrestali dalla pagina, e prendi il controllo di un emulatore già in esecuzione.
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-Qui un dispositivo è un Android Virtual Device (AVD) sul tuo Mac. La pagina mostra un dispositivo alla volta.
+Qui un dispositivo è un Android Virtual Device (AVD) sul tuo Mac. La pagina mostra un dispositivo alla volta. Per un telefono Android collegato via USB, vedi [Telefoni](/it/docs/guides/phones/).
 
 ## L’elenco dei dispositivi
 

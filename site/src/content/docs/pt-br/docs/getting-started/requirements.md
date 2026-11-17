@@ -1,7 +1,7 @@
 ---
 title: Requisitos
 description: O que você precisa antes de instalar o Droidpier - um Mac com Apple Silicon, Chrome ou Edge, e o emulador Android com uma imagem de sistema arm64.
-sourceHash: 39e85ecc70b3
+sourceHash: 7da34a19a32e
 ---
 
 O Droidpier executa o emulador oficial do Android no seu próprio Mac e o exibe em uma aba do navegador. Nada roda em um servidor remoto. Você instala um pequeno programa local (o gateway) e precisa do emulador Android e de uma imagem de sistema no mesmo Mac.
@@ -23,7 +23,7 @@ O gateway usa estas partes do Android SDK:
 | Componente | Usado para | Tamanho aproximado do download |
 |---|---|---|
 | `emulator` | Executa o dispositivo virtual Android | cerca de 400 MB |
-| `platform-tools` | `adb`, para verificar o estado de inicialização e parar dispositivos | cerca de 16 MB |
+| `platform-tools` | `adb`, para verificar o estado de inicialização, parar dispositivos e se comunicar com celulares | cerca de 16 MB |
 | Uma imagem de sistema, como `system-images;android-34;google_apis;arm64-v8a` | O sistema Android que o dispositivo executa. Qualquer versão do Android serve; se nenhuma estiver instalada, a página oferece o Android 14 (API 34) | cerca de 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -34,6 +34,10 @@ Você não precisa de Java, das ferramentas de linha de comando (`sdkmanager`, `
 
 <!-- verify: phase 3 -->
 Se algo estiver faltando, o gateway informa o que falta e pergunta antes de baixar qualquer coisa. Veja [Primeira execução](/pt-br/docs/getting-started/first-run/).
+
+## Celulares
+
+Para usar um celular Android por USB em vez de um emulador, você só precisa do `platform-tools` da tabela acima, de um celular com Android 5.0 ou posterior e da depuração USB ativada. Veja [Celulares](/pt-br/docs/guides/phones/).
 
 ## Memória
 

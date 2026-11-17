@@ -1,10 +1,10 @@
 ---
 title: 裝置
 description: 列出 Android 虛擬裝置，從頁面啟動和停止它們，並接管已在執行的模擬器。
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-這裡的裝置是指 Mac 上的 Android 虛擬裝置（AVD）。頁面每次顯示一個裝置。
+這裡的裝置是指 Mac 上的 Android 虛擬裝置（AVD）。頁面每次顯示一個裝置。透過 USB 連接的 Android 手機，請參閱[手機](/zh-tw/docs/guides/phones/)。
 
 ## 裝置清單
 

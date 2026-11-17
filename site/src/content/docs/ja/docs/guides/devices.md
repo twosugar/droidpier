@@ -1,10 +1,10 @@
 ---
 title: デバイス
 description: Android 仮想デバイスを一覧表示し、ページから起動・停止したり、すでに起動中のエミュレーターを引き継いだりする。
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-ここでいうデバイスとは、Mac 上の Android 仮想デバイス（AVD）のことです。ページは一度に 1 つのデバイスを表示します。
+ここでいうデバイスとは、Mac 上の Android 仮想デバイス（AVD）のことです。ページは一度に 1 つのデバイスを表示します。USB で接続した Android 実機については[実機](/ja/docs/guides/phones/)を参照してください。
 
 ## デバイスリスト
 

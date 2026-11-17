@@ -1,7 +1,7 @@
 ---
 title: Voraussetzungen
 description: Was Sie vor der Installation von Droidpier brauchen - einen Mac mit Apple Silicon, Chrome oder Edge und den Android-Emulator mit einem arm64-Systemabbild.
-sourceHash: 39e85ecc70b3
+sourceHash: 7da34a19a32e
 ---
 
 Droidpier führt den offiziellen Android-Emulator auf Ihrem eigenen Mac aus und zeigt ihn in einem Browser-Tab. Nichts läuft auf einem entfernten Server. Sie installieren ein kleines lokales Programm (das Gateway) und brauchen den Android-Emulator und ein Systemabbild auf demselben Mac.
@@ -23,7 +23,7 @@ Das Gateway verwendet diese Teile des Android SDK:
 | Komponente | Verwendet für | Ungefähre Downloadgröße |
 |---|---|---|
 | `emulator` | Führt das virtuelle Android-Gerät aus | etwa 400 MB |
-| `platform-tools` | `adb`, um den Boot-Status zu prüfen und Geräte zu stoppen | etwa 16 MB |
+| `platform-tools` | `adb`, um den Boot-Status zu prüfen, Geräte zu stoppen und mit Smartphones zu kommunizieren | etwa 16 MB |
 | Ein Systemabbild, etwa `system-images;android-34;google_apis;arm64-v8a` | Das Android-System, das auf dem Gerät läuft. Jede Android-Version geht; ist keins installiert, bietet die Seite Android 14 (API 34) an | etwa 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -34,6 +34,10 @@ Sie brauchen weder Java noch die Befehlszeilentools (`sdkmanager`, `avdmanager`)
 
 <!-- verify: phase 3 -->
 Wenn etwas fehlt, sagt Ihnen das Gateway, was fehlt, und fragt nach, bevor es etwas herunterlädt. Siehe [Erster Start](/de/docs/getting-started/first-run/).
+
+## Smartphones
+
+Um ein Android-Smartphone per USB statt eines Emulators zu nutzen, brauchen Sie nur `platform-tools` aus der Tabelle oben, ein Smartphone mit Android 5.0 oder neuer und eingeschaltetes USB-Debugging. Siehe [Smartphones](/de/docs/guides/phones/).
 
 ## Arbeitsspeicher
 

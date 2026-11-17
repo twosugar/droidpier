@@ -1,10 +1,10 @@
 ---
 title: Appareils
 description: Listez vos appareils virtuels Android, démarrez-les et arrêtez-les depuis la page, et prenez la main sur un émulateur déjà en cours d’exécution.
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-Ici, un appareil est un Android Virtual Device (AVD) sur votre Mac. La page affiche un appareil à la fois.
+Ici, un appareil est un Android Virtual Device (AVD) sur votre Mac. La page affiche un appareil à la fois. Pour un téléphone Android branché en USB, voir [Téléphones](/fr/docs/guides/phones/).
 
 ## La liste des appareils
 

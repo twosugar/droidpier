@@ -1,7 +1,7 @@
 ---
 title: 疑難排解
 description: 解決常見問題——Chrome 封鎖本機網路存取、連接埠被佔用、未找到模擬器、頁面無法連線、版本不符。
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome 封鎖了本機網路存取 {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 <!-- verify: phase 3 -->
 如果閘道回報缺少 `emulator`、`platform-tools`、系統映像或裝置，請到頁面上完成安裝。請參閱[首次執行](/zh-tw/docs/getting-started/first-run/#2-let-it-check-your-android-sdk)。
+
+## 手機沒有列出或無法連線
+
+- **不在清單中**：確認 USB 偵錯已開啟，並換一條線或換一個連接埠試試。有些線只能充電。`adb devices` 應該會列出這支手機。
+- **未授權**：解鎖手機，並允許這台 Mac 進行 USB 偵錯。如果沒有出現提示，請在手機的開發人員選項中撤銷 USB 偵錯授權，然後重新接上手機。
+- **離線**：拔掉手機，再重新接上。
+- **重新啟動兩分鐘後仍未恢復**：手機開機完成後，拔掉再重新接上。
+
+請參閱[手機](/zh-tw/docs/guides/phones/)。
 
 ## 裝置的系統映像缺失
 

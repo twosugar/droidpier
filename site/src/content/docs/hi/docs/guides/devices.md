@@ -1,10 +1,10 @@
 ---
 title: डिवाइस
 description: अपने Android वर्चुअल डिवाइस की सूची देखें, उन्हें पेज से शुरू और बंद करें, और पहले से चल रहे एमुलेटर को अपने नियंत्रण में लें।
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-यहाँ डिवाइस का मतलब आपके Mac पर एक Android Virtual Device (AVD) है। पेज एक समय में एक डिवाइस दिखाता है।
+यहाँ डिवाइस का मतलब आपके Mac पर एक Android Virtual Device (AVD) है। पेज एक समय में एक डिवाइस दिखाता है। USB से लगे Android फ़ोन के लिए [फ़ोन](/hi/docs/guides/phones/) देखें।
 
 ## डिवाइस की सूची
 

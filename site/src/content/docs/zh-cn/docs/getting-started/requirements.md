@@ -1,7 +1,7 @@
 ---
 title: 前置要求
 description: 安装 Droidpier 所需的条件——Apple Silicon Mac、Chrome 或 Edge，以及带有 arm64 系统镜像的 Android 模拟器。
-sourceHash: 39e85ecc70b3
+sourceHash: 7da34a19a32e
 ---
 
 Droidpier 在你自己的 Mac 上运行官方 Android 模拟器，并在浏览器标签页中显示。没有任何内容运行在远程服务器上。你需要安装一个小型本地程序（网关），以及在同一台 Mac 上安装 Android 模拟器和系统镜像。
@@ -23,7 +23,7 @@ Droidpier 在你自己的 Mac 上运行官方 Android 模拟器，并在浏览�
 | 组件 | 用途 | 大致下载大小 |
 |---|---|---|
 | `emulator` | 运行 Android 虚拟设备 | 约 400 MB |
-| `platform-tools` | `adb`，用于检查启动状态和停止设备 | 约 16 MB |
+| `platform-tools` | `adb`，用于检查启动状态、停止设备和与手机通信 | 约 16 MB |
 | 系统镜像，例如 `system-images;android-34;google_apis;arm64-v8a` | 设备运行的 Android 系统。任何 Android 版本都可以；一个都没装时，页面会提供 Android 14（API 34） | 约 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -34,6 +34,10 @@ Droidpier 在你自己的 Mac 上运行官方 Android 模拟器，并在浏览�
 
 <!-- verify: phase 3 -->
 如有缺失，网关会告知你缺少什么，并在下载任何内容前征得你的同意。请参阅[首次运行](/zh-cn/docs/getting-started/first-run/)。
+
+## 手机
+
+要用 USB 连接的 Android 手机代替模拟器，只需要上表中的 `platform-tools`、一部 Android 5.0 或更高版本的手机，并打开 USB 调试。请参阅[手机](/zh-cn/docs/guides/phones/)。
 
 ## 内存
 

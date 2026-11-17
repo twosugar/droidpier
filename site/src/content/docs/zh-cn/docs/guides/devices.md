@@ -1,10 +1,10 @@
 ---
 title: 设备
 description: 列出 Android 虚拟设备，从页面启动和停止它们，并接管已在运行的模拟器。
-sourceHash: 160631b5e5d9
+sourceHash: cb128d66ea7c
 ---
 
-这里的设备是指 Mac 上的 Android 虚拟设备（AVD）。页面每次显示一个设备。
+这里的设备是指 Mac 上的 Android 虚拟设备（AVD）。页面每次显示一个设备。通过 USB 连接的 Android 手机，请参阅[手机](/zh-cn/docs/guides/phones/)。
 
 ## 设备列表
 

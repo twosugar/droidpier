@@ -1,7 +1,7 @@
 ---
 title: 문제 해결
 description: 자주 발생하는 문제 해결 - Chrome의 로컬 네트워크 접근 차단, 이미 사용 중인 포트, 에뮬레이터를 찾을 수 없음, 페이지가 연결되지 않음, 버전 불일치.
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome이 로컬 네트워크 접근을 차단함 {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ curl -fsSL https://droid.devpier.dev/install.sh | sh -s -- --port 7301
 
 <!-- verify: phase 3 -->
 게이트웨이가 `emulator`, `platform-tools`, 시스템 이미지 또는 기기가 없다고 보고하면 페이지에서 설정을 마치세요. [첫 실행](/ko/docs/getting-started/first-run/#2-let-it-check-your-android-sdk)을 참고하세요.
+
+## 휴대폰이 목록에 없거나 연결되지 않음
+
+- **목록에 없음**: USB 디버깅이 켜져 있는지 확인하고, 다른 케이블이나 포트를 써 보세요. 충전만 되는 케이블도 있습니다. `adb devices`에 휴대폰이 나와야 합니다.
+- **승인되지 않음**: 휴대폰의 잠금을 풀고 이 Mac에서의 USB 디버깅을 허용하세요. 허용 창이 뜨지 않으면 휴대폰의 개발자 옵션에서 USB 디버깅 승인을 취소한 다음 다시 연결하세요.
+- **오프라인**: 휴대폰을 뽑았다가 다시 연결하세요.
+- **재시작하고 2분이 지나도 돌아오지 않음**: 휴대폰이 부팅을 마치면 뽑았다가 다시 연결하세요.
+
+[휴대폰](/ko/docs/guides/phones/)을 참고하세요.
 
 ## 기기의 시스템 이미지가 없음
 

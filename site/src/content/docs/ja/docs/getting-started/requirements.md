@@ -1,7 +1,7 @@
 ---
 title: 動作要件
 description: Droidpier のインストールに必要なもの——Apple Silicon Mac、Chrome または Edge、arm64 システムイメージ入りの Android エミュレーター。
-sourceHash: 39e85ecc70b3
+sourceHash: 7da34a19a32e
 ---
 
 Droidpier はあなた自身の Mac 上で公式 Android エミュレーターを動かし、ブラウザのタブに表示します。リモートサーバーでは何も動きません。小さなローカルプログラム（ゲートウェイ）をインストールし、同じ Mac に Android エミュレーターとシステムイメージが必要です。
@@ -23,7 +23,7 @@ Droidpier はあなた自身の Mac 上で公式 Android エミュレーター�
 | コンポーネント | 用途 | おおよそのダウンロードサイズ |
 |---|---|---|
 | `emulator` | Android 仮想デバイスを実行する | 約 400 MB |
-| `platform-tools` | `adb`（起動状態の確認とデバイスの停止に使用） | 約 16 MB |
+| `platform-tools` | `adb`（起動状態の確認、デバイスの停止、実機との通信に使用） | 約 16 MB |
 | システムイメージ（例: `system-images;android-34;google_apis;arm64-v8a`） | デバイスで動く Android システム。Android のバージョンは問いません。1 つも入っていない場合、ページは Android 14（API 34）を提案します | 約 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -34,6 +34,10 @@ Java、コマンドラインツール（`sdkmanager`、`avdmanager`）、Android
 
 <!-- verify: phase 3 -->
 不足しているものがあれば、ゲートウェイが何が足りないかを伝え、ダウンロードの前に確認を求めます。[初回起動](/ja/docs/getting-started/first-run/)を参照してください。
+
+## 実機
+
+エミュレーターの代わりに USB 接続の Android 実機を使うには、上の表のうち `platform-tools` だけがあれば足ります。そのほか、Android 5.0 以降の実機と、有効にした USB デバッグが必要です。[実機](/ja/docs/guides/phones/)を参照してください。
 
 ## メモリ
 

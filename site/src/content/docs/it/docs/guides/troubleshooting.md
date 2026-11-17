@@ -1,7 +1,7 @@
 ---
 title: Risoluzione dei problemi
 description: Risolvi i problemi comuni - Chrome ha bloccato l’accesso alla rete locale, porta già in uso, nessun emulatore trovato, la pagina non si connette, versioni non corrispondenti.
-sourceHash: 9b070d939282
+sourceHash: 32d34c30f885
 ---
 
 ## Chrome ha bloccato l’accesso alla rete locale {#chrome-blocked-local-network-access}
@@ -54,6 +54,15 @@ Il gateway resta in esecuzione quando non trova emulatori e ne indica il motivo:
 
 <!-- verify: phase 3 -->
 Se il gateway segnala che mancano `emulator`, `platform-tools`, un’immagine di sistema o un dispositivo, completa la configurazione nella pagina. Vedi [Primo avvio](/it/docs/getting-started/first-run/#2-let-it-check-your-android-sdk).
+
+## Un telefono non è nell’elenco o non si connette
+
+- **Non nell’elenco**: controlla che il debug USB sia attivato e prova un altro cavo o un’altra porta. Alcuni cavi servono solo per la ricarica. `adb devices` dovrebbe elencare il telefono.
+- **Non autorizzato**: sblocca il telefono e consenti il debug USB per questo Mac. Se non compare nessuna richiesta, revoca le autorizzazioni del debug USB nelle opzioni sviluppatore del telefono, poi ricollegalo.
+- **Offline**: scollega il telefono e ricollegalo.
+- **Non è tornato dopo due minuti da un riavvio**: quando il telefono è avviato, scollegalo e ricollegalo.
+
+Vedi [Telefoni](/it/docs/guides/phones/).
 
 ## Manca l’immagine di sistema di un dispositivo
 
