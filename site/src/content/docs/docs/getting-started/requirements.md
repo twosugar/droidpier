@@ -22,7 +22,7 @@ The gateway uses these parts of the Android SDK:
 | Component | Used for | Approximate download size |
 |---|---|---|
 | `emulator` | Runs the Android virtual device | about 400 MB |
-| `platform-tools` | `adb`, to check boot state and stop devices | about 16 MB |
+| `platform-tools` | `adb`, to check boot state, stop devices and talk to phones | about 16 MB |
 | A system image, such as `system-images;android-34;google_apis;arm64-v8a` | The Android system the device runs. Any Android version works; if none is installed, the page offers Android 14 (API 34) | about 1.5 GB |
 
 <!-- verify: phase 3 -->
@@ -33,6 +33,10 @@ You do not need Java, the command line tools (`sdkmanager`, `avdmanager`) or And
 
 <!-- verify: phase 3 -->
 If something is missing, the gateway tells you what and asks before it downloads anything. See [First run](/docs/getting-started/first-run/).
+
+## Phones
+
+To use an Android phone over USB instead of an emulator, you need only `platform-tools` from the table above, a phone with Android 5.0 or later, and USB debugging turned on. See [Phones](/docs/guides/phones/).
 
 ## Memory
 

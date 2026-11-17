@@ -59,7 +59,7 @@ _Avoid_: serial (that is the emulator's console port), udid
 
 **Phone** (真机):
 A real Android device that adb sees over USB or Wi-Fi, listed under 真机 in the sidebar. Its Device id is its adb
-serial. Shown only when the gateway runs with `--phones` until phone support is complete.
+serial.
 _Avoid_: physical device, real device (in code), handset
 
 **Running state**:

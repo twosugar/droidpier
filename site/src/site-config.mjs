@@ -61,6 +61,7 @@ export const SIDEBAR = [
     },
     items: [
       "docs/guides/devices",
+      "docs/guides/phones",
       "docs/guides/keyboard-and-input",
       "docs/guides/clipboard",
       "docs/guides/screenshots",

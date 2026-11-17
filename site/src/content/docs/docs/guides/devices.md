@@ -3,7 +3,7 @@ title: Devices
 description: List your Android virtual devices, start and stop them from the page, and take over an emulator that is already running.
 ---
 
-A device here is an Android Virtual Device (AVD) on your Mac. The page shows one device at a time.
+A device here is an Android Virtual Device (AVD) on your Mac. The page shows one device at a time. For an Android phone plugged in over USB, see [Phones](/docs/guides/phones/).
 
 ## The device list
 

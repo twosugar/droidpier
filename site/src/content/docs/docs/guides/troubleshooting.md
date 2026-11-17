@@ -54,6 +54,15 @@ The gateway keeps running when no emulator is found, and prints the reason: in T
 <!-- verify: phase 3 -->
 If the gateway reports that `emulator`, `platform-tools`, a system image or a device is missing, finish the setup on the page. See [First run](/docs/getting-started/first-run/#2-let-it-check-your-android-sdk).
 
+## A phone is not listed or does not connect
+
+- **Not in the list**: check that USB debugging is on, and try another cable or port. Some cables only charge. `adb devices` should list the phone.
+- **Unauthorized**: unlock the phone and allow USB debugging for this Mac. If no prompt appears, revoke USB debugging authorizations in the phone's developer options, then plug it in again.
+- **Offline**: unplug the phone and plug it in again.
+- **Not back two minutes after a restart**: once the phone has booted, unplug it and plug it in again.
+
+See [Phones](/docs/guides/phones/).
+
 ## A device's system image is missing
 
 <!-- verify: phase 3 -->
