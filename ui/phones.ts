@@ -1,4 +1,4 @@
-// 侧栏「真机」分组的文案：可用的手机能点开看画面，操作还不支持（PR 4）
+// 侧栏「真机」分组和主区标题的真机文案
 import type { PhoneInfo } from "../shared/protocol";
 
 /** 行标题：「Samsung SM-G9910」；没查到型号时用设备 id。 */
@@ -32,4 +32,15 @@ export function phoneDetail(p: PhoneInfo): string {
 /** 没收到过 phones 消息（旧网关、没带 --phones）就不显示分组；收到过空列表要显示，提示插手机。 */
 export function showPhones(list: PhoneInfo[] | null): boolean {
   return list !== null;
+}
+
+/**
+ * 主区现在连着的真机：已连接和重启中都算（同模拟器的 isCurrent）。手机重启时会从 adb 列表里消失一阵，
+ * 这时用 last（最后一次在列表里见到的这台）。
+ */
+export function currentPhoneOf(list: PhoneInfo[] | null, last: PhoneInfo | undefined, d: { kind: "emulator" | "phone"; deviceId: string; state: string }): PhoneInfo | undefined {
+  if (d.kind !== "phone" || (d.state !== "connected" && d.state !== "rebooting")) return undefined;
+  const found = (list ?? []).find((p) => p.id === d.deviceId);
+  if (found) return found;
+  return d.state === "rebooting" && last?.id === d.deviceId ? last : undefined;
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canPick, phoneDetail, phoneLabel, phoneStatus, showPhones } from "../../ui/phones.ts";
+import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones } from "../../ui/phones.ts";
 
 test("phoneLabel：厂商首字母大写加型号", () => {
   assert.equal(phoneLabel({ id: "R5CR10WN52H", state: "device", manufacturer: "samsung", model: "SM-G9910" }), "Samsung SM-G9910");
@@ -37,4 +37,16 @@ test("phoneDetail：只显示版本号，和模拟器行右侧的「15」一致"
 test("showPhones：没收到过列表时不显示分组；空列表也显示（提示插手机）", () => {
   assert.equal(showPhones(null), false);
   assert.equal(showPhones([]), true);
+});
+
+test("currentPhoneOf：已连接和重启中都算当前真机；重启中手机不在列表里时用最后见到的", () => {
+  const ph = { id: "R5", state: "device" as const, model: "SM-G9910" };
+  const at = (state: string, kind: "emulator" | "phone" = "phone") => ({ kind, deviceId: "R5", state });
+  assert.equal(currentPhoneOf([ph], undefined, at("connected")), ph);
+  assert.equal(currentPhoneOf([ph], undefined, at("rebooting")), ph);
+  assert.equal(currentPhoneOf([], ph, at("rebooting")), ph);
+  assert.equal(currentPhoneOf([], ph, at("connected")), undefined);
+  assert.equal(currentPhoneOf([ph], undefined, at("phone-closed")), undefined);
+  assert.equal(currentPhoneOf([ph], undefined, at("connected", "emulator")), undefined);
+  assert.equal(currentPhoneOf([], { ...ph, id: "OTHER" }, at("rebooting")), undefined);
 });

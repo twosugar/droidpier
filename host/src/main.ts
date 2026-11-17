@@ -345,9 +345,11 @@ export async function createHost(player: Player) {
     onError: (message) => player.hostEvent("emu.notice", { text: message, error: true }),
     onAdbStuck: (message) => player.hostEvent("emu.adbStuck", { message }),
     onReboot: (result, error) => player.hostEvent("emu.notice", result === "done"
-      ? { text: "模拟器已重启" }
+      ? { text: kind === "phone" ? "手机已重启。设了锁屏密码的话，在画面上解锁" : "模拟器已重启" }
       : result === "adb-down"
-        ? { text: "模拟器已重启，但里面的 adb 还没有响应：H5 调试暂时不可用", error: true }
+        ? kind === "phone"
+          ? { text: "手机两分钟内没开机完成：开机后重新插拔手机", error: true }
+          : { text: "模拟器已重启，但里面的 adb 还没有响应：H5 调试暂时不可用", error: true }
         : { text: `重启失败：${error ?? "未知原因"}`, error: true }),
     onVersionError: (code, cmd) => {
       state = code;
@@ -585,7 +587,7 @@ export async function createHost(player: Player) {
 
   // 文件拖到屏幕上：APK 安装，其他文件放进下载文件夹。拖到屏幕外不让浏览器自己打开文件
   const dropBlocked = () =>
-    state === "connected" ? null : state === "rebooting" ? "模拟器正在重启，等它开机后再试" : "没有连接设备";
+    state === "connected" ? null : state === "rebooting" ? `${kind === "phone" ? "手机" : "模拟器"}正在重启，等它开机后再试` : "没有连接设备";
   const takeFiles = (list: File[]) => {
     const why = dropBlocked();
     if (why) return player.hostEvent("emu.notice", { text: why, error: true });

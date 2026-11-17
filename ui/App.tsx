@@ -9,7 +9,7 @@ import { parseTheme, type Theme } from "../shared/theme";
 import { deviceFrame } from "../shared/screen";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
 import { matchesAvd } from "./device-search";
-import { canPick, phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
+import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
 import { activePage, foregroundPkg, h5KeyShown, pickPage } from "./h5-pages";
@@ -1325,8 +1325,13 @@ function App() {
     const d = a?.width && a.height ? { width: a.width, height: a.height } : deviceSize().width ? deviceSize() : { width: 1080, height: 2340 };
     return deviceFrame(deviceArea(), d, rotation() as Rotation, BEZEL, zoom());
   };
-  // 主区现在连着的真机（不是真机时为 undefined）
-  const currentPhone = () => (kind() === "phone" && state() === "connected" ? (phones() ?? []).find((p) => p.id === deviceId()) : undefined);
+  // 主区现在连着的真机（不是真机时为 undefined）；lastPhone 给重启中手机暂时不在列表里时用
+  let lastPhone: PhoneInfo | undefined;
+  const currentPhone = () => {
+    const p = currentPhoneOf(phones(), lastPhone, { kind: kind(), deviceId: deviceId(), state: state() });
+    if (p) lastPhone = p;
+    return p;
+  };
   // 侧栏收起与否：先展开，读到这台浏览器存的值后换过去；读回来之前用户已经点过的，以用户点的为准
   const sidebarHidden = signal(false);
   let sidebarTouched = false;
@@ -1356,7 +1361,7 @@ function App() {
   // 主区现在显示的就是画面上这台：没有选中的设备时（列表里没有它），连着就算
   const shownIsLive = () => { const a = shown(); return a ? isCurrent(a) : state() === "connected"; };
   const switchTo = (a: Avd) => act(host.call("emu.use", { name: a.name }));
-  const isCurrentPhone = (p: PhoneInfo) => kind() === "phone" && p.id === deviceId() && state() === "connected";
+  const isCurrentPhone = (p: PhoneInfo) => kind() === "phone" && p.id === deviceId() && (state() === "connected" || state() === "rebooting");
   const pickPhone = (p: PhoneInfo) => {
     if (!canPick(p)) return;
     if (p.id !== selected()) animateNext();
@@ -1658,7 +1663,7 @@ function App() {
               </Button>
             }>
               <If when={caps()?.reboot !== false}>
-                <Item label={state() === "rebooting" ? "重启中" : "重启模拟器系统"} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
+                <Item label={state() === "rebooting" ? "重启中" : kind() === "phone" ? "重启手机" : "重启模拟器系统"} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
               </If>
               <If when={caps()?.stop !== false}>
                 <Item label="关闭模拟器" disabled={!shownIsLive() || state() !== "connected"} onSelect={() => act(host.call("emu.stop", {}))} />
@@ -1989,9 +1994,9 @@ function App() {
       <Dialog open={rebootAsk()} animation="fade" onOpenChange={({ open }) => { if (!open) rebootAsk.set(false); }}
         backdropStyle={{ backgroundColor: "rgba(0,0,0,0.5)" }}
         style={{ marginHorizontal: "auto", marginTop: "12%", width: 420, maxWidth: "92%", backgroundColor: C.panel, borderRadius: 10, borderWidth: 1, borderColor: C.line, padding: 16, gap: 10 }}>
-        <View role="group" accessibilityLabel="确认重启模拟器" style={{ gap: 10 }}>
-          <Text role="header" style={{ color: C.text, fontSize: 15, fontWeight: "bold" }}>重启模拟器系统？</Text>
-          <Text style={{ color: C.text, fontSize: 13, lineHeight: 20 }}>正在运行的 App 和未保存的内容会丢失，约 30 秒后恢复。</Text>
+        <View role="group" accessibilityLabel={kind() === "phone" ? "确认重启手机" : "确认重启模拟器"} style={{ gap: 10 }}>
+          <Text role="header" style={{ color: C.text, fontSize: 15, fontWeight: "bold" }}>{kind() === "phone" ? "重启手机？" : "重启模拟器系统？"}</Text>
+          <Text style={{ color: C.text, fontSize: 13, lineHeight: 20 }}>{kind() === "phone" ? "手机会重启，正在运行的 App 和未保存的内容会丢失。开机后自动重新连接，大约 1 分钟。" : "正在运行的 App 和未保存的内容会丢失，约 30 秒后恢复。"}</Text>
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
             <Btn label="取消" onPress={() => rebootAsk.set(false)} />
             <Btn label="重启" kind="danger" onPress={reboot} />
