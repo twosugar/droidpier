@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  GATEWAY_LEVEL,
   BIN_FRAME,
   BIN_SCREENSHOT,
   BIN_VIDEO,
@@ -185,3 +186,22 @@ test("parseClientMsg：scroll 只收四个有限数，多余字段丢掉", () =>
   assert.equal(parseClientMsg('{"t":"scroll","x":1,"y":2,"dy":3}'), null);
   assert.equal(parseClientMsg('{"t":"scroll","x":"1","y":2,"dx":0,"dy":3}'), null);
 });
+
+test("parseClientMsg：logcatOpen / logcatFilter 校验过滤条件", () => {
+  assert.deepEqual(parseClientMsg('{"t":"logcatOpen","filter":{"pkg":"com.a.b","level":"W","text":"x","z":1}}'),
+    { t: "logcatOpen", filter: { pkg: "com.a.b", level: "W", text: "x" } });
+  assert.deepEqual(parseClientMsg('{"t":"logcatFilter","filter":{"pkg":null,"level":"V","text":""}}'),
+    { t: "logcatFilter", filter: { pkg: null, level: "V", text: "" } });
+  assert.equal(parseClientMsg('{"t":"logcatOpen","filter":{"pkg":"../x","level":"V","text":""}}'), null);
+  assert.equal(parseClientMsg('{"t":"logcatOpen","filter":{"pkg":null,"level":"Q","text":""}}'), null);
+  assert.equal(parseClientMsg('{"t":"logcatOpen"}'), null);
+  assert.equal((parseClientMsg(JSON.stringify({ t: "logcatFilter", filter: { pkg: null, level: "V", text: "a".repeat(500) } })) as any).filter.text.length, 200);
+});
+
+test("parseClientMsg：logcatClose、logcatApps", () => {
+  assert.deepEqual(parseClientMsg('{"t":"logcatClose"}'), { t: "logcatClose" });
+  assert.deepEqual(parseClientMsg('{"t":"logcatApps","rid":3}'), { t: "logcatApps", rid: 3 });
+  assert.equal(parseClientMsg('{"t":"logcatApps"}'), null);
+});
+
+test("GATEWAY_LEVEL 是 3（日志面板）", () => assert.equal(GATEWAY_LEVEL, 3));

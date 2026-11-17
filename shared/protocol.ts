@@ -1,4 +1,5 @@
 import { avdNameError } from "./avd-spec.ts";
+import type { LogFilter, LogLevel, LogLine } from "./logcat.ts";
 
 /** 协议版本号。 */
 export const PROTOCOL_VERSION = 1;
@@ -9,8 +10,9 @@ export const PROTOCOL_VERSION = 1;
  * 不发 gateway 消息的旧网关算 0。
  * 1：gateway、update 消息；renameAvd、deleteAvd 一定支持。
  * 2：stopAvd；deleteAvd 的 stop（运行中先停止再删）。
+ * 3：日志面板（logcatOpen / logcatFilter / logcatClose / logcatApps）。
  */
-export const GATEWAY_LEVEL = 2;
+export const GATEWAY_LEVEL = 3;
 
 /**
  * 网关自动更新一次检查的结果。off：不是后台服务或关了自动更新，不会自己更新；deferred：有新版本，等手上的操作结束
@@ -304,6 +306,12 @@ export type ClientMsg =
   | { t: "deleteAvd"; rid: number; name: string; stop?: true }
   /** 用户点了“停止运行”：关掉这台 AVD（开机中的也算），不管是不是当前设备；等它真的停了才回复，回复同 rid 的 stopAvd，成功后网关给所有页面发新的 avds。 */
   | { t: "stopAvd"; rid: number; name: string }
+  /** 打开日志面板：网关按 filter 先回放最近的日志（logcat 的 reset），之后合批推新行。 */
+  | { t: "logcatOpen"; filter: LogFilter }
+  | { t: "logcatFilter"; filter: LogFilter }
+  | { t: "logcatClose" }
+  /** 日志面板的包名下拉：回复同 rid 的 logcatApps。 */
+  | { t: "logcatApps"; rid: number }
   /** 用户在页面确认框里确认过才发；ids 是要装的缺失项。 */
   | { t: "install"; ids: EnvItemId[] }
   /** 页面发现网关比自己旧（gateway 消息里的 level）时发：后台服务马上检查一次更新。不带参数，下载地址只在网关里。 */
@@ -361,6 +369,9 @@ export type ServerMsg =
    */
   | { t: "inspectMode"; on: boolean; mapped: boolean }
   | { t: "stopAvd"; rid: number; ok: boolean; error?: string }
+  /** reset 为 true 时页面先清空再放这些行；dropped 是因为页面连接积压而没发的行数。 */
+  | { t: "logcat"; lines: LogLine[]; reset: boolean; dropped?: number }
+  | { t: "logcatApps"; rid: number; foreground: string | null; apps: string[] }
   /** hello 通过后最先发。level 见 GATEWAY_LEVEL；version 是构建时间（从源码运行时为空）；autoUpdate：后台服务且没关自动更新。 */
   | { t: "gateway"; level: number; version: string; service: boolean; autoUpdate: boolean }
   /** 回复 update；换上新版本、马上重启时（restarting）发给所有页面。message 是 deferred 的原因或 failed 的错误。 */
@@ -472,7 +483,27 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "stopAvd":
       if (!isNum(o.rid) || !isStr(o.name) || avdNameError(o.name, []) !== null) return null;
       return { t: "stopAvd", rid: o.rid, name: o.name };
+    case "logcatOpen":
+    case "logcatFilter": {
+      const filter = parseLogFilter(o.filter);
+      return filter ? { t: o.t, filter } : null;
+    }
+    case "logcatClose":
+      return { t: "logcatClose" };
+    case "logcatApps":
+      return isNum(o.rid) ? { t: "logcatApps", rid: o.rid } : null;
     default:
       return null;
   }
+}
+
+const LOG_LEVELS: readonly LogLevel[] = ["V", "D", "I", "W", "E", "F"];
+
+/** 包名只认 Android 包名的字符；text 截到 200 字符。 */
+function parseLogFilter(v: unknown): LogFilter | null {
+  if (typeof v !== "object" || v === null) return null;
+  const f = v as Record<string, unknown>;
+  const pkg = f.pkg === null ? null : isStr(f.pkg) && f.pkg.length <= 200 && /^[A-Za-z][\w.]*$/.test(f.pkg) ? f.pkg : undefined;
+  if (pkg === undefined || !LOG_LEVELS.includes(f.level as LogLevel) || !isStr(f.text)) return null;
+  return { pkg, level: f.level as LogLevel, text: f.text.slice(0, 200) };
 }
