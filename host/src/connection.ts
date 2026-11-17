@@ -52,6 +52,11 @@ export type Request = RidMsg extends infer M ? (M extends RidMsg ? Omit<M, "rid"
 /** 带 rid 请求的回复。 */
 export type Reply = Extract<ServerMsg, { rid: number }>;
 
+/** 带 rid 的网关消息都是请求的回复（和 Reply 同一条规则）。不要逐个列类型：漏列的回复（曾经漏了 stopAvd）只能等满超时。 */
+export function isReply(m: ServerMsg): m is Reply {
+  return typeof (m as { rid?: unknown }).rid === "number";
+}
+
 // 公网页面连 127.0.0.1 要声明目标是本机（Chrome 的本地网络访问）；不认识这个参数的版本会把它当子协议、抛 SyntaxError（Chrome 157 实测），
 // 抛过一次就记住，之后直接不带参数
 let addressSpaceOption = true;
@@ -252,7 +257,7 @@ export function createConnection(opts: {
         opts.onUpload?.(m);
       } else if (m.t === "reboot") {
         opts.onReboot?.(m.result, m.error);
-      } else if (m.t === "webviews" || m.t === "inspect" || m.t === "navigate" || m.t === "renameAvd" || m.t === "deleteAvd" || m.t === "logcatApps" || m.t === "logcatRead") {
+      } else if (isReply(m)) {
         pending.settle(m.rid, m);
       } else if (m.t === "error") {
         if ("code" in m) {
