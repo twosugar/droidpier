@@ -107,7 +107,7 @@ function parseRect(description: string | undefined): WebViewPage["rect"] {
 
 /** list() 等 /json 的默认时长：WebView 正常时几十毫秒就回，DevTools 连着、页面在重载时会慢一些。 */
 const JSON_WAIT_MS = 2000;
-const FOREGROUND_CMD = ["shell", "dumpsys activity activities 2>/dev/null | grep -m1 ResumedActivity"];
+export const FOREGROUND_CMD = ["shell", "dumpsys activity activities 2>/dev/null | grep -m1 ResumedActivity"];
 /** 前台 App 缓存多久：用户的模拟器上 adb 可能很慢甚至卡住，每次轮询都多跑一条 shell 太重。 */
 const FOREGROUND_TTL_MS = 10_000;
 

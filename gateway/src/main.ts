@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { checkEnv, realEnvDeps } from "./setup.ts";
 import { cleanStaleInstallTmp, createInstaller, fetchWithIdle, realInstallerDeps, requireRepoUrl } from "./installer.ts";
 import { buildCatalog, realCatalogDeps } from "./catalog.ts";
-import { createWebViews, defaultFetchJson, defaultFetchVersion, findFreePort, makeAdbExec, parseAppBounds, releasePort } from "./webviews.ts";
+import { createWebViews, defaultFetchJson, defaultFetchVersion, findFreePort, FOREGROUND_CMD, makeAdbExec, parseAppBounds, parseResumedPkg, releasePort } from "./webviews.ts";
+import { createLogcatHub, parseApps } from "./logcat.ts";
 import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
 import { adb, killAdbChildren } from "./adb.ts";
@@ -152,6 +153,18 @@ let last: EmulatorSession | null = null;
 
 // 真机列表只在 --phones 时跟踪（真机支持做完前的开关）；discover 要靠它认出真机 id，所以先建
 const phones = phonesOn ? createPhones({ stream: adb.stream, exec: adb.device }) : null;
+
+// 日志面板：每台设备一个 adb logcat，有页面订阅才运行（gateway/src/logcat.ts）
+const logcat = createLogcatHub({
+  stream: (id, h) => adb.stream(["-s", id, "logcat", "-v", "threadtime", "-T", "500"], h),
+  // pidof 在 App 没运行时返回码非零，当作没有 pid
+  pidof: (id, pkg) => adb.device(id)(["shell", "pidof", pkg]).then((out) => out.trim().split(/\s+/).filter(Boolean).map(Number), () => []),
+  log: note,
+});
+const apps = async (id: string) => ({
+  foreground: await adb.device(id)(FOREGROUND_CMD).then(parseResumedPkg, () => null),
+  apps: await adb.device(id)(["shell", "ps", "-A", "-o", "USER,NAME"]).then(parseApps, () => []),
+});
 phones?.start();
 
 /** 真机会话用到的 adb 操作，按设备 id 绑定。 */
@@ -222,6 +235,8 @@ const first = await getSession();
 srv = await startServer({
   port,
   phones: phones ?? undefined,
+  logcat,
+  apps,
   version: VERSION,
   service,
   update: { autoUpdate: service && updater !== null, request: () => updater!.request(), last: () => updater?.last() ?? null },

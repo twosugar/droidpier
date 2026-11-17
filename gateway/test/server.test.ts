@@ -11,6 +11,7 @@ import type { AvdCatalog, EnvMissing, WebViewPage } from "../../shared/protocol.
 import { cachedSession } from "../src/session-cache.ts";
 import type { EmulatorSession } from "../src/emulator.ts";
 import { GATEWAY_LEVEL } from "../../shared/protocol.ts";
+import type { LogFilter, LogLine } from "../../shared/logcat.ts";
 import { BIN_SCREENSHOT, binKind, CLOSE_BAD_TOKEN, CLOSE_NO_HELLO, CLOSE_ORIGIN, CLOSE_VERSION, decodeFrameHeader, PROTOCOL_VERSION, type FrameHeader } from "../../shared/protocol.ts";
 import { allowedOrigins } from "../src/auth.ts";
 import { lsofSockets, type Snapshot } from "../src/peer.ts";
@@ -2657,4 +2658,99 @@ test("真机的 touch / key / text / clip 照常转给会话", async (t) => {
   c.ws.send(JSON.stringify({ t: "clip", text: "x" }));
   await until(() => phone.calls.length >= 4);
   assert.deepEqual(phone.calls.filter((x) => ["touch", "key", "text", "setClipboard"].includes(x)), ["touch", "key", "text", "setClipboard"]);
+});
+
+// ─────────────── 日志面板（PR 5） ───────────────
+
+type FakeLogSub = { id: string; filters: LogFilter[]; closed: boolean; push(lines: LogLine[], reset: boolean): void };
+function fakeLogcat() {
+  const subs: FakeLogSub[] = [];
+  const hub = {
+    subscribe(id: string, f: LogFilter, onBatch: (lines: LogLine[], reset: boolean) => void) {
+      const sub: FakeLogSub = { id, filters: [f], closed: false, push: onBatch };
+      subs.push(sub);
+      return { setFilter: (nf: LogFilter) => void sub.filters.push(nf), close: () => void (sub.closed = true) };
+    },
+    close() {},
+  };
+  return { hub, subs };
+}
+const LOG_ALL: LogFilter = { pkg: null, level: "V", text: "" };
+const logLine = (n: number): LogLine => ({ n, time: "11-16 18:00:52.531", pid: 1, tid: 1, level: "I", tag: "T", msg: `m${n}` });
+
+test("logcatOpen 订阅当前设备，批次以 logcat 消息发给这个页面", async (t) => {
+  const lc = fakeLogcat();
+  const s = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { logcat: lc.hub });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "logcatOpen", filter: LOG_ALL }));
+  await until(() => lc.subs.length === 1);
+  assert.equal(lc.subs[0].id, "emulator-5554");
+  assert.deepEqual(lc.subs[0].filters, [LOG_ALL]);
+  lc.subs[0].push([logLine(1)], true);
+  await until(() => c.msgs.some((m) => m.t === "logcat"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "logcat"), { t: "logcat", lines: [logLine(1)], reset: true });
+});
+
+test("logcatFilter 改过滤条件；logcatClose 和断开连接都会 close 订阅", async (t) => {
+  const lc = fakeLogcat();
+  const s = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { logcat: lc.hub });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "logcatOpen", filter: LOG_ALL }));
+  const w: LogFilter = { pkg: "com.a", level: "W", text: "x" };
+  c.ws.send(JSON.stringify({ t: "logcatFilter", filter: w }));
+  await until(() => lc.subs[0]?.filters.length === 2);
+  assert.deepEqual(lc.subs[0].filters[1], w);
+  c.ws.send(JSON.stringify({ t: "logcatClose" }));
+  await until(() => lc.subs[0].closed);
+  c.ws.send(JSON.stringify({ t: "logcatOpen", filter: LOG_ALL }));
+  await until(() => lc.subs.length === 2);
+  c.ws.close();
+  await until(() => lc.subs[1].closed);
+});
+
+test("面板开着时切到另一台设备：旧订阅 close，用原条件订阅新设备", async (t) => {
+  const lc = fakeLogcat();
+  const phone = new FakePhone();
+  const emu = new FakeSession();
+  const p = fakePhones([PHONE_OK]);
+  const fa = fakeAvd({ [phone.id]: phone });
+  const s = await setup(t, emu, async () => emu, fa.ops, undefined, undefined, { phones: p.ops, logcat: lc.hub });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  const f: LogFilter = { pkg: null, level: "E", text: "" };
+  c.ws.send(JSON.stringify({ t: "logcatOpen", filter: f }));
+  await until(() => lc.subs.length === 1);
+  c.ws.send(JSON.stringify({ t: "use", name: phone.id }));
+  await until(() => lc.subs.length === 2);
+  assert.equal(lc.subs[0].closed, true);
+  assert.equal(lc.subs[1].id, phone.id);
+  assert.deepEqual(lc.subs[1].filters, [f]);
+});
+
+test("logcatApps 回前台 App 和运行中的 App", async (t) => {
+  const s = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, {
+    logcat: fakeLogcat().hub,
+    apps: async (id) => ({ foreground: id === "emulator-5554" ? "com.a" : null, apps: ["com.a", "com.b"] }),
+  });
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "logcatApps", rid: 9 }));
+  await until(() => c.msgs.some((m) => m.t === "logcatApps"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "logcatApps"), { t: "logcatApps", rid: 9, foreground: "com.a", apps: ["com.a", "com.b"] });
+});
+
+test("没配日志的网关收到 logcatOpen 回错误", async (t) => {
+  const s = await setup(t);
+  const c = await s.connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "logcatOpen", filter: LOG_ALL }));
+  await until(() => c.msgs.some((m) => m.t === "error"));
+  assert.equal(c.msgs.find((m) => m.t === "error").message, "网关不支持日志");
 });

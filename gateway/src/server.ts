@@ -14,6 +14,8 @@ import { createPeerCheck, type SocketsLookup } from "./peer.ts";
 import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
 import { normalizeTarget } from "../../shared/target-url.ts";
 import type { EmulatorSession } from "./emulator.ts";
+import type { LogcatSub } from "./logcat.ts";
+import type { LogFilter, LogLine } from "../../shared/logcat.ts";
 import type { StartJob } from "./lifecycle.ts";
 import type { InstallJob, Installer } from "./installer.ts";
 import { AdbUnresponsive } from "./adb.ts";
@@ -145,6 +147,9 @@ export type UpdateOps = {
 const APP_PATH = "/app/";
 
 /** 启动网关的 HTTP + WebSocket 服务，只监听 127.0.0.1。 */
+/** 页面连接的发送缓冲超过这么多，日志批次就先不发、只计数（plans/2026-11-16-real-device-pr5-logcat.md 取舍 7）。 */
+const LOG_BACKLOG_BYTES = 2 ** 20;
+
 export async function startServer(opts: {
   port: number;
   /** 允许连模拟器协议的页面 Origin；/devtools/ 另外允许 DevTools 前端的 Origin。 */
@@ -175,6 +180,10 @@ export async function startServer(opts: {
   /** 由 launchd 拉起的后台服务；/healthz 报给前台再运行的 droidpier，让它说明怎么停（gateway/src/already-running.ts）。 */
   service?: boolean;
   update?: UpdateOps;
+  /** 日志面板（gateway/src/logcat.ts）；不传时 logcatOpen 回「网关不支持日志」。 */
+  logcat?: { subscribe(id: string, f: LogFilter, onBatch: (lines: LogLine[], reset: boolean) => void): LogcatSub };
+  /** 日志面板的包名下拉：前台 App 和运行中的 App。 */
+  apps?: (id: string) => Promise<{ foreground: string | null; apps: string[] }>;
 }): Promise<{
   port: number;
   close(): Promise<void>;
@@ -718,6 +727,25 @@ export async function startServer(opts: {
         pump();
       });
     };
+    // 日志面板：过滤条件随连接，接到哪台设备就订阅哪台
+    let logFilter: LogFilter | null = null;
+    let logSub: LogcatSub | undefined;
+    let logDropped = 0;
+    const openLog = () => {
+      logSub?.close();
+      logSub = undefined;
+      const s = conn.session;
+      if (!logFilter || !s || !opts.logcat) return;
+      logSub = opts.logcat.subscribe(s.id, logFilter, (lines, reset) => {
+        // 页面跟不上时这批不发，下一批告诉它省略了多少行（plans/2026-11-16-real-device-pr5-logcat.md 取舍 7）
+        if (!reset && ws.bufferedAmount > LOG_BACKLOG_BYTES) {
+          logDropped += lines.length;
+          return;
+        }
+        send(ws, { t: "logcat", lines, reset, ...(logDropped ? { dropped: logDropped } : {}) });
+        logDropped = 0;
+      });
+    };
     const attach = (s: EmulatorSession) => {
       conn.session = s;
       // 按着的手指属于旧会话，新会话里没有按下
@@ -727,8 +755,11 @@ export async function startServer(opts: {
       send(ws, { t: "orientation", rotation: s.rotation });
       if (isRebooting(s)) send(ws, { t: "status", state: "rebooting" });
       subscribe();
+      if (logFilter) openLog();
     };
     const detach = () => {
+      logSub?.close();
+      logSub = undefined;
       unsubscribe?.();
       unsubscribe = undefined;
       conn.session = undefined;
@@ -1188,6 +1219,30 @@ export async function startServer(opts: {
           if (done === null) avd.list().then((list) => broadcast({ t: "avds", list }), (e: Error) => log(`改名后读取 AVD 列表失败：${e.message}`));
           break;
         }
+        case "logcatOpen":
+          if (!opts.logcat) {
+            send(ws, { t: "error", message: "网关不支持日志" });
+            break;
+          }
+          logFilter = m.filter;
+          openLog();
+          break;
+        case "logcatFilter":
+          logFilter = m.filter;
+          if (logSub) logSub.setFilter(m.filter);
+          else openLog();
+          break;
+        case "logcatClose":
+          logFilter = null;
+          logSub?.close();
+          logSub = undefined;
+          break;
+        case "logcatApps": {
+          const s = conn.session;
+          const r = s && opts.apps ? await opts.apps(s.id).catch(() => null) : null;
+          send(ws, { t: "logcatApps", rid: m.rid, foreground: r?.foreground ?? null, apps: r?.apps ?? [] });
+          break;
+        }
         case "stopAvd": {
           if (!opts.avd) {
             send(ws, { t: "stopAvd", rid: m.rid, ok: false, error: "网关没有管理设备" });
@@ -1310,6 +1365,8 @@ export async function startServer(opts: {
       }
       unsubscribe?.();
       unsubscribe = undefined;
+      logSub?.close();
+      logSub = undefined;
       conns.delete(conn);
       clearTimeout(relocateTimer);
       for (const [t, c] of ticketOwners) if (c === conn) ticketOwners.delete(t);
