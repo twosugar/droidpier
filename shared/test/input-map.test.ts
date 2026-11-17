@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { toDevice, toVideo, keyToMsg, shortcutToMsg, textToMsgs, pasteToMsgs, inputToMsgs, wheelToSwipe } from "../input-map.ts";
+import { fromDevice, toDevice, toVideo, keyToMsg, shortcutToMsg, textToMsgs, pasteToMsgs, inputToMsgs, wheelToSwipe } from "../input-map.ts";
 
 describe("toDevice", () => {
   it("正常换算", () => {
@@ -296,5 +296,17 @@ describe("toVideo", () => {
   });
   it("夹到视频范围内", () => {
     assert.deepEqual(toVideo({ x: 864, y: 1920 }, portrait, 0, portrait), { x: 863, y: 1919 });
+  });
+});
+
+describe("fromDevice", () => {
+  it("toDevice 的逆运算，4 个方向往返误差不超过 1 像素", () => {
+    const device = { width: 1080, height: 2400 };
+    for (const rotation of [0, 90, 180, 270] as const) {
+      const rect = rotation % 180 ? { left: 40, top: 20, width: 800, height: 360 } : { left: 40, top: 20, width: 360, height: 800 };
+      const c = { x: 140, y: 300 };
+      const back = fromDevice(toDevice(c, rect, device, rotation), rect, device, rotation);
+      assert.ok(Math.abs(back.x - c.x) <= 1 && Math.abs(back.y - c.y) <= 1, `rotation ${rotation}: ${JSON.stringify(back)}`);
+    }
   });
 });

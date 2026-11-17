@@ -13,6 +13,7 @@ import { checkEnv, realEnvDeps } from "./setup.ts";
 import { cleanStaleInstallTmp, createInstaller, fetchWithIdle, realInstallerDeps, requireRepoUrl } from "./installer.ts";
 import { buildCatalog, realCatalogDeps } from "./catalog.ts";
 import { createWebViews, defaultFetchJson, defaultFetchVersion, findFreePort, FOREGROUND_CMD, makeAdbExec, parseAppBounds, parseResumedPkg, releasePort } from "./webviews.ts";
+import { parseWmSize } from "./inspect.ts";
 import { createLogcatHub, dumpLogcat, parseApps, readLogcat } from "./logcat.ts";
 import type { LogFilter } from "../../shared/logcat.ts";
 import { createReverses } from "./reverse.ts";
@@ -286,6 +287,7 @@ srv = await startServer({
         webviews: { ...webviews, close: () => (off(), webviews.close()) },
         reverses,
         appBounds: (pkg) => exec(["shell", "dumpsys", "window", "windows"]).then((out) => parseAppBounds(out, pkg)),
+        displaySize: () => exec(["shell", "wm", "size"]).then(parseWmSize),
       };
     },
     connectCdp,

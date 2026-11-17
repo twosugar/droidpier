@@ -8,7 +8,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { LatestFrame } from "./latest-frame.ts";
 import { createVideoSender } from "./video-sender.ts";
 import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, inspectUrl, parseDevtoolsPath, proxyDevtools, type DevtoolsSession } from "./devtools-proxy.ts";
-import { browserView, createInspectorSlot, liveValue, pickMapping, toPageCss, type InspectPointer } from "./inspect.ts";
+import { browserView, createInspectorSlot, liveValue, pickMapping, scaleRect, toPageCss, toPanel, type HighlightTarget, type InspectPointer } from "./inspect.ts";
 import { checkHost, checkUpgrade, createTickets, type Tickets } from "./auth.ts";
 import { createPeerCheck, type SocketsLookup } from "./peer.ts";
 import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
@@ -79,7 +79,7 @@ type Conn = {
   detach(): void;
   stats: { recv: number; sent: number; bytes: number; lagMs: number; dropped: number };
   /** 这个页面的 DevTools 连上了：返回选择元素模式开关时要调的函数。 */
-  devtoolsOpened(session: DevtoolsSession, socket: string, pageId: string, devtoolsWs: WebSocket): (on: boolean) => void;
+  devtoolsOpened(session: DevtoolsSession, socket: string, pageId: string, devtoolsWs: WebSocket): { mode(on: boolean): void; highlight(t: HighlightTarget | null): void };
   /** 设备转了方向。 */
   rotated(): void;
 };
@@ -111,6 +111,8 @@ export type DeviceDebug = {
   reverses: { ensure(port: number): Promise<void>; removeAll(): Promise<void> };
   /** 包名为 pkg 的窗口去掉状态栏、导航栏后的区域（设备像素，按显示方向），选择元素模式给浏览器标签页定位用；不传或读不到时 null。 */
   appBounds?(pkg: string): Promise<WebViewPage["rect"] | null>;
+  /** 屏幕的实际分辨率（wm size，自然方向）；真机的画面是缩小过的视频，换算位置要用它。读不到时 null。 */
+  displaySize?(): Promise<{ width: number; height: number } | null>;
 };
 
 /** WebView 调试依赖。forDevice 每台设备只调一次，换设备或设备退出时网关关掉旧的。 */
@@ -355,9 +357,12 @@ export async function startServer(opts: {
         h.proxies.add(ws);
         ws.on("close", () => h.proxies.delete(ws));
       }
-      let onMode = (_on: boolean) => {};
-      const session = proxyDevtools(ws, `ws://127.0.0.1:${port}/devtools/page/${encodeURIComponent(target.pageId)}`, { onInspectMode: (on) => onMode(on) });
-      if (owner && conns.has(owner)) onMode = owner.devtoolsOpened(session, target.socket, target.pageId, ws);
+      let dt: ReturnType<Conn["devtoolsOpened"]> | undefined;
+      const session = proxyDevtools(ws, `ws://127.0.0.1:${port}/devtools/page/${encodeURIComponent(target.pageId)}`, {
+        onInspectMode: (on) => dt?.mode(on),
+        onHighlight: (t) => dt?.highlight(t),
+      });
+      if (owner && conns.has(owner)) dt = owner.devtoolsOpened(session, target.socket, target.pageId, ws);
     });
   };
   // adb 无响应统一成一句话并带 code，页面据此给出“重启模拟器”；其他失败照旧加前缀
@@ -627,6 +632,7 @@ export async function startServer(opts: {
     type Target = { send: DevtoolsSession["send"]; socket: string; pageId: string };
     const inspector = createInspectorSlot<Target>({
       notify: (on, mapped) => send(ws, { t: "inspectMode", on, mapped }),
+      notifyHighlight: (box) => send(ws, { t: "highlight", box }),
       // 每次进入模式、转屏后重新算：位置和缩放用 Page.getLayoutMetrics（停在断点上也能答），
       // 显示方向问页面的 screen.orientation.angle（停在断点上答不了，pickMapping 按物理方向猜）
       locate: async (t) => {
@@ -640,9 +646,13 @@ export async function startServer(opts: {
         // 按窗口内容区和视口推，地址栏收起展开时会变（gateway/src/inspect.ts 的 browserView）
         const tab = page.pid === undefined && page.visible && page.pkg ? page.pkg : undefined;
         const app = tab ? ((await h.d.appBounds?.(tab)) ?? null) : null;
+        // 真机的画面是缩小过的视频：屏幕像素的位置要缩到视频像素（gateway/src/inspect.ts 的 scaleRect）
+        const display = s.kind === "phone" ? ((await h.d.displaySize?.().catch(() => null)) ?? null) : null;
         const read = (r: any) => {
           const v = page.rect ? { rect: page.rect, scale: page.rect.width / Number(r?.cssVisualViewport?.clientWidth ?? r?.cssLayoutViewport?.clientWidth) } : app ? browserView(app, r) : null;
-          return v && Number.isFinite(v.scale) && v.scale > 0 ? v : null;
+          if (!v || !Number.isFinite(v.scale) || !(v.scale > 0)) return null;
+          const rect = scaleRect(v.rect, s.device, display);
+          return { rect, scale: v.scale * (rect.width / v.rect.width) };
         };
         const first = read(await metrics());
         if (!first) return null;
@@ -653,10 +663,16 @@ export async function startServer(opts: {
         const m = pickMapping({ rect: first.rect, device: s.device, physical: s.rotation, angle: typeof angle === "number" ? angle : undefined, cssWidth: first.rect.width / first.scale });
         if (!m) return null;
         const view = liveValue(first, () => metrics().then(read));
-        return (p) => {
-          if (conn.session !== s) return null;
-          const v = view.get();
-          return toPageCss(p, s.device, m.rotation, v.rect, v.scale);
+        return {
+          toCss: (p) => {
+            if (conn.session !== s) return null;
+            const v = view.get();
+            return toPageCss(p, s.device, m.rotation, v.rect, v.scale);
+          },
+          toPanel: (p) => {
+            const v = view.get();
+            return toPanel(p, s.device, m.rotation, v.rect, v.scale);
+          },
         };
       },
     });
@@ -664,7 +680,7 @@ export async function startServer(opts: {
     const devtoolsOpened = (session: DevtoolsSession, socket: string, pageId: string, dws: WebSocket) => {
       const dt = inspector.open({ send: (m, p) => session.send(m, p), socket, pageId });
       dws.on("close", () => dt.close());
-      return (on: boolean) => dt.mode(on);
+      return { mode: (on: boolean) => dt.mode(on), highlight: (t: HighlightTarget | null) => dt.highlight(t) };
     };
     const slot = new LatestFrame<Frame>();
     let sending = false;
@@ -768,6 +784,8 @@ export async function startServer(opts: {
       unsubscribe?.();
       unsubscribe = undefined;
       conn.session = undefined;
+      // 换了设备或断开：画着的高亮和算好的位置都作废
+      inspector.relocate();
     };
     // 调试请求不进输入队列、不阻塞消息处理：navigate 最长要 10 秒
     const webviews = async (rid: number) => {

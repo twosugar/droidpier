@@ -1,6 +1,6 @@
 import WebSocket, { type RawData } from "ws";
 import type { WebViewPage } from "./webviews.ts";
-import { inspectModeChange } from "./inspect.ts";
+import { inspectModeChange, type HighlightTarget } from "./inspect.ts";
 
 /** WebSocket 关闭码：/devtools/<socket>/<pageId> 里的 socket 当前没有转发。 */
 export const CLOSE_UNKNOWN_SOCKET = 4404;
@@ -34,14 +34,35 @@ export type DevtoolsSession = {
   send(method: string, params?: object): Promise<any>;
 };
 
+/** 前端发给页面的一条消息里的高亮请求：highlightNode 给节点，hideHighlight 给 null，别的消息、坏 JSON 给 undefined。 */
+export function highlightRequest(text: string): HighlightTarget | null | undefined {
+  let m: any;
+  try {
+    m = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (m?.method === "Overlay.hideHighlight") return null;
+  if (m?.method !== "Overlay.highlightNode") return undefined;
+  const p = m.params ?? {};
+  const req: HighlightTarget = {};
+  if (typeof p.nodeId === "number") req.nodeId = p.nodeId;
+  if (typeof p.backendNodeId === "number") req.backendNodeId = p.backendNodeId;
+  if (typeof p.objectId === "string") req.objectId = p.objectId;
+  if (p.highlightConfig && typeof p.highlightConfig === "object") req.config = p.highlightConfig;
+  return req;
+}
+
 /**
  * 把客户端连接和 WebView 的 DevTools WebSocket 双向接起来，任一端关闭另一端跟着关闭。
  * 连上游时不带 Origin：WebView 的 DevTools 端点对带任何 Origin 的握手都回 403（2026-11-11 实测）。
  * onInspectMode：DevTools 的“选择元素”模式开关时调用（gateway/src/inspect.ts），连接关闭时按关处理。
+ * onHighlight：前端要高亮一个节点（Overlay.highlightNode）时给节点和 highlightConfig，取消高亮（Overlay.hideHighlight）时给 null；
+ * 网关据此在页面的设备画面上自己画（有的 WebView 收到这些命令不画，2026-11-17 三星 WebView 99 实测）。
  *
  * 安全：这条通道能完全控制 App 里的网页，调用前必须已在升级时核过 Origin 和票据（server.ts）。
  */
-export function proxyDevtools(client: WebSocket, upstreamUrl: string, hooks: { onInspectMode?: (on: boolean) => void } = {}): DevtoolsSession {
+export function proxyDevtools(client: WebSocket, upstreamUrl: string, hooks: { onInspectMode?: (on: boolean) => void; onHighlight?: (req: HighlightTarget | null) => void } = {}): DevtoolsSession {
   const upstream = new WebSocket(upstreamUrl, { perMessageDeflate: false });
   // 上游握手完成前客户端就可能发消息，先排队
   const pending: Array<{ data: RawData | string; isBinary: boolean }> = [];
@@ -71,6 +92,9 @@ export function proxyDevtools(client: WebSocket, upstreamUrl: string, hooks: { o
       if (text.includes('"Overlay.setInspectMode"')) {
         const on = inspectModeChange(true, text);
         if (on !== null) setInspect(on);
+      } else if (hooks.onHighlight && (text.includes('"Overlay.highlightNode"') || text.includes('"Overlay.hideHighlight"'))) {
+        const req = highlightRequest(text);
+        if (req !== undefined) hooks.onHighlight(req);
       }
     }
     toUpstream(data, isBinary);

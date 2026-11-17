@@ -230,6 +230,13 @@ export type AvdCatalog = {
 /** 网关建一台 AVD 用的参数，由 createAvd 消息和目录算出。 */
 export type AvdSpec = { name: string; device: string; image: string; ramMb: number };
 
+/**
+ * 设备画面上要画的 DevTools 高亮（gateway/src/inspect.ts 的 highlightBox）。
+ * quads 从外到内是 margin、border、padding、content 里给了颜色的几层，points 是 4 个角的竖屏面板坐标（和 touch 同一套）。
+ * label 形如 p#id.cls，不要标注时为 null；size 形如「328 × 225」（CSS 像素）。
+ */
+export type HighlightBox = { quads: Array<{ points: number[]; color: string }>; label: string | null; size: string };
+
 /** 环境检查结果；sdkRoot / avdHome 是会装进去的目录，页面确认框里要写明。 */
 export type EnvReport = {
   ok: boolean;
@@ -375,6 +382,8 @@ export type ServerMsg =
    * mapped：网关知道页面在屏幕上的位置（WebView 和浏览器标签页都算），页面这时不发触摸、改发 inspectPointer；算不出时为 false，照常发触摸。
    */
   | { t: "inspectMode"; on: boolean; mapped: boolean }
+  /** DevTools 要高亮的元素，页面画在设备画面上（null 清掉）；网关在 DevTools 发 Overlay.highlightNode、选择元素模式下鼠标移动时发。 */
+  | { t: "highlight"; box: HighlightBox | null }
   | { t: "stopAvd"; rid: number; ok: boolean; error?: string }
   /** reset 为 true 时页面先清空再放这些行；dropped 是因为页面连接积压而没发的行数。 */
   | { t: "logcat"; lines: LogLine[]; reset: boolean; dropped?: number }

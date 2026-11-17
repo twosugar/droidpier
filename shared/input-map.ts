@@ -26,6 +26,23 @@ export function toDevice(
   };
 }
 
+/** toDevice 的逆运算：竖屏面板像素 → 画布上的 client 坐标（不取整，不夹边界）。 */
+export function fromDevice(
+  p: { x: number; y: number },
+  rect: { left: number; top: number; width: number; height: number },
+  device: { width: number; height: number },
+  rotation: Rotation = 0
+): { x: number; y: number } {
+  const rx = p.x / device.width;
+  const ry = p.y / device.height;
+  const [u, v] =
+    rotation === 90 ? [1 - ry, rx] :
+    rotation === 180 ? [1 - rx, 1 - ry] :
+    rotation === 270 ? [ry, 1 - rx] :
+    [rx, ry];
+  return { x: rect.left + u * rect.width, y: rect.top + v * rect.height };
+}
+
 /**
  * toDevice 的反函数：竖屏面板像素 → 当前视频帧像素（真机的 scrcpy 按视频帧坐标注入），四舍五入，夹到视频范围内。
  * video 是画面实际的宽高（横屏时宽大于高）。

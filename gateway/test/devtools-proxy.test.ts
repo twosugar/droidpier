@@ -218,10 +218,11 @@ async function directProxy(t: import("node:test").TestContext) {
   await new Promise((r) => front.once("listening", r));
   t.after(() => new Promise<void>((r) => { for (const s of front.clients) s.terminate(); front.close(() => r()); }));
   const modes: boolean[] = [];
-  const session = new Promise<DevtoolsSession>((res) => front.on("connection", (ws) => res(proxyDevtools(ws, `ws://127.0.0.1:${up.port}/devtools/page/AB`, { onInspectMode: (on) => modes.push(on) }))));
+  const highlights: unknown[] = [];
+  const session = new Promise<DevtoolsSession>((res) => front.on("connection", (ws) => res(proxyDevtools(ws, `ws://127.0.0.1:${up.port}/devtools/page/AB`, { onInspectMode: (on) => modes.push(on), onHighlight: (h) => highlights.push(h) }))));
   const c = connect(t, `ws://127.0.0.1:${(front.address() as { port: number }).port}`);
   await new Promise((r) => c.ws.once("open", r));
-  return { up, c, modes, session: await session };
+  return { up, c, modes, highlights, session: await session };
 }
 
 test("选择元素模式：前端发 setInspectMode 时报开/关，页面发 inspectModeCanceled 时报关，消息照常转发", async (t) => {
@@ -285,4 +286,15 @@ test("和模式、网关命令无关的消息原样转发：坏 JSON、像网关
   assert.deepEqual(up.got.map((m) => m.data), front);
   assert.deepEqual(c.msgs.map((m) => m.data), back);
   assert.deepEqual(modes, []);
+});
+
+test("高亮：前端发 highlightNode 时报节点和配置，hideHighlight 时报 null，消息照常转发", async (t) => {
+  const { up, c, highlights } = await directProxy(t);
+  await until(() => up.socks.length === 1);
+  const config = { showInfo: true, contentColor: { r: 1, g: 2, b: 3, a: 0.5 } };
+  c.ws.send(JSON.stringify({ id: 7, method: "Overlay.highlightNode", params: { highlightConfig: config, nodeId: 5 } }));
+  c.ws.send(JSON.stringify({ id: 8, method: "Overlay.highlightNode", params: { highlightConfig: config, backendNodeId: 9 } }));
+  c.ws.send(JSON.stringify({ id: 9, method: "Overlay.hideHighlight", params: {} }));
+  await until(() => highlights.length === 3 && up.got.length === 3);
+  assert.deepEqual(highlights, [{ nodeId: 5, config }, { backendNodeId: 9, config }, null]);
 });
