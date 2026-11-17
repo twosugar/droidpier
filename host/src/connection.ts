@@ -12,6 +12,7 @@ import {
   type AvdInfo,
   type ClientMsg,
   type EnvReport,
+  type HighlightBox,
   type InstallProgress,
   type Licence,
   type DeviceCaps,
@@ -97,6 +98,8 @@ export function createConnection(opts: {
   onLogcat?: (lines: LogLine[], reset: boolean, dropped: number) => void;
   /** DevTools 进入、退出选择元素模式（shared/protocol.ts 的 inspectMode）。 */
   onInspectMode?: (on: boolean, mapped: boolean) => void;
+  /** DevTools 要高亮的元素，画在设备画面上（shared/protocol.ts 的 highlight）。 */
+  onHighlight?: (box: HighlightBox | null) => void;
   onBoot?: (b: BootMsg) => void;
   onEnv?: (env: EnvReport) => void;
   onInstall?: (p: InstallProgress) => void;
@@ -232,6 +235,8 @@ export function createConnection(opts: {
         opts.onLogcat?.(m.lines, m.reset, m.dropped ?? 0);
       } else if (m.t === "inspectMode") {
         opts.onInspectMode?.(m.on, m.mapped);
+      } else if (m.t === "highlight") {
+        opts.onHighlight?.(m.box);
       } else if (m.t === "boot") {
         opts.onBoot?.({ name: m.name, progress: m.progress, ...(m.error ? { error: m.error } : {}) });
       } else if (m.t === "env") {

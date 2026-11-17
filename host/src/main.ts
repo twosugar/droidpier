@@ -1,4 +1,5 @@
 import { inputToMsgs, keyToMsg, pasteToMsgs, shortcutToMsg, textToMsgs, toDevice, wheelToSwipe } from "../../shared/input-map.ts";
+import { drawHighlight } from "./highlight.ts";
 import { fitSize, frameLatencyMs } from "../../shared/screen.ts";
 import { createClipSync } from "./clip-sync.ts";
 import { createPhoneList } from "./phone-list.ts";
@@ -16,7 +17,7 @@ import { parseTheme, THEMES } from "../../shared/theme.ts";
 import { registerTools } from "./webmcp.ts";
 import { gatewayBanner, shouldRequestUpdate, timeoutText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
 import type { LogFilter } from "../../shared/logcat.ts";
-import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type InstallProgress, type DeviceCaps, type Licence, type Rotation } from "../../shared/protocol.ts";
+import { GATEWAY_LEVEL, INSTALL_IDS, installCmd, type AvdCatalog, type AvdInfo, type ClientMsg, type EnvItemId, type EnvReport, type HighlightBox, type InstallProgress, type DeviceCaps, type Licence, type Rotation } from "../../shared/protocol.ts";
 
 // 从这个功能级别起网关一定认 renameAvd、deleteAvd（shared/protocol.ts 的 GATEWAY_LEVEL）
 const AVD_EDIT_LEVEL = 1;
@@ -104,7 +105,18 @@ export async function createHost(player: Player) {
   ime.autocapitalize = "off";
   ime.spellcheck = false;
   ime.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none";
-  frame.append(canvas, ime);
+  // DevTools 的元素高亮：盖在画面上、不接鼠标（host/src/highlight.ts）
+  const hl = document.createElement("div");
+  hl.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
+  frame.append(canvas, ime, hl);
+  let hlBox: HighlightBox | null = null;
+  const redrawHighlight = () => drawHighlight(hl, hlBox, css, device, rotation);
+  // 画面上的输入会让页面滚动或变化，按旧位置画的框不再准
+  const clearHighlight = () => {
+    if (!hlBox) return;
+    hlBox = null;
+    redrawHighlight();
+  };
   box.append(frame);
 
   // 页面状态只存在这里：App 挂载前发的事件会丢，App 挂载后靠 emu.status 一次拿全
@@ -120,6 +132,8 @@ export async function createHost(player: Player) {
     // 没接上设备时旧画面变暗，避免看起来还连着
     const dim = state !== "connected";
     canvas.style.cssText = `width:${css.width}px;height:${css.height}px;display:block;outline:none;touch-action:none;background:#000;transition:opacity .2s;opacity:${dim ? 0.3 : 1}`;
+    if (dim) hlBox = null;
+    redrawHighlight();
   };
 
   let lastSent = { width: 0, height: 0 };
@@ -271,12 +285,17 @@ export async function createHost(player: Player) {
       refreshAvds();
     },
     onInspectMode: (on, mapped) => setInspect(on && mapped),
+    onHighlight: (box) => {
+      hlBox = box;
+      redrawHighlight();
+    },
     onOrientation: (r) => {
       const turned = oriented;
       oriented = true;
       if (r === rotation) return;
       // 方向变了，正按着的手指按旧方向换算过，先抬起
       pointer.cancel();
+      clearHighlight();
       rotation = r;
       if (turnRelayout !== null) clearTimeout(turnRelayout);
       turnRelayout = setTimeout(() => { turnRelayout = null; layout(false); }, TURN_RELAYOUT_MS);
@@ -483,7 +502,10 @@ export async function createHost(player: Player) {
       canvas.setPointerCapture(e.pointerId);
     } catch {}
     if (inspecting) inspectAt("down", e);
-    else pointer.down(e);
+    else {
+      clearHighlight();
+      pointer.down(e);
+    }
   });
   canvas.addEventListener("pointermove", (e) => {
     if (!inspecting) return pointer.move(e);
@@ -502,6 +524,7 @@ export async function createHost(player: Player) {
 
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
+    clearHighlight();
     if (pointerIsDown || !device.width) return;
     // deltaMode 转换：PIXEL(0) 不变；LINE(1) ×40px；PAGE(2) × canvas CSS 高度
     const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? css.height : 1;
@@ -559,6 +582,7 @@ export async function createHost(player: Player) {
     const m = keyToMsg(e, type);
     if (!m) return;
     e.preventDefault();
+    clearHighlight();
     conn.send(m);
     heldKeys.onMsg(m);
   };
