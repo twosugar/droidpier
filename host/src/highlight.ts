@@ -3,12 +3,15 @@ import { fromDevice } from "../../shared/input-map.ts";
 import type { HighlightBox, Rotation } from "../../shared/protocol.ts";
 
 const LABEL_HEIGHT = 22;
+/** 只认第 4 个分量为 0 的 rgba（rgb(255,255,0) 不算透明）。 */
+const isTransparent = (c: string) => c === "transparent" || /^rgba\((?:[^,]+,){3}\s*0(?:\.0*)?\)$/.test(c);
 const LABEL_GAP = 4;
 /** 等宽字 12px 一个字符约 7.2px，加左右内边距；只用来把标注夹在画布内，不用很准。 */
 const labelWidth = (text: string, size: string) => Math.ceil((text.length + size.length + 1) * 7.2 + 16);
 
 export type HighlightLayout = {
-  polygons: Array<{ points: string; color: string }>;
+  /** 每层一条 SVG 路径：自己的框，再加上里面一层的框（按 evenodd 填充就挖空成环），同一块只盖一层颜色。透明的层不画。 */
+  layers: Array<{ d: string; color: string }>;
   label: { text: string; size: string; left: number; top: number; width: number } | null;
 };
 
@@ -17,7 +20,7 @@ export function layoutHighlight(box: HighlightBox, view: { width: number; height
   const rect = { left: 0, top: 0, width: view.width, height: view.height };
   const round = (n: number) => Math.round(n * 10) / 10;
   let minX = Infinity, minY = Infinity, maxY = -Infinity;
-  const polygons = box.quads.map((q) => {
+  const paths = box.quads.map((q) => {
     const pts: string[] = [];
     for (let i = 0; i + 1 < q.points.length; i += 2) {
       const p = fromDevice({ x: q.points[i], y: q.points[i + 1] }, rect, device, rotation);
@@ -26,15 +29,19 @@ export function layoutHighlight(box: HighlightBox, view: { width: number; height
       maxY = Math.max(maxY, p.y);
       pts.push(`${round(p.x)},${round(p.y)}`);
     }
-    return { points: pts.join(" "), color: q.color };
+    return `M${pts.join("L")}Z`;
   });
-  if (!box.label || !polygons.length) return { polygons, label: null };
+  // 和 Chrome 一样画成套环：四层整块叠起来时，内容区会盖上四层半透明色，文字看不清
+  const layers = box.quads
+    .map((q, i) => ({ d: i + 1 < paths.length ? `${paths[i]} ${paths[i + 1]}` : paths[i], color: q.color }))
+    .filter((l) => !isTransparent(l.color));
+  if (!box.label || !paths.length) return { layers, label: null };
   const width = Math.min(labelWidth(box.label, box.size), view.width);
   // 和 Chrome 一样放在框的上方，放不下时放到下方；左右夹在画布内
   const above = minY - LABEL_HEIGHT - LABEL_GAP;
   const top = above >= 0 ? above : Math.min(maxY + LABEL_GAP, view.height - LABEL_HEIGHT);
   const left = Math.max(0, Math.min(minX, view.width - width));
-  return { polygons, label: { text: box.label, size: box.size, left: round(left), top: round(top), width } };
+  return { layers, label: { text: box.label, size: box.size, left: round(left), top: round(top), width } };
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -48,11 +55,12 @@ export function drawHighlight(overlay: HTMLElement, box: HighlightBox | null, vi
   svg.setAttribute("width", String(view.width));
   svg.setAttribute("height", String(view.height));
   svg.style.cssText = "position:absolute;left:0;top:0;overflow:visible";
-  for (const p of l.polygons) {
-    const poly = document.createElementNS(SVG_NS, "polygon");
-    poly.setAttribute("points", p.points);
-    poly.setAttribute("fill", p.color);
-    svg.append(poly);
+  for (const layer of l.layers) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", layer.d);
+    path.setAttribute("fill", layer.color);
+    path.setAttribute("fill-rule", "evenodd");
+    svg.append(path);
   }
   overlay.append(svg);
   if (!l.label) return;

@@ -77,10 +77,12 @@ const DEFAULT_COLORS: Record<"margin" | "border" | "padding" | "content", Rgba> 
   content: { r: 111, g: 168, b: 220, a: 0.66 },
 };
 const LABEL_MAX = 60;
+const TRANSPARENT = "rgba(0,0,0,0)";
 
 /**
  * DOM.getBoxModel 的结果换成要画的高亮。config 是前端 Overlay.highlightNode 的 highlightConfig：
- * 给了哪几层颜色就画哪几层，一层都没给时（或没有 config，选择元素模式下网关自己取的）用默认四色；showInfo 为 false 时不要标注。
+ * 四层都发（页面按里面一层挖空成环，见 host/src/highlight.ts），没给颜色的层透明；一层都没给时（或没有 config，
+ * 选择元素模式下网关自己取的）用默认四色；showInfo 为 false 时不要标注。
  */
 export function highlightBox(
   model: { content: number[]; padding: number[]; border: number[]; margin: number[]; width: number; height: number },
@@ -93,15 +95,15 @@ export function highlightBox(
   const colors: Partial<Record<(typeof layers)[number], Rgba>> = given.length
     ? Object.fromEntries(given.map((l) => [l, config[`${l}Color`]]))
     : DEFAULT_COLORS;
-  const quads = layers.filter((l) => colors[l]).map((l) => {
+  const quads = layers.map((l) => {
     const q = model[l];
     const points: number[] = [];
     for (let i = 0; i + 1 < q.length; i += 2) {
       const p = toPanelPoint({ x: q[i], y: q[i + 1] });
       points.push(Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10);
     }
-    const c = colors[l]!;
-    return { points, color: `rgba(${c.r},${c.g},${c.b},${c.a ?? 1})` };
+    const c = colors[l];
+    return { points, color: c ? `rgba(${c.r},${c.g},${c.b},${c.a ?? 1})` : TRANSPARENT };
   });
   let label: string | null = null;
   if (config?.showInfo !== false) {

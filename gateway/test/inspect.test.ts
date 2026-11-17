@@ -262,11 +262,11 @@ const MODEL = {
 };
 const twice = (p: { x: number; y: number }) => ({ x: p.x * 2, y: p.y * 2 });
 
-test("highlightBox：四层从外到内，坐标换到面板，颜色用 highlightConfig，没给的层不画", () => {
+test("highlightBox：四层从外到内都发（页面要按里面一层挖空），坐标换到面板，颜色用 highlightConfig，没给的层透明", () => {
   const box = highlightBox(MODEL, { localName: "p" }, { showInfo: true, contentColor: { r: 1, g: 2, b: 3, a: 0.5 }, marginColor: { r: 4, g: 5, b: 6 } }, twice);
-  assert.deepEqual(box.quads.map((q) => q.color), ["rgba(4,5,6,1)", "rgba(1,2,3,0.5)"]);
+  assert.deepEqual(box.quads.map((q) => q.color), ["rgba(4,5,6,1)", "rgba(0,0,0,0)", "rgba(0,0,0,0)", "rgba(1,2,3,0.5)"]);
   assert.deepEqual(box.quads[0].points, [0, 0, 200, 0, 200, 120, 0, 120]);
-  assert.deepEqual(box.quads[1].points, [8, 28, 192, 28, 192, 92, 8, 92]);
+  assert.deepEqual(box.quads[3].points, [8, 28, 192, 28, 192, 92, 8, 92]);
   assert.equal(box.label, "p");
   assert.equal(box.size, "100 × 40");
 });

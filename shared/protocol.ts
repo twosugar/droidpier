@@ -232,7 +232,7 @@ export type AvdSpec = { name: string; device: string; image: string; ramMb: numb
 
 /**
  * 设备画面上要画的 DevTools 高亮（gateway/src/inspect.ts 的 highlightBox）。
- * quads 从外到内是 margin、border、padding、content 里给了颜色的几层，points 是 4 个角的竖屏面板坐标（和 touch 同一套）。
+ * quads 从外到内是 margin、border、padding、content 四层（没颜色的层是透明色，仍用来给外面一层挖空），points 是 4 个角的竖屏面板坐标（和 touch 同一套）。
  * label 形如 p#id.cls，不要标注时为 null；size 形如「328 × 225」（CSS 像素）。
  */
 export type HighlightBox = { quads: Array<{ points: number[]; color: string }>; label: string | null; size: string };
