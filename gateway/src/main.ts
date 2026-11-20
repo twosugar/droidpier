@@ -21,7 +21,8 @@ import { connectCdp } from "./cdp.ts";
 import { adb, emulatorId, killAdbChildren } from "./adb.ts";
 import { turnOffAutoPrivateDns } from "./private-dns.ts";
 import { createPhones } from "./phones.ts";
-import { createMumuConnector, probePort } from "./mumu.ts";
+import { execFile } from "node:child_process";
+import { createMumu, MUMU_TOOL, mumuInstalled, probePort } from "./mumu.ts";
 import { connectPhone, type PhoneDeps } from "./phone-session.ts";
 import { materializeScrcpyServer, scrcpyServerPath } from "./scrcpy-server.ts";
 import net from "node:net";
@@ -177,8 +178,11 @@ const apps = async (id: string) => ({
   apps: await adb.device(id)(["shell", "ps", "-A", "-o", "USER,NAME"]).then(parseApps, () => []),
 });
 phones.start();
-// MuMu 模拟器开机后自己不连 adb：替它连上，它就作为一台真机出现在侧栏（gateway/src/mumu.ts）
-const mumu = createMumuConnector({
+// MuMu 模拟器：读设备列表、开关机，开机后替它连 adb（gateway/src/mumu.ts）。mumutool 一般一秒内返回，15 秒是我定的上限
+const mumu = createMumu({
+  tool: mumuInstalled()
+    ? (args) => new Promise((resolve, reject) => execFile(MUMU_TOOL, args, { timeout: 15_000 }, (e, out) => (e ? reject(e) : resolve(out))))
+    : undefined,
   probe: probePort,
   connect: (addr) => adb.run(["connect", addr]),
   connected: () => phones.list().filter((p) => p.state === "device").map((p) => p.id),
@@ -263,6 +267,7 @@ const first = await getSession();
 srv = await startServer({
   port,
   phones,
+  mumu,
   logcat,
   apps,
   logcatRead,
