@@ -168,7 +168,8 @@ export type AvdInfo = {
 /** scroll：能收原生滚动（scroll 消息）；没有时页面用滑动模拟滚轮。 */
 export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean; scroll: boolean };
 
-export type PhoneInfo = { id: string; state: "device" | "unauthorized" | "offline"; manufacturer?: string; model?: string; android?: string };
+/** emulator：第三方模拟器，mumu 是 MuMu 模拟器（侧栏单独一组）；真机没有这个字段，旧网关也不发。 */
+export type PhoneInfo = { id: string; state: "device" | "unauthorized" | "offline"; manufacturer?: string; model?: string; android?: string; emulator?: "mumu" };
 
 /**
  * 环境检查的一个缺失项。command 只有旧网关会带（sdkmanager / avdmanager 的手动命令），sizeMb 是大致下载量，

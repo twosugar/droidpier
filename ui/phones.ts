@@ -1,4 +1,4 @@
-// 侧栏「真机」分组和主区标题的真机文案
+// 侧栏「手机」「MuMu 模拟器」分组和主区标题的真机文案
 import type { PhoneInfo } from "../shared/protocol";
 
 /** 行标题：「Samsung SM-G9910」；没查到型号时用设备 id。 */
@@ -16,6 +16,7 @@ const STATUS: Record<Exclude<PhoneInfo["state"], "device">, string> = {
 /** 行副标题：连接状态和用户该做什么；current 表示它就是主区正在显示的设备。 */
 export function phoneStatus(p: PhoneInfo, current: boolean): string {
   if (p.state === "device") return current ? "当前画面" : "可用";
+  if (p.emulator === "mumu") return "离线，MuMu 可能已关机";
   return STATUS[p.state];
 }
 
@@ -27,6 +28,12 @@ export function canPick(p: PhoneInfo): boolean {
 /** 行右侧的 Android 版本号，和模拟器行右侧的「15」同一写法；不知道时为空。 */
 export function phoneDetail(p: PhoneInfo): string {
   return p.android ?? "";
+}
+
+/** 侧栏分组：MuMu 模拟器单独一组，其余是真机。 */
+export function splitPhones(list: PhoneInfo[] | null): { phones: PhoneInfo[]; mumu: PhoneInfo[] } {
+  const all = list ?? [];
+  return { phones: all.filter((p) => p.emulator !== "mumu"), mumu: all.filter((p) => p.emulator === "mumu") };
 }
 
 /** 没收到过 phones 消息（旧网关）就不显示分组；收到过空列表要显示，提示插手机。 */

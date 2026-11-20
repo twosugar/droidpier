@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones } from "../../ui/phones.ts";
+import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones, splitPhones } from "../../ui/phones.ts";
 
 test("phoneLabel：厂商首字母大写加型号", () => {
   assert.equal(phoneLabel({ id: "R5CR10WN52H", state: "device", manufacturer: "samsung", model: "SM-G9910" }), "Samsung SM-G9910");
@@ -49,4 +49,16 @@ test("currentPhoneOf：已连接和重启中都算当前真机；重启中手机
   assert.equal(currentPhoneOf([ph], undefined, at("phone-closed")), undefined);
   assert.equal(currentPhoneOf([ph], undefined, at("connected", "emulator")), undefined);
   assert.equal(currentPhoneOf([], { ...ph, id: "OTHER" }, at("rebooting")), undefined);
+});
+
+test("splitPhones：MuMu 单独一组，真机一组；旧网关不带标记时都算真机", () => {
+  const mumu = { id: "127.0.0.1:16384", state: "device" as const, emulator: "mumu" as const };
+  const phone = { id: "R5CR10WN52H", state: "device" as const };
+  assert.deepEqual(splitPhones([phone, mumu]), { phones: [phone], mumu: [mumu] });
+  assert.deepEqual(splitPhones([{ id: "127.0.0.1:16384", state: "device" }]), { phones: [{ id: "127.0.0.1:16384", state: "device" }], mumu: [] });
+  assert.deepEqual(splitPhones(null), { phones: [], mumu: [] });
+});
+
+test("phoneStatus：MuMu 离线时提示开机，不说插拔", () => {
+  assert.equal(phoneStatus({ id: "127.0.0.1:16384", state: "offline", emulator: "mumu" }, false), "离线，MuMu 可能已关机");
 });

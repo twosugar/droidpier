@@ -21,6 +21,7 @@ import { connectCdp } from "./cdp.ts";
 import { adb, emulatorId, killAdbChildren } from "./adb.ts";
 import { turnOffAutoPrivateDns } from "./private-dns.ts";
 import { createPhones } from "./phones.ts";
+import { createMumuConnector, probePort } from "./mumu.ts";
 import { connectPhone, type PhoneDeps } from "./phone-session.ts";
 import { materializeScrcpyServer, scrcpyServerPath } from "./scrcpy-server.ts";
 import net from "node:net";
@@ -176,6 +177,14 @@ const apps = async (id: string) => ({
   apps: await adb.device(id)(["shell", "ps", "-A", "-o", "USER,NAME"]).then(parseApps, () => []),
 });
 phones.start();
+// MuMu 模拟器开机后自己不连 adb：替它连上，它就作为一台真机出现在侧栏（gateway/src/mumu.ts）
+const mumu = createMumuConnector({
+  probe: probePort,
+  connect: (addr) => adb.run(["connect", addr]),
+  connected: () => phones.list().filter((p) => p.state === "device").map((p) => p.id),
+  log: note,
+});
+mumu.start();
 
 /** 真机会话用到的 adb 操作，按设备 id 绑定。 */
 const phoneDeps = (id: string): PhoneDeps => ({
@@ -327,6 +336,7 @@ const cleanup = () => (cleaning ??= (async () => {
   clearTimeout(stableTimer);
   // 结束 adb track-devices，不留孤儿进程
   phones.stop();
+  mumu.stop();
   await cleanupAll({
     // 中止进行中的下载，等它删掉临时目录
     stopUpdater: updater ? () => updater.stop() : undefined,

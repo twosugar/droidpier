@@ -16,7 +16,7 @@ import { deviceFrame } from "../shared/screen";
 import { glideFrames, poseAt, REST, startPose, turnAngle, type Glide } from "./device-motion";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
 import { matchesAvd } from "./device-search";
-import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones } from "./phones";
+import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones, splitPhones } from "./phones";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
 import { activePage, foregroundPkg, h5KeyShown, pickPage, visibleTitle } from "./h5-pages";
@@ -2027,13 +2027,17 @@ function App() {
             </If>
             <If when={showPhones(phones())}>
               <Text style={{ color: token("muted-foreground"), ...TYPE.caption, fontWeight: WEIGHT.strong, paddingHorizontal: ROW_X, paddingTop: SPACE.inset, paddingBottom: SPACE.hair }}>手机</Text>
-              <If when={(phones() ?? []).length > 0} else={
+              <If when={splitPhones(phones()).phones.length > 0} else={
                 <Text style={{ color: token("muted-foreground"), ...TYPE.body, paddingHorizontal: ROW_X }}>
                   {env()?.missing.some((m) => m.id === "platform-tools") ? "先在环境检查里安装 platform-tools（adb），才能看到手机。" : "插上手机并打开 USB 调试。"}
                 </Text>
               }>
-                <Each of={phones() ?? []} key={(p) => p.id}>{(p) => <PhoneRow phone={p} />}</Each>
+                <Each of={splitPhones(phones()).phones} key={(p) => p.id}>{(p) => <PhoneRow phone={p} />}</Each>
               </If>
+            </If>
+            <If when={splitPhones(phones()).mumu.length > 0}>
+              <Text style={{ color: token("muted-foreground"), ...TYPE.caption, fontWeight: WEIGHT.strong, paddingHorizontal: ROW_X, paddingTop: SPACE.inset, paddingBottom: SPACE.hair }}>MuMu 模拟器</Text>
+              <Each of={splitPhones(phones()).mumu} key={(p) => p.id}>{(p) => <PhoneRow phone={p} />}</Each>
             </If>
           </Scroll>
           <View style={{ height: 1, marginHorizontal: ROW_X, backgroundColor: token("border-subtle") }} />
