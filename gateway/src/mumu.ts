@@ -87,7 +87,11 @@ export function createMumu(deps: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = true;
 
-  async function refresh(): Promise<void> {
+  // 读列表排队：定时那次和开关机后那次同时跑时，先发起、晚返回的旧结果不能盖掉新结果
+  let reading: Promise<void> = Promise.resolve();
+  const refresh = (): Promise<void> => (reading = reading.then(readList));
+
+  async function readList(): Promise<void> {
     if (!deps.tool) return;
     try {
       const next = parseMumuInfo(await deps.tool(["info", "all"]));
@@ -116,7 +120,11 @@ export function createMumu(deps: {
   /** 对列表里的一台执行 mumutool open / close，成功后马上刷新列表（状态变化随 onChange 推出去）。 */
   async function act(verb: "open" | "close", index: number): Promise<void> {
     if (!deps.tool) throw new Error("本机没有安装 MuMu 模拟器");
-    if (!(current ?? []).some((m) => m.index === index)) throw new Error(`MuMu 里没有编号 ${index} 的设备`);
+    const m = (current ?? []).find((x) => x.index === index);
+    if (!m) throw new Error(`MuMu 里没有编号 ${index} 的设备`);
+    // 列表刷新前页面上的按钮可能被连点：已经在开、在关的不再发一次
+    if (verb === "open" && m.state !== "stopped") throw new Error(`${m.name} 已经开着或正在开关机`);
+    if (verb === "close" && m.state !== "running") throw new Error(`${m.name} 没有在运行`);
     toolReturn(await deps.tool([verb, String(index)]));
     await tick();
   }

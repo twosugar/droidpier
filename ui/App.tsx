@@ -1276,6 +1276,8 @@ function App() {
   const mumu = signal<MumuInfo[] | null>(null);
   // 等用户确认关机的那台 MuMu
   const mumuCloseAsk = signal<MumuInfo | null>(null);
+  // 刚点了“启动”、列表还没变成启动中的那台：按钮先显示启动中并禁用，免得连点（网关每 5 秒读一次列表）
+  const mumuStarting = signal<number | null>(null);
   // 当前设备的身份和能力（ready 带来）：真机的 serial 是 0，按 deviceId 认设备；deviceSize 是 ready.device，真机不在 AVD 列表里，设备框比例靠它
   const deviceId = signal("");
   const kind = signal<"emulator" | "phone">("emulator");
@@ -2003,15 +2005,25 @@ function App() {
     const pickable = () => !!r().phone && canPick(r().phone!);
     const current = () => !!r().phone && isCurrentPhone(r().phone!);
     const ok = () => r().mumu ? r().mumu!.state === "running" && pickable() : pickable();
-    const startMumu = () => { const m = r().mumu; if (m) gw(host.call("emu.mumuOpen", { index: m.index })); };
+    const startMumu = () => {
+      const m = r().mumu;
+      if (!m) return;
+      mumuStarting.set(m.index);
+      // 开机没成功（网关回了错误）时列表不会变：15 秒后（我定的，够网关读几次列表）让按钮回来
+      setTimeout(() => { if (mumuStarting() === m.index) mumuStarting.set(null); }, 15_000);
+      gw(host.call("emu.mumuOpen", { index: m.index }));
+    };
+    const starting = () => mumuStarting() === r().mumu?.index;
+    // “启动”放在右键菜单的触发区外面：在它上面右键不该弹出“关机”
     return (
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.hair }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
       <ContextMenu offset={SPACE.part} popupStyle={menuPopup("top left")} popupStartingStyle={popOut("above")} popupEndingStyle={popOut("above")}
         onOpenChange={releaseOnOpen} trigger={
-        <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.hair }}>
           <Button onPress={() => { const ph = r().phone; if (ph) pickPhone(ph); }} selected={!!r().phone && selected() === r().phone!.id}
             accessibilityLabel={`${mumuRowTitle(r())}，${mumuRowStatus(r(), current())}`}
             {...rowStates()} hoverStyle={pickable() ? { backgroundColor: token("accent") } : undefined} activeStyle={pickable() ? pressed() : undefined}
-            style={{ ...rowStyle(), flex: 1, minWidth: 0 }}>
+            style={rowStyle()}>
             <View style={avatarStyle()}>
               <Icon name="smartphone" size={ICON.md} tint={ok() ? token("foreground") : token("muted-foreground")} />
             </View>
@@ -2023,15 +2035,21 @@ function App() {
               <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{r().phone ? phoneDetail(r().phone!) : ""}</Text>
             </If>
           </Button>
-          <If when={r().mumu?.state === "stopped" && !gatewayDown(state())}>
-            <Btn label="启动" onPress={startMumu} />
-          </If>
-        </View>
       }>
         <Item label="关机…" disabled={r().mumu?.state !== "running" || gatewayDown(state())} onSelect={() => { const m = r().mumu; if (m) mumuCloseAsk.set(m); }} />
       </ContextMenu>
+      </View>
+      <If when={r().mumu?.state === "stopped" && !gatewayDown(state())}>
+        <Btn label={starting() ? "启动中…" : "启动"} disabled={starting()} onPress={startMumu} />
+      </If>
+      </View>
     );
   };
+  // 列表里那台已经不是“未运行”了（开始开机）：启动按钮的临时状态交还给列表
+  effect(() => {
+    const i = mumuStarting();
+    if (i !== null && (mumu() ?? []).find((m) => m.index === i)?.state !== "stopped") mumuStarting.set(null);
+  });
 
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: token("background"), ...ease("normal") }}>

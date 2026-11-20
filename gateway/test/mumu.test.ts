@@ -128,6 +128,8 @@ test("open / close：对列表里的设备执行 mumutool，然后马上刷新�
   assert.deepEqual(h.tool.filter((a) => a[0] !== "info"), [["open", "0"]]);
   assert.equal(c.list()![0].state, "starting");
   await assert.rejects(c.open(5), /没有编号 5/);
+  state = "running";
+  await c.tick();
   await c.close(0);
   assert.deepEqual(h.tool.filter((a) => a[0] !== "info"), [["open", "0"], ["close", "0"]]);
 });
@@ -150,4 +152,44 @@ test("info 读失败：记一次日志，保留上一次的列表", async () => 
   await c.tick();
   assert.equal(c.list()!.length, 2);
   assert.equal(h.logs.filter((l) => /读不到 MuMu/.test(l)).length, 1);
+});
+
+test("同时有两次读列表（定时读和开机后的读）时排队执行，后读到的新状态不会被先发起、晚返回的旧状态盖掉", async () => {
+  let n = 0;
+  const c = createMumu({
+    tool: async (args) => {
+      if (args[0] !== "info") return JSON.stringify({ errcode: 0, return: {} });
+      const call = ++n;
+      // 第一次（定时那次）慢、读到的是旧状态；第二次（开机后那次）快、读到新状态
+      if (call === 1) await new Promise((r) => setTimeout(r, 30));
+      return JSON.stringify({ errcode: 0, return: { results: [{ index: 0, name: "a", state: call === 1 ? "stopped" : "starting" }] } });
+    },
+    probe: async () => false, connect: async () => "", connected: () => [], log: () => {},
+  });
+  await Promise.all([c.tick(), c.tick()]);
+  assert.equal(c.list()![0].state, "starting");
+});
+
+test("open 只对未运行的设备、close 只对运行中的设备执行；状态不对时拒绝，不执行 mumutool", async () => {
+  let state = "running";
+  const { h, c } = withTool(() => JSON.stringify({ errcode: 0, return: { results: [{ index: 0, name: "a", state }] } }));
+  await c.tick();
+  await assert.rejects(c.open(0), /已经开着/);
+  state = "starting";
+  await c.tick();
+  await assert.rejects(c.open(0), /已经开着/);
+  await assert.rejects(c.close(0), /没有在运行/);
+  assert.deepEqual(h.tool.filter((a) => a[0] !== "info"), []);
+});
+
+test("adb 里已经在线的 MuMu 不再重复 adb connect", async () => {
+  const info = JSON.stringify({ errcode: 0, return: { results: [{ index: 0, name: "a", state: "running", adb_port: 16384 }] } });
+  const connects: string[] = [];
+  const c = createMumu({
+    tool: async () => info, probe: async () => true,
+    connect: async (addr) => { connects.push(addr); return `connected to ${addr}`; },
+    connected: () => ["127.0.0.1:16384"], log: () => {},
+  });
+  await c.tick();
+  assert.deepEqual(connects, []);
 });
