@@ -10,12 +10,13 @@ import { logCells } from "./log-columns";
 import { isStaleStatus } from "./status-rev";
 import { gbText, spaceCheck } from "../shared/disk-space";
 import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
-import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
+import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type IosSimInfo, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
 import { deviceFrame } from "../shared/screen";
 import { glideFrames, poseAt, REST, startPose, turnAngle, type Glide } from "./device-motion";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
 import { searchSidebar } from "./device-search";
+import { currentIosSimOf, iosSimRows, iosSimStatus } from "./ios-sims";
 import { canPick, currentPhoneOf, phoneDetail, phoneLabel, phoneStatus, showPhones, splitPhones, mumuRows, mumuRowStatus, mumuRowTitle, type MumuRow, phoneTitle } from "./phones";
 import { h5PollMs } from "./h5-poll";
 import { shouldCloseConsole, type ConsoleEvent } from "./console-gone";
@@ -752,6 +753,8 @@ function H5Console(props: {
   onInspect: (key: string, title: string) => void; onClose: () => void; onCopy: (url: string) => void;
   /** DevTools 的选择元素模式开着，画面上的鼠标在 WebView 里高亮、选中。 */
   picking: () => boolean;
+  /** 地址栏能不能改了跳转（靠 adb reverse 和 CDP）：iOS 模拟器不能，只显示、复制地址。 */
+  canNavigate: () => boolean;
   /** 画面上是手机：adb 卡住时说手机。 */
   phone: () => boolean;
 }) {
@@ -860,7 +863,7 @@ function H5Console(props: {
         <FieldBox icon="link" label="页面地址" focused={addressFocused()} style={{ flex: 1, minWidth: 96, opacity: navigating() ? 0.6 : 1 }}
           trailing={<IconButton icon="copy" label="复制地址" size="sm" disabled={!currentUrl()} why="还没有页面地址" onPress={() => props.onCopy(currentUrl()!)} />}>
           <Input value={addressShown(draft(), currentUrl())} onChange={({ value }) => draft.set(addressEdit(currentUrl(), value))} onSubmit={navigate}
-            submitBehavior="submit" readonly={!activePage() || navigating()}
+            submitBehavior="submit" readonly={!activePage() || navigating() || !props.canNavigate()}
             onFocus={() => addressFocused.set(true)} onBlur={() => addressFocused.set(false)}
             placeholder="localhost:5173/path" accessibilityLabel="页面地址，改了按回车跳转" autoCapitalize="none" autoCorrect={false}
             style={fieldText(true)} />
@@ -1282,6 +1285,12 @@ function App() {
   // 装了 MuMu 但播放器没打开：MuMu 分组里给“打开 MuMu”；mumuLaunching 是点了之后、列表回来之前的临时状态
   const mumuAppClosed = signal(false);
   const mumuLaunching = signal(false);
+  // iOS 模拟器列表（网关用 simctl 读的）；没装 Xcode 或旧网关时一直是 null。另外三个同 MuMu 那组
+  const iosSims = signal<IosSimInfo[] | null>(null);
+  const iosSimCloseAsk = signal<IosSimInfo | null>(null);
+  const iosSimStarting = signal<string | null>(null);
+  // 没在运行的 iOS 模拟器默认收起（ui/ios-sims.ts）
+  const iosShowAll = signal(false);
   // 当前设备的身份和能力（ready 带来）：真机的 serial 是 0，按 deviceId 认设备；deviceSize 是 ready.device，真机不在 AVD 列表里，设备框比例靠它
   const deviceId = signal("");
   const kind = signal<"emulator" | "phone">("emulator");
@@ -1514,6 +1523,7 @@ function App() {
     mumuAppClosed.set(p.appClosed === true);
     if (!p.appClosed) mumuLaunching.set(false);
   });
+  host.on("emu.iosSims", (p: { list: IosSimInfo[] | null }) => iosSims.set(p.list));
   host.on("emu.boot", (b: Boot) => {
     boots.set({ ...boots(), [b.name]: b });
     pendingEvent({ kind: "boot", name: b.name });
@@ -1541,7 +1551,7 @@ function App() {
       () => copyFailed.set(true),
     );
   };
-  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; phones?: PhoneInfo[] | null; mumu?: MumuInfo[] | null; mumuAppClosed?: boolean; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & DeviceStatus & Omit<Setup, "rev">) => {
+  host.call("emu.status", {}).then((s: { state: State; serial: number; rotation: number; fps: number; latencyMs: number; avds: Avd[] | null; phones?: PhoneInfo[] | null; mumu?: MumuInfo[] | null; mumuAppClosed?: boolean; iosSims?: IosSimInfo[] | null; boots: Boot[]; upgrade: string | null; rev: number; uploads?: Upload[]; gateway?: GatewayBanner | null } & DeviceStatus & Omit<Setup, "rev">) => {
     applySetup({ env: s.env, installs: s.installs, license: s.license, rev: s.rev });
     if (!isStaleStatus(s.rev, gatewayRev)) {
       gatewayRev = s.rev;
@@ -1563,6 +1573,7 @@ function App() {
     if (s.phones) phones.set(s.phones);
     if (s.mumu) mumu.set(s.mumu);
     mumuAppClosed.set(s.mumuAppClosed === true);
+    if (s.iosSims) iosSims.set(s.iosSims);
     boots.set(Object.fromEntries(s.boots.map((b) => [b.name, b])));
   });
 
@@ -1660,6 +1671,9 @@ function App() {
   });
   // 主区现在连着的真机（不是真机时为 undefined）；lastPhone 给重启中手机暂时不在列表里时用
   let lastPhone: PhoneInfo | undefined;
+  const currentIos = () => currentIosSimOf(iosSims(), { kind: kind(), deviceId: deviceId(), state: state() });
+  // 设备走 adb 才有 H5 调试、日志、装 APK（iOS 模拟器没有）；旧网关不报，当作有
+  const viaAdb = () => caps()?.adb !== false;
   const currentPhone = () => {
     const p = currentPhoneOf(phones(), lastPhone, { kind: kind(), deviceId: deviceId(), state: state() });
     if (p) lastPhone = p;
@@ -1708,7 +1722,8 @@ function App() {
   const searching = () => search().searching;
   const listedPhones = () => search().phones;
   const listedMumu = () => search().mumu;
-  const noMatch = () => search().noMatch;
+  // iOS 模拟器那组单独筛（ui/ios-sims.ts 的 iosSimRows）：它有匹配时也不算「都没有」
+  const noMatch = () => search().noMatch && iosSimRows(iosSims(), query(), false).rows.length === 0;
   // 选中的设备：主区显示它。连上的设备换了（启动、切换）就选中那一台；用户点选没在运行的设备时只是选中，不启动
   const selected = signal<string | null>(null);
   let lastCurrent: string | null = null;
@@ -2100,6 +2115,62 @@ function App() {
     if (i !== null && (mumu() ?? []).find((m) => m.index === i)?.state !== "stopped") mumuStarting.set(null);
   });
 
+  const isCurrentIos = (s: IosSimInfo) => currentIos()?.udid === s.udid;
+  // 图标颜色同模拟器行（avdTint）：运行中绿、开关机中黄、其余灰
+  const iosTint = (s: IosSimInfo) =>
+    gatewayDown(state()) ? token("muted-foreground") : s.state === "booted" ? token("success") : s.state === "shutdown" ? token("muted-foreground") : token("warning");
+  const pickIos = (s: IosSimInfo) => {
+    if (s.state !== "booted") return;
+    if (s.udid !== selected()) animateNext();
+    selected.set(s.udid);
+    if (!gatewayDown(state()) && !isCurrentIos(s)) gw(host.call("emu.use", { name: s.udid }));
+  };
+  // iOS 模拟器一行：开着的点了切过去；没开机的行尾有“启动”；开着的右键能关机（先确认）。样式同 MuMu 那组
+  const IosSimRow = (props: { sim: () => IosSimInfo }) => {
+    const s = props.sim;
+    const on = () => s().state === "booted";
+    const starting = () => iosSimStarting() === s().udid;
+    const start = () => {
+      const u = s().udid;
+      iosSimStarting.set(u);
+      // 开机没成功（网关回了错误）时列表不会变：15 秒后让按钮回来（同 MuMu）
+      setTimeout(() => { if (iosSimStarting() === u) iosSimStarting.set(null); }, 15_000);
+      gw(host.call("emu.iosSimOpen", { udid: u }));
+    };
+    return (
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.hair }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+      <ContextMenu offset={SPACE.part} popupStyle={menuPopup("top left")} popupStartingStyle={popOut("above")} popupEndingStyle={popOut("above")}
+        onOpenChange={releaseOnOpen} trigger={
+          <Button onPress={() => pickIos(s())} selected={selected() === s().udid} accessibilityLabel={`${s().name}，${s().runtime}，${iosSimStatus(s(), isCurrentIos(s()))}`}
+            {...rowStates()} hoverStyle={on() ? { backgroundColor: token("accent") } : undefined} activeStyle={on() ? pressed() : undefined}
+            style={rowStyle()}>
+            <View style={avatarStyle()}>
+              <Icon name="smartphone" size={ICON.md} tint={iosTint(s())} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0, gap: SPACE.hair }}>
+              <Text style={{ color: token("foreground"), ...TYPE.body, fontWeight: WEIGHT.strong }}>{s().name}</Text>
+              <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{iosSimStatus(s(), isCurrentIos(s()))}</Text>
+            </View>
+            <If when={s().state !== "shutdown"}>
+              <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{s().runtime.replace(/^iOS /, "")}</Text>
+            </If>
+          </Button>
+      }>
+        <Item label="关机…" disabled={!on() || gatewayDown(state())} onSelect={() => iosSimCloseAsk.set(s())} />
+      </ContextMenu>
+      </View>
+      <If when={s().state === "shutdown" && !gatewayDown(state())}>
+        <Btn label={starting() ? "启动中…" : "启动"} disabled={starting()} onPress={start} />
+      </If>
+      </View>
+    );
+  };
+  effect(() => {
+    const u = iosSimStarting();
+    if (u !== null && (iosSims() ?? []).find((s) => s.udid === u)?.state !== "shutdown") iosSimStarting.set(null);
+  });
+
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: token("background"), ...ease("normal") }}>
       <If when={sidebarShown()}>
@@ -2158,6 +2229,16 @@ function App() {
                 </View>
               </If>
             </If>
+            {/* 搜索时没有匹配的模拟器就整组不显示，不留空标题 */}
+            <If when={iosSimRows(iosSims(), query(), iosShowAll()).rows.length > 0 || iosSimRows(iosSims(), query(), iosShowAll()).hidden > 0}>
+              <Text style={{ color: token("muted-foreground"), ...TYPE.caption, fontWeight: WEIGHT.strong, paddingHorizontal: ROW_X, paddingTop: SPACE.inset, paddingBottom: SPACE.hair }}>iOS 模拟器</Text>
+              <Each of={iosSimRows(iosSims(), query(), iosShowAll()).rows} key={(s) => s.udid}>{(s) => <IosSimRow sim={s} />}</Each>
+              <If when={iosSimRows(iosSims(), query(), iosShowAll()).hidden > 0 || (iosShowAll() && !query().trim())}>
+                <View style={{ paddingHorizontal: ROW_X, alignItems: "flex-start" }}>
+                  <Btn label={iosShowAll() ? "只显示运行中的" : `显示未运行的 ${iosSimRows(iosSims(), query(), false).hidden} 台`} onPress={() => { animateNext(); iosShowAll.set(!iosShowAll()); }} />
+                </View>
+              </If>
+            </If>
           </Scroll>
           <View style={{ height: 1, marginHorizontal: ROW_X, backgroundColor: token("border-subtle") }} />
           <AppMenu site={site()} theme={theme()} onTheme={pickTheme} setup={setupMenuLabel()}
@@ -2174,7 +2255,7 @@ function App() {
             <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE.item }}>
               {/* 设备名先占够自己的宽度，包名只用剩下的；名字本身放不下时中间省略 */}
               <Text role="header" style={{ flexShrink: 1, color: token("foreground"), ...TYPE.heading, numberOfLines: 1 }}>
-                {noBreak(fitMiddle(shown() ? avdLabel(shown()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : "没有连接设备", titleWidth(), TYPE.heading.fontSize))}
+                {noBreak(fitMiddle(shown() ? avdLabel(shown()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : "没有连接设备", titleWidth(), TYPE.heading.fontSize))}
               </Text>
               <If when={h5Open() ? foregroundPkg(pages() ?? []) : null}>
                 {(pkg) => <Text style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, color: token("muted-foreground"), ...TYPE.caption, fontFamily: "monospace", numberOfLines: 1 }}>{noBreak(pkg())}</Text>}
@@ -2214,7 +2295,7 @@ function App() {
                 <ToolToggle icon="code" label="H5 调试" tip="H5 调试" on={h5Open()} onChange={toggleH5} />
               </ToolGroup>
             </If>
-            <If when={logcatOk() && device() !== ""}>
+            <If when={logcatOk() && device() !== "" && viaAdb()}>
               <ToolGroup label="日志">
                 <ToolToggle icon="logs" label="日志" tip="日志（logcat）" on={logOpen()} onChange={toggleLog} />
               </ToolGroup>
@@ -2225,7 +2306,9 @@ function App() {
                 <IconButton variant="toolbar" icon="more" label="更多操作" />
               }>
                 {/* 和把文件拖到画面上走同一条路（host 的 emu.pickFiles 打开选择文件框） */}
-                <Item label="安装 APK 或发送文件…" disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
+                <If when={viaAdb()}>
+                  <Item label="安装 APK 或发送文件…" disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
+                </If>
                 <If when={caps()?.reboot !== false}>
                   <Item label={state() === "rebooting" ? "重启中…" : `${rebootLabel(kind() === "phone")}…`} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
                 </If>
@@ -2235,7 +2318,10 @@ function App() {
                     disabled={!stoppable(onScreen())}
                     onSelect={() => { const a = onScreen(); if (a) openStop(a); }} />
                 </If>
-                <MenuLine />
+                {/* 上面一项都没有时（iOS 模拟器）不画分隔线 */}
+                <If when={viaAdb() || caps()?.reboot !== false || caps()?.stop !== false}>
+                  <MenuLine />
+                </If>
                 <Item label="重命名…" disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
                 <Item label="删除…" danger disabled={!shown() || beingDeleted(shown()!)}
                   onSelect={() => { const a = shown(); if (a) openDelete(a); }} />
@@ -2291,7 +2377,7 @@ function App() {
                       borderColor: drag().blocked ? token("destructive") : token("primary"), backgroundColor: token("drag-shade"),
                     }}>
                       <Text style={{ color: drag().blocked ? token("destructive") : token("foreground"), ...TYPE.title, textAlign: "center" }}>
-                        {drag().blocked ? `不能发送：${drag().blocked}` : `松开以发送到 ${currentAvd() ? avdLabel(currentAvd()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : "这台设备"}`}
+                        {drag().blocked ? `不能发送：${drag().blocked}` : `松开以发送到 ${currentAvd() ? avdLabel(currentAvd()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : "这台设备"}`}
                       </Text>
                       <If when={!drag().blocked}>
                         <Text style={{ color: token("muted-foreground"), ...TYPE.caption, textAlign: "center" }}>APK 会直接安装，其他文件放进「下载」文件夹</Text>
@@ -2430,7 +2516,7 @@ function App() {
             <If when={h5Open()}>
               <View accessibilityElementsHidden={logOpen() && sideTab() === "log"} style={{ flex: 1, minHeight: 0, ...panelShown(!(logOpen() && sideTab() === "log")) }}>
                 <H5Console pages={pages} listError={listError} refresh={refresh} inspected={inspected} onReboot={() => rebootAsk.set(true)}
-                  onInspect={(key, title) => inspected.set({ key, title, device: deviceId() })} onClose={toggleH5} onCopy={copyHref} picking={picking}
+                  onInspect={(key, title) => inspected.set({ key, title, device: deviceId() })} onClose={toggleH5} onCopy={copyHref} picking={picking} canNavigate={viaAdb}
                   phone={() => kind() === "phone"} />
               </View>
             </If>
@@ -2554,6 +2640,18 @@ function App() {
                 <Text style={{ color: token("warning"), ...TYPE.body }}>这台设备正在运行，删除前会先停止它。</Text>
               </If>
               <If when={deleteError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption, userSelect: "text" }}>{e()}</Text>}</If>
+            </DialogContent>
+          )}
+        </If>
+      </AppDialog>
+      <AppDialog open={iosSimCloseAsk() !== null} size="sm" onClose={() => iosSimCloseAsk.set(null)}>
+        <If when={iosSimCloseAsk()}>
+          {(m) => (
+            <DialogContent title={`关掉 iOS 模拟器「${m().name}」？`} footer={<>
+              <Btn label="取消" onPress={() => iosSimCloseAsk.set(null)} />
+              <Btn label="关机" kind="danger" onPress={() => { gw(host.call("emu.iosSimClose", { udid: m().udid })); iosSimCloseAsk.set(null); }} />
+            </>}>
+              <Text style={{ color: token("foreground"), ...TYPE.body }}>正在运行的 App 和未保存的内容会丢失。之后可以在这里再启动。</Text>
             </DialogContent>
           )}
         </If>
