@@ -19,7 +19,9 @@ import { createLogcatHub, dumpLogcat, parseApps, readLogcat } from "./logcat.ts"
 import type { LogFilter } from "../../shared/logcat.ts";
 import { createReverses } from "./reverse.ts";
 import { connectCdp } from "./cdp.ts";
-import { adb, emulatorId, killAdbChildren } from "./adb.ts";
+import { adb, emulatorId, killAdbChildren, streamAdb } from "./adb.ts";
+import { iosLogLines, iosLogStream, parseLaunchctlApps } from "./ios-log.ts";
+import { isIosSimUdid } from "../../shared/protocol.ts";
 import { turnOffAutoPrivateDns } from "./private-dns.ts";
 import { createPhones } from "./phones.ts";
 import { connectIosSim, createHelperSpawner, createIosSims, hasHomeButton, helperSourcePath, nativeAssetPath, simctl, simctlDeviceOps } from "./ios-sim.ts";
@@ -162,21 +164,28 @@ let last: EmulatorSession | null = null;
 // 真机列表：discover 要靠它认出真机 id，所以先建
 const phones = createPhones({ stream: adb.stream, exec: adb.device });
 
+// iOS 模拟器里运行中的 App（launchctl list），日志面板的 App 下拉和按 App 过滤都用它
+const iosApps = (udid: string) => simctl(["spawn", udid, "launchctl", "list"]).then(parseLaunchctlApps, () => []);
 // pidof 在 App 没运行时返回码非零，当作没有 pid
 const logcatPidof = (id: string, pkg: string) =>
-  adb.device(id)(["shell", "pidof", pkg]).then((out) => out.trim().split(/\s+/).filter(Boolean).map(Number), () => [] as number[]);
-// 日志面板：每台设备一个 adb logcat，有页面订阅才运行（gateway/src/logcat.ts）
+  isIosSimUdid(id)
+    ? iosApps(id).then((apps) => apps.filter((a) => a.bundle === pkg).map((a) => a.pid))
+    : adb.device(id)(["shell", "pidof", pkg]).then((out) => out.trim().split(/\s+/).filter(Boolean).map(Number), () => [] as number[]);
+// 日志面板：每台设备一个 adb logcat（iOS 模拟器是 log stream），有页面订阅才运行（gateway/src/logcat.ts）
 const logcat = createLogcatHub({
-  stream: (id, h) => adb.stream(["-s", id, "logcat", "-v", "threadtime", "-T", "500"], h),
+  stream: (id, h) => (isIosSimUdid(id) ? iosLogStream(streamAdb, id, h) : adb.stream(["-s", id, "logcat", "-v", "threadtime", "-T", "500"], h)),
   pidof: logcatPidof,
   log: note,
 });
+// iOS 模拟器读最近 30 秒：ndjson 很啰嗦，2 分钟就有约 96 MB，超过 simctl 的 64 MB 输出上限（2026-11-22 实测）
+const iosLogDump = (udid: string) =>
+  simctl(["spawn", udid, "log", "show", "--last", "30s", "--info", "--style", "ndjson"]).then((out) => out.split("\n").flatMap(iosLogLines).join("\n"));
 const logcatRead = async (id: string, f: LogFilter, limit: number) => {
-  const dump = await dumpLogcat((n) => adb.device(id)(["logcat", "-d", "-v", "threadtime", "-t", String(n)]));
+  const dump = isIosSimUdid(id) ? await iosLogDump(id) : await dumpLogcat((n) => adb.device(id)(["logcat", "-d", "-v", "threadtime", "-t", String(n)]));
   const pids = f.pkg === null ? [] : await logcatPidof(id, f.pkg);
   return readLogcat(dump, pids, f, limit);
 };
-const apps = async (id: string) => ({
+const apps = async (id: string) => isIosSimUdid(id) ? { foreground: null, apps: [...new Set((await iosApps(id)).map((a) => a.bundle))].sort() } : ({
   foreground: await adb.device(id)(FOREGROUND_CMD).then(parseResumedPkg, () => null),
   apps: await adb.device(id)(["shell", "ps", "-A", "-o", "USER,NAME"]).then(parseApps, () => []),
 });

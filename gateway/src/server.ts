@@ -167,6 +167,8 @@ const PHONE_ADB_UNRESPONSIVE = "手机的 adb 没有响应：重新插拔手机�
 const NO_ADB = "iOS 模拟器暂不支持这个功能";
 /** 会话走不走 adb（H5 调试、日志、装 APK 都靠它）：只有 caps.adb 明确为 false 时不走（iOS 模拟器）。 */
 const viaAdb = (s: EmulatorSession) => s.caps.adb !== false;
+/** 有没有日志面板：走 adb 的设备都有，iOS 模拟器靠 caps.logs。 */
+const hasLogs = (s: EmulatorSession) => viaAdb(s) || s.caps.logs === true;
 /** 真机（走 adb 的 phone 会话）：断开后等它插回、自动重连。iOS 模拟器的 kind 也是 phone（同一条视频通路），但不算。 */
 const isPhone = (s: EmulatorSession) => s.kind === "phone" && viaAdb(s);
 
@@ -914,7 +916,7 @@ export async function startServer(opts: {
       logSub?.close();
       logSub = undefined;
       const s = conn.session;
-      if (!logFilter || !s || !opts.logcat || !viaAdb(s)) return;
+      if (!logFilter || !s || !opts.logcat || !hasLogs(s)) return;
       logSub = opts.logcat.subscribe(s.id, logFilter, (lines, reset) => {
         // 页面跟不上时这批不发，下一批告诉它省略了多少行（plans/2026-11-16-real-device-pr5-logcat.md 取舍 7）
         if (!reset && ws.bufferedAmount > LOG_BACKLOG_BYTES) {
@@ -1483,7 +1485,7 @@ export async function startServer(opts: {
           break;
         case "logcatApps": {
           const s = conn.session;
-          const r = s && viaAdb(s) && opts.apps ? await opts.apps(s.id).catch(() => null) : null;
+          const r = s && hasLogs(s) && opts.apps ? await opts.apps(s.id).catch(() => null) : null;
           send(ws, { t: "logcatApps", rid: m.rid, foreground: r?.foreground ?? null, apps: r?.apps ?? [] });
           break;
         }
@@ -1491,7 +1493,7 @@ export async function startServer(opts: {
           const s = conn.session;
           if (!opts.logcatRead) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: "网关不支持读日志" });
           else if (!s) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: "没有连接设备" });
-          else if (!viaAdb(s)) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: NO_ADB });
+          else if (!hasLogs(s)) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: NO_ADB });
           else {
             await opts.logcatRead(s.id, m.filter, m.limit).then(
               (lines) => send(ws, { t: "logcatRead", rid: m.rid, lines }),

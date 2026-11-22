@@ -169,7 +169,8 @@ export type AvdInfo = {
 /** 这台设备支持什么，页面和 WebMCP 只看它决定显示哪些操作（docs/superpowers/specs/2026-11-13-real-device-design.md 6.1）。 */
 /** scroll：能收原生滚动（scroll 消息）；没有时页面用滑动模拟滚轮。 */
 /** adb：设备走 adb，能用 H5 调试、日志、装 APK、传文件；只有 false 时才没有（iOS 模拟器），旧网关不发。 */
-export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean; scroll: boolean; adb?: boolean };
+/** logs：不走 adb 也有日志面板（iOS 模拟器的 log stream）；走 adb 的设备不带这一项也有。 */
+export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean; scroll: boolean; adb?: boolean; logs?: boolean };
 
 /** emulator：第三方模拟器，mumu 是 MuMu 模拟器（侧栏单独一组）；真机没有这个字段，旧网关也不发。 */
 /**

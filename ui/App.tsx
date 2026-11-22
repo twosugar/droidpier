@@ -2295,9 +2295,9 @@ function App() {
                 <ToolToggle icon="code" label="H5 调试" tip="H5 调试" on={h5Open()} onChange={toggleH5} />
               </ToolGroup>
             </If>
-            <If when={logcatOk() && device() !== "" && viaAdb()}>
+            <If when={logcatOk() && device() !== "" && (viaAdb() || caps()?.logs === true)}>
               <ToolGroup label="日志">
-                <ToolToggle icon="logs" label="日志" tip="日志（logcat）" on={logOpen()} onChange={toggleLog} />
+                <ToolToggle icon="logs" label="日志" tip={viaAdb() ? "日志（logcat）" : "日志（系统日志）"} on={logOpen()} onChange={toggleLog} />
               </ToolGroup>
             </If>
             <ToolGroup label="更多操作">

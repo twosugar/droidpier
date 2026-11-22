@@ -17,7 +17,7 @@ const INTERVAL_MS = 5000;
 const FIRST_FRAME_MS = 15_000;
 
 /** 画面、触摸、按键和文字（gateway/src/ios-keys.ts）；没有旋转、重启、滚轮，也不走 adb（H5 调试、日志、装 APK）。 */
-export const IOS_SIM_CAPS: DeviceCaps = { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: false, adb: false };
+export const IOS_SIM_CAPS: DeviceCaps = { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: false, adb: false, logs: true };
 
 const STATES: Record<string, IosSimInfo["state"]> = { Shutdown: "shutdown", Booting: "booting", Booted: "booted", "Shutting Down": "shutting-down" };
 
