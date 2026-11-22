@@ -50,7 +50,6 @@ export function parseLastUsedAt(plist: string): number | undefined {
   return Number.isFinite(t) ? t : undefined;
 }
 
-/** simctl list devices -j → UDID 到机型（deviceTypeIdentifier）。 */
 /** simctl list runtimes available -j → 创建对话框的目录：只要 iOS（不要 watchOS、tvOS），版本新的在前，iPhone 排在 iPad 前面。 */
 export function parseIosCatalog(json: string): IosCatalog {
   type Rt = { identifier?: string; name?: string; version?: string; platform?: string; isAvailable?: boolean; supportedDeviceTypes?: Array<{ identifier?: string; name?: string; productFamily?: string }> };
@@ -78,6 +77,7 @@ export function parseIosCatalog(json: string): IosCatalog {
   };
 }
 
+/** simctl list devices -j → UDID 到机型（deviceTypeIdentifier）。 */
 export function parseDeviceTypes(json: string): Map<string, string> {
   const out = new Map<string, string>();
   const devices = (JSON.parse(json) as { devices?: Record<string, Array<Record<string, unknown>>> }).devices ?? {};
@@ -166,6 +166,8 @@ export function createIosSims(deps: {
     async create(name: string, deviceType: string, runtime: string): Promise<string> {
       const udid = (await deps.simctl(["create", name, deviceType, runtime])).trim();
       await refresh();
+      // simctl 只该输出新模拟器的 UDID；别的内容不往下传（页面会拿它去开机）
+      if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(udid)) throw new Error(`simctl 没有返回新模拟器的 UDID：${udid.slice(0, 80)}`);
       return udid;
     },
     close: (udid: string) => act("shutdown", udid),

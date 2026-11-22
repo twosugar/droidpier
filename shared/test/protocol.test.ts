@@ -248,5 +248,6 @@ test("parseClientMsg 解析 iosCatalog / createIosSim；名字为空、太长、
     { name: "a\nb", deviceType: dt, runtime: rt },
     { name: "a", deviceType: "--set /tmp", runtime: rt },
     { name: "a", deviceType: dt, runtime: "iOS 18.3" },
+    { name: "--help", deviceType: dt, runtime: rt },
   ]) assert.equal(parseClientMsg(JSON.stringify({ t: "createIosSim", rid: 3, ...bad })), null, JSON.stringify(bad));
 });

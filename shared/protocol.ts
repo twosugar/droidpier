@@ -13,7 +13,7 @@ export const PROTOCOL_VERSION = 1;
  * 3：日志面板（logcatOpen / logcatFilter / logcatClose / logcatApps）。
  * 4：logcatRead（WebMCP 读日志）。
  * 5：mumu 列表、mumuOpen / mumuClose（从页面开关 MuMu 模拟器）。
- * 6：iosSims 列表、iosSimOpen / iosSimClose（iOS 模拟器）；use 认 iOS 模拟器的 UDID。
+ * 6：iosSims 列表、iosSimOpen / iosSimClose、iosCatalog / createIosSim（iOS 模拟器）；use 认 iOS 模拟器的 UDID；caps.logs。
  */
 export const GATEWAY_LEVEL = 6;
 
@@ -555,9 +555,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "iosCatalog":
       return isNum(o.rid) ? { t: "iosCatalog", rid: o.rid } : null;
     case "createIosSim":
-      // 都作为参数交给 simctl（不经 shell）：名字限长、不许换行，机型和版本只收 simctl 标识的写法
+      // 都作为参数交给 simctl（不经 shell）：名字限长、不许换行、不许 - 开头（simctl 会当成选项），机型和版本只收 simctl 标识的写法
       if (!isNum(o.rid) || !isStr(o.name) || !isStr(o.deviceType) || !isStr(o.runtime)) return null;
-      if (!o.name.trim() || o.name.length > 64 || /[\r\n]/.test(o.name) || !IOS_DEVICE_TYPE_RE.test(o.deviceType) || !IOS_RUNTIME_RE.test(o.runtime)) return null;
+      if (!o.name.trim() || o.name.length > 64 || /[\r\n]/.test(o.name) || o.name.trim().startsWith("-") || !IOS_DEVICE_TYPE_RE.test(o.deviceType) || !IOS_RUNTIME_RE.test(o.runtime)) return null;
       return { t: "createIosSim", rid: o.rid, name: o.name.trim(), deviceType: o.deviceType, runtime: o.runtime };
     case "iosSimOpen":
     case "iosSimClose":

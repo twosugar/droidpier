@@ -935,12 +935,12 @@ export async function createHost(player: Player) {
         if (typeof udid !== "string" || !isIosSimUdid(udid)) throw new Error(`${name} 需要 udid`);
         return ctl({ t: name === "emu.iosSimOpen" ? "iosSimOpen" : "iosSimClose", udid });
       }
-      // 创建 iOS 模拟器对话框：目录、创建（参数网关再核一遍）
+      // 创建 iOS 模拟器对话框：目录、创建（参数网关再核一遍）。创建最久等 130 秒：网关里 simctl create 最多 60 秒，再加刷新列表
       if (name === "emu.iosCatalog") return conn.request({ t: "iosCatalog" }, 30_000).then((r) => ({ catalog: r.catalog ?? null, error: r.error ?? null }));
       if (name === "emu.createIosSim") {
         const a = args as { name?: unknown; deviceType?: unknown; runtime?: unknown } | undefined;
         if (typeof a?.name !== "string" || typeof a.deviceType !== "string" || typeof a.runtime !== "string") throw new Error("emu.createIosSim 需要 name、deviceType、runtime");
-        return conn.request({ t: "createIosSim", name: a.name, deviceType: a.deviceType, runtime: a.runtime }, 60_000).then((r) => ({ udid: r.udid ?? null, error: r.error ?? null }));
+        return conn.request({ t: "createIosSim", name: a.name, deviceType: a.deviceType, runtime: a.runtime }, 130_000).then((r) => ({ udid: r.udid ?? null, error: r.error ?? null }));
       }
       if (name === "emu.stopAvd") {
         const target = needName(name, args);

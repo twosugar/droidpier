@@ -252,3 +252,8 @@ test("createIosSims.create：simctl create 名字、机型、版本，返回 udi
   assert.deepEqual(calls[0], ["create", "我的 iPhone", "com.apple.CoreSimulator.SimDeviceType.iPhone-16", "com.apple.CoreSimulator.SimRuntime.iOS-18-3"]);
   assert.deepEqual(calls[1], ["list", "devices", "available", "-j"]);
 });
+
+test("createIosSims.create：simctl 输出的不是 UDID 时报错，不把它当成新模拟器", async () => {
+  const sims = createIosSims({ simctl: async (args) => (args[0] === "create" ? "Usage: simctl create ...\n" : JSON.stringify({ devices: {} })), log: () => {} });
+  await assert.rejects(sims.create("a", "com.apple.CoreSimulator.SimDeviceType.iPhone-16", "com.apple.CoreSimulator.SimRuntime.iOS-18-3"), /没有返回新模拟器的 UDID/);
+});

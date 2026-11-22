@@ -1294,7 +1294,7 @@ function CreateIosSim(props: { top?: JSX.Element; onCancel: () => void; onCreate
   };
   // 默认就叫机型名：侧栏行尾已经有系统版本
   const name = () => customName() ?? pickedDevice()?.name ?? "";
-  const nameError = () => (!name().trim() ? "名字不能为空" : name().length > 64 ? "名字最多 64 个字" : null);
+  const nameError = () => (!name().trim() ? "名字不能为空" : name().length > 64 ? "名字最多 64 个字" : name().trim().startsWith("-") ? "名字不能以 - 开头" : null);
   const canCreate = () => !busy() && !!pickedRuntime() && !!pickedDevice() && nameError() === null;
   const create = () => {
     const r = pickedRuntime();
@@ -2725,6 +2725,9 @@ function App() {
                 // 建好就开机，开好后切过去（下面的 effect）
                 iosUseWhenBooted.set(udid);
                 iosSimStarting.set(udid);
+                // 开机没成功（网关回了错误、网关断了）时列表不会变：按钮 15 秒后回来（同侧栏的“启动”），不再等着自动切过去
+                setTimeout(() => { if (iosSimStarting() === udid) iosSimStarting.set(null); }, 15_000);
+                setTimeout(() => { if (iosUseWhenBooted() === udid) iosUseWhenBooted.set(null); }, 120_000);
                 gw(host.call("emu.iosSimOpen", { udid }));
               }} />
           </If>
