@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DeviceCaps, IosSimInfo } from "../../shared/protocol.ts";
+import type { DeviceCaps, IosCatalog, IosSimInfo } from "../../shared/protocol.ts";
 import type { DeviceSession, VideoPacket } from "./emulator.ts";
 import { iosKey, PASTE, type IosInput } from "./ios-keys.ts";
 
@@ -51,6 +51,33 @@ export function parseLastUsedAt(plist: string): number | undefined {
 }
 
 /** simctl list devices -j → UDID 到机型（deviceTypeIdentifier）。 */
+/** simctl list runtimes available -j → 创建对话框的目录：只要 iOS（不要 watchOS、tvOS），版本新的在前，iPhone 排在 iPad 前面。 */
+export function parseIosCatalog(json: string): IosCatalog {
+  type Rt = { identifier?: string; name?: string; version?: string; platform?: string; isAvailable?: boolean; supportedDeviceTypes?: Array<{ identifier?: string; name?: string; productFamily?: string }> };
+  const list = (JSON.parse(json) as { runtimes?: Rt[] }).runtimes ?? [];
+  const ver = (v: string | undefined) => (v ?? "").split(".").map(Number);
+  const newer = (a: Rt, b: Rt) => {
+    const [x, y] = [ver(a.version), ver(b.version)];
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0);
+    return 0;
+  };
+  const family = (f: string | undefined) => (f === "iPhone" ? 0 : f === "iPad" ? 1 : 2);
+  return {
+    runtimes: list
+      .filter((r) => r.isAvailable !== false && r.platform === "iOS" && r.identifier && r.name)
+      .sort(newer)
+      .map((r) => ({
+        id: r.identifier!,
+        name: r.name!,
+        devices: (r.supportedDeviceTypes ?? [])
+          .filter((d) => d.identifier && d.name && family(d.productFamily) < 2)
+          .map((d, i) => ({ d, i }))
+          .sort((a, b) => family(a.d.productFamily) - family(b.d.productFamily) || a.i - b.i)
+          .map(({ d }) => ({ id: d.identifier!, name: d.name! })),
+      })),
+  };
+}
+
 export function parseDeviceTypes(json: string): Map<string, string> {
   const out = new Map<string, string>();
   const devices = (JSON.parse(json) as { devices?: Record<string, Array<Record<string, unknown>>> }).devices ?? {};
@@ -133,6 +160,14 @@ export function createIosSims(deps: {
       listeners.push(cb);
     },
     open: (udid: string) => act("boot", udid),
+    /** 创建对话框的目录（装了哪些 iOS 版本、各能用哪些机型）。 */
+    catalog: async () => parseIosCatalog(await deps.simctl(["list", "runtimes", "available", "-j"])),
+    /** simctl create，返回新模拟器的 udid；列表马上刷新，新的一台随 onChange 推出去。 */
+    async create(name: string, deviceType: string, runtime: string): Promise<string> {
+      const udid = (await deps.simctl(["create", name, deviceType, runtime])).trim();
+      await refresh();
+      return udid;
+    },
     close: (udid: string) => act("shutdown", udid),
     /** 这台的机型（com.apple.CoreSimulator.SimDeviceType.*）；不知道时 undefined。 */
     deviceType: (udid: string) => types.get(udid),

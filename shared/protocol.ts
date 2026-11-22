@@ -187,6 +187,13 @@ export function isIosSimUdid(s: string): boolean {
 
 export type IosSimInfo = { udid: string; name: string; runtime: string; state: "shutdown" | "booting" | "booted" | "shutting-down" };
 
+/** 创建 iOS 模拟器对话框的目录：装了的 iOS 系统版本（新的在前），每个版本能用的机型。 */
+export type IosCatalog = { runtimes: Array<{ id: string; name: string; devices: Array<{ id: string; name: string }> }> };
+
+/** simctl 的机型、系统版本标识（会作为参数交给 simctl）。 */
+export const IOS_DEVICE_TYPE_RE = /^com\.apple\.CoreSimulator\.SimDeviceType\.[\w.-]+$/;
+export const IOS_RUNTIME_RE = /^com\.apple\.CoreSimulator\.SimRuntime\.[\w.-]+$/;
+
 export type PhoneInfo = { id: string; state: "device" | "unauthorized" | "offline"; manufacturer?: string; model?: string; android?: string; emulator?: "mumu" };
 
 /**
@@ -348,6 +355,10 @@ export type ClientMsg =
   | { t: "iosSimOpen"; udid: string }
   /** 用户确认关机：网关执行 simctl shutdown，同上。 */
   | { t: "iosSimClose"; udid: string }
+  /** 创建 iOS 模拟器对话框要的目录；回复同 rid 的 iosCatalog。 */
+  | { t: "iosCatalog"; rid: number }
+  /** 用户在对话框里点了创建：simctl create，回复同 rid 的 createIosSim（带新模拟器的 udid），新列表随 iosSims 推给所有页面。 */
+  | { t: "createIosSim"; rid: number; name: string; deviceType: string; runtime: string }
   /** 打开日志面板：网关按 filter 先回放最近的日志（logcat 的 reset），之后合批推新行。 */
   | { t: "logcatOpen"; filter: LogFilter }
   | { t: "logcatFilter"; filter: LogFilter }
@@ -389,6 +400,8 @@ export type ServerMsg =
   | { t: "mumu"; list: MumuInfo[]; appClosed?: true }
   /** iOS 模拟器列表：本机装了 Xcode 时 hello 后发一次、之后有变化就发；没收到过就当没装或网关太旧。 */
   | { t: "iosSims"; list: IosSimInfo[] }
+  | { t: "iosCatalog"; rid: number; catalog?: IosCatalog; error?: string }
+  | { t: "createIosSim"; rid: number; udid?: string; error?: string }
   | { t: "boot"; name: string; progress: string; error?: string }
   | { t: "error"; message: string }
   /** 紧接着以 CLOSE_VERSION 关闭连接。upgrade 是升级网关的命令。 */
@@ -539,6 +552,13 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "mumuClose":
       if (!Number.isInteger(o.index) || (o.index as number) < 0) return null;
       return { t: o.t, index: o.index as number };
+    case "iosCatalog":
+      return isNum(o.rid) ? { t: "iosCatalog", rid: o.rid } : null;
+    case "createIosSim":
+      // 都作为参数交给 simctl（不经 shell）：名字限长、不许换行，机型和版本只收 simctl 标识的写法
+      if (!isNum(o.rid) || !isStr(o.name) || !isStr(o.deviceType) || !isStr(o.runtime)) return null;
+      if (!o.name.trim() || o.name.length > 64 || /[\r\n]/.test(o.name) || !IOS_DEVICE_TYPE_RE.test(o.deviceType) || !IOS_RUNTIME_RE.test(o.runtime)) return null;
+      return { t: "createIosSim", rid: o.rid, name: o.name.trim(), deviceType: o.deviceType, runtime: o.runtime };
     case "iosSimOpen":
     case "iosSimClose":
       // udid 会作为参数交给 simctl：只收 UUID 的写法

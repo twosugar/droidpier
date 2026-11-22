@@ -10,7 +10,7 @@ import { logCells } from "./log-columns";
 import { isStaleStatus } from "./status-rev";
 import { gbText, spaceCheck } from "../shared/disk-space";
 import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
-import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type IosSimInfo, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
+import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type IosCatalog, type IosSimInfo, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
 import { deviceFrame } from "../shared/screen";
 import { glideFrames, poseAt, REST, startPose, turnAngle, type Glide } from "./device-motion";
@@ -1146,7 +1146,7 @@ const ID_RULE = "只能用英文字母、数字、点、下划线和短横线，
 const imageLabel = (i: SystemImage) => `${i.version ?? "Android"}（API ${i.api}）`;
 
 /** 创建设备对话框的内容：目录由 App 在打开时向网关要，选好后点「下一步」交给确认框。 */
-function CreateAvd(props: { catalog: Catalog | null; loadError: string | null; onCancel: () => void; onNext: (a: NewAvd) => void }) {
+function CreateAvd(props: { top?: JSX.Element; catalog: Catalog | null; loadError: string | null; onCancel: () => void; onNext: (a: NewAvd) => void }) {
   const catalog = () => props.catalog;
   const device = signal<string | null>(null);
   const image = signal<string | null>(null);
@@ -1198,6 +1198,7 @@ function CreateAvd(props: { catalog: Catalog | null; loadError: string | null; o
       <Btn label="取消" onPress={props.onCancel} />
       <Btn label="下一步" kind="primary" disabled={!canNext()} onPress={next} />
     </>}>
+      {props.top}
       <If when={props.loadError}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.body }}>{e()}</Text>}</If>
       <If when={catalog()} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body }}>正在读取机型和系统版本…</Text>}>
         {(c) => (
@@ -1249,6 +1250,114 @@ function CreateAvd(props: { catalog: Catalog | null; loadError: string | null; o
   );
 }
 
+type Platform = "android" | "ios";
+
+/** 创建设备对话框顶上的 Android / iOS 切换；只有网关报了 iOS 模拟器列表（装了 Xcode）时才出现。 */
+function PlatformTabs(props: { value: Platform; onChange: (p: Platform) => void }) {
+  return (
+    <Tabs style={{ flexDirection: "row", gap: SPACE.part, borderBottomWidth: 1, borderColor: token("border-subtle") }}
+      indicatorStyle={{ bottom: 0, height: 2, backgroundColor: token("foreground") }}>
+      {(["android", "ios"] as const).map((t) => (
+        <Tab selected={props.value === t} onPress={() => props.onChange(t)} accessibilityLabel={t === "android" ? "Android 模拟器" : "iOS 模拟器"}
+          hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ backgroundColor: token("accent") }}
+          style={{ height: CONTROL.sm, justifyContent: "center", paddingHorizontal: SPACE.inset, borderTopLeftRadius: token("radius-sm"), borderTopRightRadius: token("radius-sm"), ...ease() }}>
+          <Text style={{ color: props.value === t ? token("foreground") : token("muted-foreground"), ...TYPE.body, fontWeight: WEIGHT.medium }}>{t === "android" ? "Android" : "iOS"}</Text>
+        </Tab>
+      ))}
+    </Tabs>
+  );
+}
+
+/** 创建 iOS 模拟器：选系统版本（装了的）和这个版本能用的机型，simctl create；建好交出 udid，由 App 开机并切过去。 */
+function CreateIosSim(props: { top?: JSX.Element; onCancel: () => void; onCreated: (udid: string) => void }) {
+  const catalog = signal<IosCatalog | null>(null);
+  const loadError = signal<string | null>(null);
+  const runtime = signal<string | null>(null);
+  const device = signal<string | null>(null);
+  const customName = signal<string | null>(null);
+  const busy = signal(false);
+  const error = signal<string | null>(null);
+  call<{ catalog: IosCatalog | null; error: string | null }>("emu.iosCatalog", {}).then(
+    (r) => (r.catalog ? catalog.set(r.catalog) : loadError.set(r.error ?? "读不到 iOS 系统版本")),
+    (e: Error) => loadError.set(`读不到 iOS 系统版本：${e.message}`),
+  );
+  // 默认选机型齐全的最新版本：Xcode 带的测试版系统可能只支持一两款特殊机型（2026-11-22 这台的 iOS 27.1 只有 iPhone Duo）
+  const pickedRuntime = () => {
+    const c = catalog();
+    const full = c?.runtimes.find((r) => r.devices.filter((d) => d.name.startsWith("iPhone")).length >= 2);
+    return c?.runtimes.find((r) => r.id === runtime()) ?? full ?? c?.runtimes[0] ?? null;
+  };
+  // 换了系统版本后，原来选的机型这个版本没有就回到第一个
+  const pickedDevice = () => {
+    const r = pickedRuntime();
+    return r?.devices.find((d) => d.id === device()) ?? r?.devices[0] ?? null;
+  };
+  // 默认就叫机型名：侧栏行尾已经有系统版本
+  const name = () => customName() ?? pickedDevice()?.name ?? "";
+  const nameError = () => (!name().trim() ? "名字不能为空" : name().length > 64 ? "名字最多 64 个字" : null);
+  const canCreate = () => !busy() && !!pickedRuntime() && !!pickedDevice() && nameError() === null;
+  const create = () => {
+    const r = pickedRuntime();
+    const d = pickedDevice();
+    if (!r || !d || !canCreate()) return;
+    busy.set(true);
+    error.set(null);
+    call<{ udid: string | null; error: string | null }>("emu.createIosSim", { name: name().trim(), deviceType: d.id, runtime: r.id }).then(
+      (res) => (res.udid ? props.onCreated(res.udid) : error.set(res.error ?? "创建失败")),
+      (e: Error) => error.set(`创建失败：${e.message}`),
+    ).finally(() => busy.set(false));
+  };
+  const listBox = { height: 248, padding: SPACE.part, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("background") };
+  return (
+    <DialogContent title="创建设备" footer={<>
+      <Btn label="取消" onPress={props.onCancel} />
+      <Btn label={busy() ? "正在创建…" : "创建并启动"} kind="primary" disabled={!canCreate()} onPress={create} />
+    </>}>
+      {props.top}
+      <If when={loadError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.body }}>{e()}</Text>}</If>
+      <If when={catalog()} else={loadError() ? null : <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>正在读取 iOS 系统版本和机型…</Text>}>
+        {(c) => (
+          <If when={c().runtimes.length > 0} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body }}>这台电脑没有装 iOS 模拟器的系统。在 Xcode 的 设置 → Components 里下载一个 iOS 版本后再来创建。</Text>}>
+            <View style={{ gap: SPACE.group }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE.group }}>
+                <View style={{ flex: 1, minWidth: 240, gap: SPACE.item }}>
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedDevice() ? `机型：${pickedDevice()!.name}` : "机型"}</Text>
+                  <Scroll style={listBox}>
+                    <RadioGroup style={{ gap: SPACE.hair }}>
+                      <Each of={pickedRuntime()?.devices ?? []} key={(d) => d.id}>
+                        {(d) => <Choice label={d().name} detail="" checked={pickedDevice()?.id === d().id} onPress={() => device.set(d().id)} ref={() => {}} />}
+                      </Each>
+                    </RadioGroup>
+                  </Scroll>
+                </View>
+                <View style={{ flex: 1, minWidth: 240, gap: SPACE.item }}>
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedRuntime() ? `系统版本：${pickedRuntime()!.name}` : "系统版本"}</Text>
+                  <Scroll style={listBox}>
+                    <RadioGroup style={{ gap: SPACE.hair }}>
+                      <Each of={c().runtimes} key={(r) => r.id}>
+                        {(r) => <Choice label={r().name} detail="已安装" detailColor={token("success")} checked={pickedRuntime()?.id === r().id} onPress={() => runtime.set(r().id)} ref={() => {}} />}
+                      </Each>
+                    </RadioGroup>
+                  </Scroll>
+                </View>
+              </View>
+              <View style={{ gap: SPACE.item }}>
+                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>名字</Text>
+                <FieldBox error={!!nameError() && name() !== ""}>
+                  <Input value={name()} onChange={({ value }) => customName.set(value)} onSubmit={create}
+                    accessibilityLabel="名字" autoCapitalize="none" autoCorrect={false} style={fieldText(true)} />
+                </FieldBox>
+                <If when={nameError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption }}>{e()}</Text>}</If>
+                <If when={error()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption }}>{e()}</Text>}</If>
+              </View>
+            </View>
+          </If>
+        )}
+      </If>
+    </DialogContent>
+  );
+}
+
 function App() {
   // 外观：先按系统，读到这台浏览器存的选择后换过去
   const theme = signal<Theme>("system");
@@ -1289,6 +1398,10 @@ function App() {
   const iosSims = signal<IosSimInfo[] | null>(null);
   const iosSimCloseAsk = signal<IosSimInfo | null>(null);
   const iosSimStarting = signal<string | null>(null);
+  // 刚在对话框里建好、正在开机的那台：开好后自动切过去
+  const iosUseWhenBooted = signal<string | null>(null);
+  // 创建设备对话框选的平台
+  const createPlatform = signal<Platform>("android");
   // 没在运行的 iOS 模拟器默认收起（ui/ios-sims.ts）
   const iosShowAll = signal(false);
   // 当前设备的身份和能力（ready 带来）：真机的 serial 是 0，按 deviceId 认设备；deviceSize 是 ready.device，真机不在 AVD 列表里，设备框比例靠它
@@ -2116,6 +2229,13 @@ function App() {
   });
 
   const isCurrentIos = (s: IosSimInfo) => currentIos()?.udid === s.udid;
+  effect(() => {
+    const u = iosUseWhenBooted();
+    const sim = u === null ? undefined : (iosSims() ?? []).find((x) => x.udid === u);
+    if (sim?.state !== "booted") return;
+    iosUseWhenBooted.set(null);
+    pickIos(sim);
+  });
   // 图标颜色同模拟器行（avdTint）：运行中绿、开关机中黄、其余灰
   const iosTint = (s: IosSimInfo) =>
     gatewayDown(state()) ? token("muted-foreground") : s.state === "booted" ? token("success") : s.state === "shutdown" ? token("muted-foreground") : token("warning");
@@ -2591,11 +2711,23 @@ function App() {
       </AppDialog>
       <AppDialog open={createOpen()} size="lg" onClose={() => createOpen.set(false)}>
         <If when={createOpen()}>
-          <CreateAvd catalog={catalog()} loadError={catalogError()} onCancel={() => createOpen.set(false)}
-            onNext={(a) => {
-              createOpen.set(false);
-              confirm.set({ kind: "avd", avd: a });
-            }} />
+          <If when={createPlatform() === "ios" && iosSims() !== null} else={
+            <CreateAvd top={iosSims() !== null ? <PlatformTabs value={createPlatform()} onChange={createPlatform.set} /> : undefined}
+              catalog={catalog()} loadError={catalogError()} onCancel={() => createOpen.set(false)}
+              onNext={(a) => {
+                createOpen.set(false);
+                confirm.set({ kind: "avd", avd: a });
+              }} />
+          }>
+            <CreateIosSim top={<PlatformTabs value={createPlatform()} onChange={createPlatform.set} />} onCancel={() => createOpen.set(false)}
+              onCreated={(udid) => {
+                createOpen.set(false);
+                // 建好就开机，开好后切过去（下面的 effect）
+                iosUseWhenBooted.set(udid);
+                iosSimStarting.set(udid);
+                gw(host.call("emu.iosSimOpen", { udid }));
+              }} />
+          </If>
         </If>
       </AppDialog>
       <AppDialog open={license() !== null} size="lg">

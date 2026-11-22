@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { connectIosSim, createHelperParser, createIosSims, hasHomeButton, helperName, parseDeviceTypes, parseLastUsedAt, parseSimctlList, IOS_SIM_CAPS, type HelperProcess } from "../src/ios-sim.ts";
+import { connectIosSim, createHelperParser, createIosSims, hasHomeButton, helperName, parseDeviceTypes, parseIosCatalog, parseLastUsedAt, parseSimctlList, IOS_SIM_CAPS, type HelperProcess } from "../src/ios-sim.ts";
 import type { IosSimInfo } from "../../shared/protocol.ts";
 import type { VideoPacket } from "../src/emulator.ts";
 
@@ -228,4 +228,27 @@ test("hasHomeButton：iPhone SE / 8 及更早、第 9 代及更早的普通 iPad
 test("parseDeviceTypes：UDID 到机型", () => {
   const json = JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: A, name: "x", deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-11" }] } });
   assert.equal(parseDeviceTypes(json).get(A), "com.apple.CoreSimulator.SimDeviceType.iPhone-11");
+});
+
+test("parseIosCatalog：只要可用的 iOS 版本，新的在前；机型只要 iPhone、iPad，iPhone 在前", () => {
+  const dt = (name: string, family: string) => ({ name, productFamily: family, identifier: `com.apple.CoreSimulator.SimDeviceType.${name.replace(/ /g, "-")}` });
+  const json = JSON.stringify({ runtimes: [
+    { identifier: "com.apple.CoreSimulator.SimRuntime.iOS-18-3", name: "iOS 18.3", version: "18.3.1", platform: "iOS", isAvailable: true, supportedDeviceTypes: [dt("iPad Air", "iPad"), dt("iPhone 16", "iPhone"), dt("Apple Watch", "Apple Watch")] },
+    { identifier: "com.apple.CoreSimulator.SimRuntime.iOS-27-0", name: "iOS 27.0", version: "27.0", platform: "iOS", isAvailable: true, supportedDeviceTypes: [dt("iPhone 18 Pro", "iPhone")] },
+    { identifier: "com.apple.CoreSimulator.SimRuntime.watchOS-12-0", name: "watchOS 12.0", version: "12.0", platform: "watchOS", isAvailable: true, supportedDeviceTypes: [] },
+    { identifier: "com.apple.CoreSimulator.SimRuntime.iOS-26-0", name: "iOS 26.0", version: "26.0", platform: "iOS", isAvailable: false, supportedDeviceTypes: [] },
+  ] });
+  const c = parseIosCatalog(json);
+  assert.deepEqual(c.runtimes.map((r) => r.name), ["iOS 27.0", "iOS 18.3"]);
+  assert.deepEqual(c.runtimes[1].devices.map((d) => d.name), ["iPhone 16", "iPad Air"]);
+  assert.equal(c.runtimes[1].devices[0].id, "com.apple.CoreSimulator.SimDeviceType.iPhone-16");
+});
+
+test("createIosSims.create：simctl create 名字、机型、版本，返回 udid 并马上刷新列表", async () => {
+  const calls: string[][] = [];
+  const sims = createIosSims({ simctl: async (args) => { calls.push(args); return args[0] === "create" ? "0A67FFC2-A5BD-43AB-9AA9-6E22B5511D40\n" : JSON.stringify({ devices: {} }); }, log: () => {} });
+  const udid = await sims.create("我的 iPhone", "com.apple.CoreSimulator.SimDeviceType.iPhone-16", "com.apple.CoreSimulator.SimRuntime.iOS-18-3");
+  assert.equal(udid, "0A67FFC2-A5BD-43AB-9AA9-6E22B5511D40");
+  assert.deepEqual(calls[0], ["create", "我的 iPhone", "com.apple.CoreSimulator.SimDeviceType.iPhone-16", "com.apple.CoreSimulator.SimRuntime.iOS-18-3"]);
+  assert.deepEqual(calls[1], ["list", "devices", "available", "-j"]);
 });

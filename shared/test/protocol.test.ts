@@ -236,3 +236,17 @@ test("parseClientMsg 解析 mumuOpen / mumuClose；index 不是非负整数时�
     assert.equal(parseClientMsg(bad), null, bad);
   }
 });
+
+test("parseClientMsg 解析 iosCatalog / createIosSim；名字为空、太长、带换行，机型和版本不是 simctl 标识时返回 null", () => {
+  const dt = "com.apple.CoreSimulator.SimDeviceType.iPhone-16";
+  const rt = "com.apple.CoreSimulator.SimRuntime.iOS-18-3";
+  assert.deepEqual(parseClientMsg('{"t":"iosCatalog","rid":1}'), { t: "iosCatalog", rid: 1 });
+  assert.deepEqual(parseClientMsg(JSON.stringify({ t: "createIosSim", rid: 2, name: " 我的 iPhone ", deviceType: dt, runtime: rt })), { t: "createIosSim", rid: 2, name: "我的 iPhone", deviceType: dt, runtime: rt });
+  for (const bad of [
+    { name: "", deviceType: dt, runtime: rt },
+    { name: "a".repeat(65), deviceType: dt, runtime: rt },
+    { name: "a\nb", deviceType: dt, runtime: rt },
+    { name: "a", deviceType: "--set /tmp", runtime: rt },
+    { name: "a", deviceType: dt, runtime: "iOS 18.3" },
+  ]) assert.equal(parseClientMsg(JSON.stringify({ t: "createIosSim", rid: 3, ...bad })), null, JSON.stringify(bad));
+});

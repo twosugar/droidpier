@@ -42,6 +42,7 @@ import {
   type FrameHeader,
   type InstallProgress,
   type Licence,
+  type IosCatalog,
   type IosSimInfo,
   type MumuInfo, type PhoneInfo,
   type ServerMsg,
@@ -195,7 +196,7 @@ export async function startServer(opts: {
    */
   ios?: { inspector(udid: string): { inspector: IosInspector; version: string | null; ios: string } | null; webInspectorDir: string; hostShim: string };
   /** iOS 模拟器（gateway/src/ios-sim.ts）：list() 为 null 表示没装 Xcode，不发列表；booted 认 use 里的 UDID。 */
-  iosSims?: { list(): IosSimInfo[] | null; onChange(cb: (list: IosSimInfo[]) => void): void; open(udid: string): Promise<void>; close(udid: string): Promise<void>; booted(udid: string): boolean };
+  iosSims?: { list(): IosSimInfo[] | null; onChange(cb: (list: IosSimInfo[]) => void): void; open(udid: string): Promise<void>; close(udid: string): Promise<void>; booted(udid: string): boolean; catalog?(): Promise<IosCatalog>; create?(name: string, deviceType: string, runtime: string): Promise<string> };
   debug?: DebugDeps;
   setup?: SetupOps;
   /** WebView 调试 socket → 本机转发端口；不传时用当前设备的 debug.webviews，都没有时 /devtools/ 连接一律 4404。 */
@@ -1510,6 +1511,20 @@ export async function startServer(opts: {
               log(`打开 MuMuPlayer 失败：${e.message}`);
               send(ws, { t: "error", message: `打开 MuMu 失败：${e.message}` });
             },
+          );
+          break;
+        case "iosCatalog":
+          if (!opts.iosSims?.catalog) send(ws, { t: "iosCatalog", rid: m.rid, error: "网关不支持创建 iOS 模拟器" });
+          else await opts.iosSims.catalog().then(
+            (catalog) => send(ws, { t: "iosCatalog", rid: m.rid, catalog }),
+            (e: Error) => send(ws, { t: "iosCatalog", rid: m.rid, error: `读不到 iOS 系统版本：${e.message.split("\n")[0]}` }),
+          );
+          break;
+        case "createIosSim":
+          if (!opts.iosSims?.create) send(ws, { t: "createIosSim", rid: m.rid, error: "网关不支持创建 iOS 模拟器" });
+          else await opts.iosSims.create(m.name, m.deviceType, m.runtime).then(
+            (udid) => send(ws, { t: "createIosSim", rid: m.rid, udid }),
+            (e: Error) => send(ws, { t: "createIosSim", rid: m.rid, error: `创建失败：${e.message.split("\n")[0]}` }),
           );
           break;
         case "iosSimOpen":
