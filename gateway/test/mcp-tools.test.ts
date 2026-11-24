@@ -87,13 +87,14 @@ test("evaluate（iOS）：WebKit 没有 awaitPromise 参数：先拿对象，Pro
   });
   assert.equal(text(await s.run("evaluate", { expression: "fetchIt()" })), "42");
   const ev = s.f.calls.find((c) => c.method === "Runtime.evaluate")!.params;
-  assert.deepEqual(ev, { expression: "fetchIt()", objectGroup: "droidpier-mcp", returnByValue: false });
+  assert.match(ev.objectGroup, /^droidpier-mcp-\d+$/);
+  assert.deepEqual(ev, { expression: "fetchIt()", objectGroup: ev.objectGroup, returnByValue: false });
   assert.deepEqual(s.f.calls.find((c) => c.method === "Runtime.awaitPromise")!.params, { promiseObjectId: "o1", returnByValue: true });
   assert.equal(text(await s.run("evaluate", { expression: "({a:1})" })), '{"a":1}');
   assert.deepEqual(s.f.calls.find((c) => c.method === "Runtime.callFunctionOn")!.params, { objectId: "o2", functionDeclaration: "function () { return this; }", returnByValue: true });
   assert.equal(text(await s.run("evaluate", { expression: "1+1" })), "2");
   await assert.rejects(s.run("evaluate", { expression: "bad" }), /TypeError: x/);
-  assert.ok(s.f.calls.some((c) => c.method === "Runtime.releaseObjectGroup" && c.params.objectGroup === "droidpier-mcp"));
+  assert.ok(s.f.calls.some((c) => c.method === "Runtime.releaseObjectGroup" && c.params.objectGroup === ev.objectGroup));
 });
 
 test("page 参数：写错时说有哪些页面；不给且前台不止一个页面时要求指定", async () => {
@@ -136,4 +137,36 @@ test("连接断了下次重新连；screenshot 给 PNG 图片", async () => {
   assert.equal(s.connects(), 2);
   const shot = await s.run("screenshot");
   assert.deepEqual(shot, [{ type: "image", data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" }]);
+});
+
+test("连上后开 console 失败：关掉这条连接，不留着；下次重新连", async () => {
+  let fail = true;
+  const s = setup(false, (method) => {
+    if (method === "Runtime.enable" && fail) throw new Error("页面没回话");
+    return { result: { value: 1 } };
+  });
+  await assert.rejects(s.run("evaluate", { expression: "1" }), /页面没回话/);
+  assert.equal(s.f.closes, 1);
+  fail = false;
+  await s.run("evaluate", { expression: "1" });
+  assert.equal(s.connects(), 2);
+});
+
+test("evaluate（iOS）：每次执行用自己的对象组，同时执行的两个不会互相放掉对方的对象", async () => {
+  const s = setup(true, (method, params) => (method === "Runtime.evaluate" ? { result: { type: "number", value: params.expression === "1" ? 1 : 2 } } : {}));
+  await Promise.all([s.run("evaluate", { expression: "1" }), s.run("evaluate", { expression: "2" })]);
+  const groups = s.f.calls.filter((c) => c.method === "Runtime.evaluate").map((c) => c.params.objectGroup);
+  assert.equal(new Set(groups).size, 2);
+  const released = s.f.calls.filter((c) => c.method === "Runtime.releaseObjectGroup").map((c) => c.params.objectGroup);
+  assert.deepEqual(released.sort(), groups.sort());
+});
+
+test("console_logs（iOS）：调试连接重置后清掉已收的日志（重开 Console 时 WebKit 会把历史日志再发一遍），序号接着往上数", async () => {
+  const s = setup(true);
+  await s.run("console_logs", {});
+  s.f.emit("Console.messageAdded", { message: { level: "log", text: "a" } });
+  s.f.emit("Droidpier.channelReset", {});
+  s.f.emit("Console.messageAdded", { message: { level: "log", text: "a" } });
+  const out = JSON.parse(text(await s.run("console_logs", {})));
+  assert.deepEqual(out.logs.map((l: any) => [l.seq, l.text]), [[1, "a"]]);
 });

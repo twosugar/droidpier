@@ -93,3 +93,43 @@ test("pipeMcp：stdin 接到 socket，回话写到 stdout；连不上时说网�
   await srv!.close();
   await assert.rejects(pipeMcp({ path: join(await tmp(), "none.sock"), stdin: new PassThrough(), stdout: new PassThrough() }), /网关没有在运行/);
 });
+
+test("pipeMcp：网关重启（自动更新）时不退出：没回话的请求回一个错误，断开时来的请求等重新连上再发", async () => {
+  const path = join(await tmp(), "m.sock");
+  const jsonEcho = async (l: string) => {
+    const m = JSON.parse(l);
+    if (m.method === "hang") return new Promise<string>(() => {});
+    return JSON.stringify({ jsonrpc: "2.0", id: m.id, result: m.method });
+  };
+  const a = await listenMcp({ path, handle: jsonEcho, log: () => {} });
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const out: any[] = [];
+  let buf = "";
+  stdout.on("data", (d) => {
+    buf += d.toString();
+    const parts = buf.split("\n");
+    buf = parts.pop()!;
+    for (const p of parts) out.push(JSON.parse(p));
+  });
+  const until = async (f: () => boolean) => {
+    for (let i = 0; i < 200 && !f(); i++) await new Promise((r) => setTimeout(r, 10));
+    assert.ok(f());
+  };
+  const ended = pipeMcp({ path, stdin, stdout, retryMs: 20 });
+  stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "first" }) + "\n");
+  await until(() => out.length === 1);
+  stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "hang" }) + "\n");
+  await new Promise((r) => setTimeout(r, 30));
+  await a!.close();
+  await until(() => out.some((m) => m.id === 2));
+  assert.match(out.find((m) => m.id === 2).error.message, /网关/);
+  stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "later" }) + "\n");
+  await new Promise((r) => setTimeout(r, 50));
+  const b = await listenMcp({ path, handle: jsonEcho, log: () => {} });
+  await until(() => out.some((m) => m.id === 3));
+  assert.equal(out.find((m) => m.id === 3).result, "later");
+  stdin.end();
+  await ended;
+  await b!.close();
+});

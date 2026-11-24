@@ -2,6 +2,7 @@
 // 换页（WebKit 会换一个新目标）后跟到新目标上，并把之前开过的 *.enable 再发一遍，事件才不会断。
 import type { CdpClient } from "./cdp.ts";
 import type { InspectorChannel } from "./ios-inspector.ts";
+import { CHANNEL_RESET } from "./shared-channel.ts";
 
 export function webkitCdp(ch: InspectorChannel, timeoutMs = 10_000): CdpClient {
   let target: string | null = null;
@@ -14,6 +15,15 @@ export function webkitCdp(ch: InspectorChannel, timeoutMs = 10_000): CdpClient {
   const enabled = new Map<string, object | undefined>();
   let closedResolve!: () => void;
   const closed = new Promise<void>((r) => (closedResolve = r));
+  // 通道重置过（gateway/src/shared-channel.ts）：新通道上出现页面目标时把开过的域再开一遍
+  let replay = false;
+  const failAll = (why: string) => {
+    for (const w of pending.values()) w.reject(new Error(why));
+    pending.clear();
+  };
+  const emit = (event: string, params: unknown) => {
+    for (const cb of listeners.get(event) ?? []) cb(params);
+  };
 
   const post = (targetId: string, id: number, method: string, params?: object) =>
     ch.send(JSON.stringify({ id, method: "Target.sendMessageToTarget", params: { targetId, message: JSON.stringify({ id, method, ...(params ? { params } : {}) }) } }));
@@ -31,7 +41,18 @@ export function webkitCdp(ch: InspectorChannel, timeoutMs = 10_000): CdpClient {
       return;
     }
     const p = msg.params ?? {};
-    if (msg.method === "Target.targetCreated" && p.targetInfo?.type === "page" && !p.targetInfo.isProvisional) setTarget(p.targetInfo.targetId);
+    if (msg.method === CHANNEL_RESET) {
+      target = null;
+      replay = enabled.size > 0;
+      failAll("调试连接重置了（页面里的调试界面刚打开或关上），再试一次");
+      emit(CHANNEL_RESET, {});
+    } else if (msg.method === "Target.targetCreated" && p.targetInfo?.type === "page" && !p.targetInfo.isProvisional) {
+      setTarget(p.targetInfo.targetId);
+      if (replay) {
+        replay = false;
+        for (const [method, params] of enabled) post(p.targetInfo.targetId, nextId++, method, params);
+      }
+    }
     else if (msg.method === "Target.didCommitProvisionalTarget" && p.newTargetId) {
       setTarget(p.newTargetId);
       for (const [method, params] of enabled) post(p.newTargetId, nextId++, method, params);
@@ -49,15 +70,16 @@ export function webkitCdp(ch: InspectorChannel, timeoutMs = 10_000): CdpClient {
         if (!w) return;
         if (inner.error) w.reject(new Error(inner.error.message ?? JSON.stringify(inner.error)));
         else w.resolve(inner.result ?? {});
-      } else if (inner.method) for (const cb of listeners.get(inner.method) ?? []) cb(inner.params ?? {});
+      } else if (inner.method) emit(inner.method, inner.params ?? {});
     }
   });
-  ch.onClose(() => {
+  const end = () => {
+    if (gone) return;
     gone = true;
-    for (const w of pending.values()) w.reject(new Error("调试连接断开了"));
-    pending.clear();
+    failAll("调试连接断开了");
     closedResolve();
-  });
+  };
+  ch.onClose(end);
 
   return {
     async send(method, params) {
@@ -93,7 +115,10 @@ export function webkitCdp(ch: InspectorChannel, timeoutMs = 10_000): CdpClient {
       listeners.set(event, set);
       return () => set.delete(cb);
     },
-    close: () => ch.close(),
+    close: () => {
+      end();
+      ch.close();
+    },
     closed,
   };
 }

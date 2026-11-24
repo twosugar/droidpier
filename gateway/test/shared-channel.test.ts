@@ -95,7 +95,7 @@ test("使用方都关了才关底层通道；底层断了每个使用方都收�
   assert.equal(u.opened, 3);
 });
 
-test("同时 attach 只打开一次底层通道；打开失败时每个都失败，下次重试", async () => {
+test("同时 attach 排队、只打开一次底层通道；打开失败的那个失败，排在后面的重新打开", async () => {
   const u = fakeUnderlying();
   let fails = 1;
   const shared = createSharedChannel(async () => {
@@ -103,8 +103,57 @@ test("同时 attach 只打开一次底层通道；打开失败时每个都失败
     return u.open();
   });
   const results = await Promise.allSettled([shared.attach(), shared.attach()]);
-  assert.deepEqual(results.map((r) => r.status), ["rejected", "rejected"]);
+  assert.deepEqual(results.map((r) => r.status), ["rejected", "fulfilled"]);
   const [x, y] = await Promise.all([shared.attach(), shared.attach()]);
   assert.ok(x && y);
   assert.equal(u.opened, 1);
+});
+
+test("调试界面加入时别的使用方还在：底层通道重开，调试界面拿到干净的初始状态；别的使用方先收到重置，再收到新通道的目标", async () => {
+  const u = fakeUnderlying();
+  const shared = createSharedChannel(u.open);
+  const tool = await shared.attach();
+  const got = inbox(tool);
+  u.push(created("t1"));
+  tool.send(JSON.stringify(wrap(1, "t1", { id: 1, method: "Runtime.evaluate" })));
+  const fe = await shared.attach("frontend");
+  assert.equal(u.opened, 2);
+  assert.equal(u.closed, 1);
+  const feGot = inbox(fe);
+  assert.deepEqual(feGot, []);
+  assert.deepEqual(got.map((m) => m.method), ["Target.targetCreated", "Droidpier.channelReset"]);
+  // 旧通道上没回的请求作废：回话就算来了也不送
+  u.push(created("t2"));
+  assert.deepEqual(got.map((m) => m.method), ["Target.targetCreated", "Droidpier.channelReset", "Target.targetCreated"]);
+  assert.deepEqual(feGot.map((m) => m.method), ["Target.targetCreated"]);
+});
+
+test("调试界面离开时别的使用方还在：底层通道重开，清掉调试界面留下的状态（启动时暂停、断点）；最后一方离开照旧直接关", async () => {
+  const u = fakeUnderlying();
+  const shared = createSharedChannel(u.open);
+  const fe = await shared.attach("frontend");
+  const tool = await shared.attach();
+  const got = inbox(tool);
+  assert.equal(u.opened, 1);
+  fe.close();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(u.opened, 2);
+  assert.equal(u.closed, 1);
+  assert.deepEqual(got.map((m) => m.method), ["Droidpier.channelReset"]);
+  tool.close();
+  assert.equal(u.closed, 2);
+  assert.equal(u.opened, 2);
+});
+
+test("底层通道断了：每一方等着的回话也清掉，之后同编号的回话不会送错", async () => {
+  const u = fakeUnderlying();
+  const shared = createSharedChannel(u.open);
+  const a = await shared.attach();
+  a.send(JSON.stringify({ id: 9, method: "Target.setPauseOnStart" }));
+  const outerId = u.sent[0].id;
+  u.die();
+  const b = await shared.attach();
+  const got = inbox(b);
+  u.push({ id: outerId, result: {} });
+  assert.deepEqual(got, []);
 });

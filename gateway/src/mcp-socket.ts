@@ -69,17 +69,91 @@ export async function listenMcp(opts: { path: string; handle: (line: string) => 
   };
 }
 
-/** `droidpier mcp`：把 stdin 接到网关的 MCP socket，回话写到 stdout；stdin 结束或网关断开时结束。 */
-export function pipeMcp(opts: { path: string; stdin: Readable; stdout: Writable }): Promise<void> {
+/** 网关重启（自动更新要几秒）时等它回来的时长；超过就退出。 */
+const RECONNECT_FOR_MS = 60_000;
+
+/**
+ * `droidpier mcp`：把 stdin 接到网关的 MCP socket，回话写到 stdout。stdin 结束时结束。
+ * 网关断开（重启、自动更新）时不退出：断开时还没回话的请求替网关回一个错误，断开期间来的消息存着，重新连上再发。
+ * 第一次就连不上（网关没在运行）时直接失败。
+ */
+export function pipeMcp(opts: { path: string; stdin: Readable; stdout: Writable; retryMs?: number }): Promise<void> {
+  const retryMs = opts.retryMs ?? 500;
   return new Promise((resolve, reject) => {
-    const sock = net.connect(opts.path);
-    sock.once("error", (e: NodeJS.ErrnoException) => {
-      reject(new Error(e.code === "ENOENT" || e.code === "ECONNREFUSED" ? "Droidpier 网关没有在运行：先运行 droidpier start" : `连不上网关：${e.message}`));
+    let sock: net.Socket | null = null;
+    let first = true;
+    // 第一次就连不上、或者等网关回来等过了头：不再重连
+    let gaveUp = false;
+    let ended = false;
+    let downSince = 0;
+    const queue: string[] = [];
+    // 发出去还没回话的请求 id
+    const waiting = new Map<string, unknown>();
+    const idKey = (id: unknown) => JSON.stringify(id);
+
+    const writeOut = (line: string) => opts.stdout.write(`${line}\n`);
+    const forward = (line: string) => {
+      try {
+        const m = JSON.parse(line);
+        if (m && m.id !== undefined && typeof m.method === "string") waiting.set(idKey(m.id), m.id);
+      } catch {
+        // 不是 JSON：照样转给网关，由它回解析错误
+      }
+      sock!.write(`${line}\n`);
+    };
+
+    const connect = () => {
+      const s = net.connect(opts.path);
+      s.once("connect", () => {
+        first = false;
+        sock = s;
+        for (const l of queue.splice(0)) forward(l);
+        if (ended) s.end();
+      });
+      s.on(
+        "data",
+        lines((l) => {
+          try {
+            const m = JSON.parse(l);
+            if (m && m.id !== undefined && m.method === undefined) waiting.delete(idKey(m.id));
+          } catch {
+            // 原样交给客户端
+          }
+          writeOut(l);
+        }),
+      );
+      s.on("error", (e: NodeJS.ErrnoException) => {
+        if (!first) return;
+        gaveUp = true;
+        reject(new Error(e.code === "ENOENT" || e.code === "ECONNREFUSED" ? "Droidpier 网关没有在运行：先运行 droidpier start" : `连不上网关：${e.message}`));
+      });
+      s.once("close", () => {
+        if (sock === s) sock = null;
+        if (gaveUp || first) return;
+        if (ended) return resolve();
+        // 断开时没回话的请求：网关不会再回了
+        for (const id of waiting.values()) writeOut(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: "Droidpier 网关重启了（可能在自动更新），这次请求没有结果，请重试" } }));
+        waiting.clear();
+        downSince ||= Date.now();
+        if (Date.now() - downSince > RECONNECT_FOR_MS) {
+          gaveUp = true;
+          return reject(new Error("Droidpier 网关断开后一分钟没有回来"));
+        }
+        setTimeout(connect, retryMs);
+      });
+      // 重新连上了
+      s.once("connect", () => (downSince = 0));
+    };
+
+    opts.stdin.on(
+      "data",
+      lines((l) => (sock ? forward(l) : queue.push(l))),
+    );
+    opts.stdin.once("end", () => {
+      ended = true;
+      if (sock) sock.end();
+      else if (!first) resolve();
     });
-    sock.once("connect", () => {
-      opts.stdin.pipe(sock);
-      sock.pipe(opts.stdout, { end: false });
-      sock.once("close", () => resolve());
-    });
+    connect();
   });
 }

@@ -81,3 +81,34 @@ test("等不到回话按超时失败；通道关了未完成的命令失败、cl
   cdp.close();
   assert.equal(f.closed, 1);
 });
+
+test("通道重置：等着的命令马上失败，新通道出现页面目标后重开之前开过的域，并告诉监听方", async () => {
+  const f = fakeChannel();
+  const cdp = webkitCdp(f.ch);
+  let resets = 0;
+  cdp.on("Droidpier.channelReset", () => resets++);
+  f.push(created("page-1"));
+  const en = cdp.send("Console.enable");
+  await tick();
+  f.answer("page-1", { id: f.lastInner().id, result: {} });
+  await en;
+  const p = cdp.send("Runtime.evaluate");
+  await tick();
+  f.push({ method: "Droidpier.channelReset" });
+  await assert.rejects(p, /重置/);
+  f.push(created("page-9"));
+  await tick();
+  assert.deepEqual({ t: f.lastInner().targetId, m: f.lastInner().method }, { t: "page-9", m: "Console.enable" });
+  assert.equal(resets, 1);
+});
+
+test("自己 close：等着的命令马上失败，closed 完成", async () => {
+  const f = fakeChannel();
+  const cdp = webkitCdp(f.ch);
+  f.push(created("page-1"));
+  const p = cdp.send("Runtime.evaluate");
+  await tick();
+  cdp.close();
+  await assert.rejects(p, /断开/);
+  await cdp.closed;
+});

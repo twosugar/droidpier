@@ -105,6 +105,9 @@ The gateway serves its own copy of the page (`--local`, `http://127.0.0.1:<port>
 - **The gateway is local only.** It listens on `127.0.0.1` and accepts a WebSocket only from an allowed Origin
   (`auth.ts`: the public page, its own local page, and `--allow-origin` values). Never widen the listen address or the
   allowlist, and never add an endpoint that skips the check. The DevTools proxy takes one-time tickets.
+  The one other way in is the MCP socket (`gateway/src/mcp-socket.ts`): a Unix socket in a directory only the
+  user can open (0700, socket 0600), for AI clients through `droidpier mcp`. It accepts any process of the same user,
+  which could already run adb and simctl itself; never move it to TCP or loosen those permissions.
 - **Nothing leaves the Mac.** The public page is static; no device data, frames or files go anywhere but the local
   gateway.
 - **The emulator is the official one, unchanged.** Talk to it through gRPC (`emulator_controller.proto`, loaded from
