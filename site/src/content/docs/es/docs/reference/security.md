@@ -1,7 +1,7 @@
 ---
 title: Seguridad
 description: Cómo el gateway impide que otras páginas web y otras computadoras controlen tu emulador - solo loopback y una lista de orígenes permitidos.
-sourceHash: 08642471687c
+sourceHash: 28bc29a7e373
 ---
 
 La página se sirve desde `droid.devpier.dev`, pero el emulador y el gateway se ejecutan en tu Mac. Cualquier página web que abras podría intentar conectarse a un programa en tu Mac, así que el gateway comprueba cada conexión.
@@ -21,6 +21,10 @@ Los navegadores envían un encabezado `Origin` cuando una página abre un WebSoc
 
 <!-- verify: phase 3 -->
 Una conexión con cualquier otro origen, o sin origen, se cierra con el código `4003`. Una página de otro sitio no puede controlar tu emulador, aunque adivine el puerto.
+
+## Clientes de IA {#ai-clients}
+
+Los clientes de IA llegan al gateway a través de `droidpier mcp`, que usa un socket Unix en lugar de la red: `~/Library/Application Support/Droidpier/mcp-<port>.sock`. Solo tu usuario de macOS puede abrir su carpeta, y las páginas web no pueden acceder a él. Cualquier programa que se ejecute como tu usuario puede usarlo, igual que podría ejecutar `adb` directamente. Consulta [Clientes de IA (MCP)](/es/docs/guides/ai-clients/#security).
 
 ## Cómo la página encuentra el gateway
 

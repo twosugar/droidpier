@@ -1,7 +1,7 @@
 ---
 title: Línea de comandos
 description: Opciones y variables de entorno del comando del gateway Droidpier.
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | Detiene el gateway en segundo plano. Deja de iniciarse al iniciar sesión. |
 | `droidpier status` | Muestra si el gateway en segundo plano está en ejecución, con su ID de proceso, puerto, versión y archivo de registro. También indica si las actualizaciones automáticas están activadas y el resultado de la última comprobación. |
 | `droidpier logs` | Imprime la ruta del archivo de registro y sus últimas 50 líneas. |
+| `droidpier mcp` | Conecta un cliente de IA al gateway en ejecución, mediante entrada y salida estándar. El cliente lo inicia; tú no lo ejecutas directamente. `--port` selecciona el gateway cuando no usa el puerto `7300`. Consulta [Clientes de IA (MCP)](/es/docs/guides/ai-clients/). |
 | `droidpier` | Ejecuta el gateway en esta ventana de Terminal hasta que presiones `Ctrl+C`. |
 
 Detener el gateway no detiene los emuladores en ejecución.
@@ -106,6 +108,7 @@ Cuando faltan partes del Android SDK, el gateway muestra cada una con un comando
 | Suma de comprobación de la versión instalada | `~/.local/share/droidpier/installed.sha256` |
 | Configuración del gateway en segundo plano | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Registro del gateway en segundo plano | `~/Library/Logs/Droidpier/droidpier.log` |
+| Socket para clientes de IA | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## Actualizaciones automáticas {#automatic-updates}
 
@@ -126,8 +129,10 @@ Detén el gateway en segundo plano y luego borra los archivos que usa:
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+Si añadiste `droidpier mcp` a un cliente de IA, elimínalo también allí, por ejemplo `claude mcp remove droidpier`.
 
 Si ya borraste `droidpier` pero el gateway en segundo plano sigue ejecutándose o se inicia al iniciar sesión, quítalo a mano:
 

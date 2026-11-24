@@ -1,7 +1,7 @@
 ---
 title: Sicherheit
 description: Wie das Gateway verhindert, dass andere Webseiten und andere Computer Ihren Emulator steuern - nur Loopback und eine Origin-Zulassungsliste.
-sourceHash: 08642471687c
+sourceHash: 28bc29a7e373
 ---
 
 Die Seite wird von `droid.devpier.dev` ausgeliefert, aber Emulator und Gateway laufen auf Ihrem Mac. Jede Webseite, die Sie öffnen, könnte versuchen, sich mit einem Programm auf Ihrem Mac zu verbinden, deshalb prüft das Gateway jede Verbindung.
@@ -21,6 +21,10 @@ Browser senden einen `Origin`-Header, wenn eine Seite einen WebSocket öffnet, u
 
 <!-- verify: phase 3 -->
 Eine Verbindung mit einem anderen Origin oder ohne Origin wird mit Code `4003` geschlossen. Eine Seite auf einer anderen Website kann Ihren Emulator nicht steuern, selbst wenn sie den Port errät.
+
+## KI-Clients {#ai-clients}
+
+KI-Clients erreichen das Gateway über `droidpier mcp`, das anstelle des Netzwerks einen Unix-Socket verwendet: `~/Library/Application Support/Droidpier/mcp-<port>.sock`. Nur Ihr macOS-Benutzer kann seinen Ordner öffnen, und Webseiten können ihn nicht erreichen. Jedes Programm, das als Ihr Benutzer läuft, kann ihn verwenden, genau wie es selbst `adb` ausführen könnte. Siehe [KI-Clients (MCP)](/de/docs/guides/ai-clients/#security).
 
 ## Wie die Seite das Gateway findet
 

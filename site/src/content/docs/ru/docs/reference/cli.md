@@ -1,7 +1,7 @@
 ---
 title: Командная строка
 description: Параметры и переменные окружения команды шлюза Droidpier.
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | Останавливает фоновый шлюз. При входе в систему он больше не запускается. |
 | `droidpier status` | Показывает, работает ли фоновый шлюз, с ID процесса, портом, версией и файлом журнала. Также показывает, включены ли автоматические обновления, и результат последней проверки. |
 | `droidpier logs` | Выводит путь к файлу журнала и его последние 50 строк. |
+| `droidpier mcp` | Подключает ИИ-клиент к работающему шлюзу через стандартный ввод-вывод. Запускает клиент; вы не запускаете его сами. `--port` выбирает шлюз, когда он работает не на порту `7300`. См. [ИИ-клиенты (MCP)](/ru/docs/guides/ai-clients/). |
 | `droidpier` | Запускает шлюз в этом окне Терминала до нажатия `Ctrl+C`. |
 
 Остановка шлюза не останавливает запущенные эмуляторы.
@@ -106,6 +108,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | Контрольная сумма установленной версии | `~/.local/share/droidpier/installed.sha256` |
 | Настройки фонового шлюза | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Журнал фонового шлюза | `~/Library/Logs/Droidpier/droidpier.log` |
+| Сокет для ИИ-клиентов | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## Автоматические обновления {#automatic-updates}
 
@@ -126,8 +129,10 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+Если вы добавляли `droidpier mcp` в ИИ-клиент, удалите его и там, например `claude mcp remove droidpier`.
 
 Если `droidpier` уже удалён, а фоновый шлюз всё ещё работает или запускается при входе в систему, удалите его вручную:
 

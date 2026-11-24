@@ -1,7 +1,7 @@
 ---
 title: 명령줄
 description: Droidpier 게이트웨이 명령의 옵션과 환경 변수.
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | 백그라운드 게이트웨이를 중지합니다. 로그인할 때도 더 이상 시작되지 않습니다. |
 | `droidpier status` | 백그라운드 게이트웨이가 실행 중인지 프로세스 ID, 포트, 버전, 로그 파일과 함께 보여 줍니다. 자동 업데이트가 켜져 있는지와 마지막 확인 결과도 보여 줍니다. |
 | `droidpier logs` | 로그 파일 경로와 마지막 50줄을 출력합니다. |
+| `droidpier mcp` | 표준 입출력을 통해 AI 클라이언트를 실행 중인 게이트웨이에 연결합니다. 클라이언트가 시작합니다. 직접 실행하지 않습니다. `--port`는 게이트웨이가 포트 `7300`에서 실행되지 않을 때 지정합니다. [AI 클라이언트 (MCP)](/ko/docs/guides/ai-clients/)를 참조하세요. |
 | `droidpier` | `Ctrl+C`를 누를 때까지 이 터미널 창에서 게이트웨이를 실행합니다. |
 
 게이트웨이를 중지해도 실행 중인 에뮬레이터는 중지되지 않습니다.
@@ -106,6 +108,7 @@ Android SDK 구성 요소가 빠져 있으면 게이트웨이는 항목마다 �
 | 설치된 버전의 체크섬 | `~/.local/share/droidpier/installed.sha256` |
 | 백그라운드 게이트웨이 설정 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | 백그라운드 게이트웨이 로그 | `~/Library/Logs/Droidpier/droidpier.log` |
+| AI 클라이언트용 소켓 | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## 자동 업데이트 {#automatic-updates}
 
@@ -126,8 +129,10 @@ Android SDK 구성 요소가 빠져 있으면 게이트웨이는 항목마다 �
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+`droidpier mcp`를 AI 클라이언트에 추가했다면 거기서도 제거하세요. 예: `claude mcp remove droidpier`.
 
 `droidpier`를 이미 삭제했는데 백그라운드 게이트웨이가 아직 실행 중이거나 로그인할 때 시작되면 직접 제거하세요.
 

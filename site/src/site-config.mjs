@@ -65,6 +65,7 @@ export const SIDEBAR = [
       "docs/guides/keyboard-and-input",
       "docs/guides/clipboard",
       "docs/guides/screenshots",
+      "docs/guides/ai-clients",
       "docs/guides/troubleshooting",
     ],
   },

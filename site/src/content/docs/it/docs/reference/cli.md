@@ -1,7 +1,7 @@
 ---
 title: Riga di comando
 description: Opzioni e variabili d’ambiente del comando del gateway Droidpier.
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | Arresta il gateway in background. Non si avvia più all’accesso. |
 | `droidpier status` | Mostra se il gateway in background è in esecuzione, con ID di processo, porta, versione e file di log. Indica anche se gli aggiornamenti automatici sono attivi, con l’esito dell’ultimo controllo. |
 | `droidpier logs` | Stampa il percorso del file di log e le sue ultime 50 righe. |
+| `droidpier mcp` | Connette un client IA al gateway in esecuzione tramite input e output standard. È il client ad avviarlo; non lo esegui tu direttamente. `--port` seleziona il gateway quando non usa la porta `7300`. Vedi [Client IA (MCP)](/it/docs/guides/ai-clients/). |
 | `droidpier` | Esegue il gateway in questa finestra del Terminale finché non premi `Ctrl+C`. |
 
 Arrestare il gateway non arresta gli emulatori in esecuzione.
@@ -106,6 +108,7 @@ Quando mancano parti dell’Android SDK, il gateway elenca ciascuna con un coman
 | Checksum della versione installata | `~/.local/share/droidpier/installed.sha256` |
 | Impostazioni del gateway in background | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Log del gateway in background | `~/Library/Logs/Droidpier/droidpier.log` |
+| Socket per i client IA | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## Aggiornamenti automatici {#automatic-updates}
 
@@ -126,8 +129,10 @@ Arresta il gateway in background, poi elimina i file che usa:
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+Se hai aggiunto `droidpier mcp` a un client IA, rimuovilo anche lì, ad esempio `claude mcp remove droidpier`.
 
 Se hai già eliminato `droidpier` ma il gateway in background è ancora in esecuzione o si avvia all’accesso, rimuovilo a mano:
 

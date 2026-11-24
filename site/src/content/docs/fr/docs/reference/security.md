@@ -1,7 +1,7 @@
 ---
 title: Sécurité
 description: Comment la passerelle empêche d’autres pages web et d’autres ordinateurs de contrôler votre émulateur - bouclage uniquement et une liste d’origines autorisées.
-sourceHash: 08642471687c
+sourceHash: 28bc29a7e373
 ---
 
 La page est servie depuis `droid.devpier.dev`, mais l’émulateur et la passerelle tournent sur votre Mac. N’importe quelle page web que vous ouvrez pourrait tenter de se connecter à un programme sur votre Mac, c’est pourquoi la passerelle vérifie chaque connexion.
@@ -21,6 +21,10 @@ Les navigateurs envoient un en-tête `Origin` lorsqu’une page ouvre un WebSock
 
 <!-- verify: phase 3 -->
 Une connexion avec toute autre origine, ou sans origine, est fermée avec le code `4003`. Une page d’un autre site ne peut pas contrôler votre émulateur, même si elle devine le port.
+
+## Clients IA {#ai-clients}
+
+Les clients IA accèdent à la passerelle via `droidpier mcp`, qui utilise un socket Unix plutôt que le réseau : `~/Library/Application Support/Droidpier/mcp-<port>.sock`. Seul votre utilisateur macOS peut ouvrir son dossier, et les pages web ne peuvent pas l'atteindre. Tout programme s'exécutant sous votre utilisateur peut l'utiliser, tout comme il pourrait exécuter `adb` directement. Voir [Clients IA (MCP)](/fr/docs/guides/ai-clients/#security).
 
 ## Comment la page trouve la passerelle
 

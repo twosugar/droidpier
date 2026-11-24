@@ -21,6 +21,10 @@ Browsers send an `Origin` header when a page opens a WebSocket, and a web page c
 <!-- verify: phase 3 -->
 A connection with any other origin, or with no origin, is closed with code `4003`. A page on another site cannot control your emulator, even if it guesses the port.
 
+## AI clients
+
+AI clients reach the gateway through `droidpier mcp`, which uses a Unix socket instead of the network: `~/Library/Application Support/Droidpier/mcp-<port>.sock`. Only your macOS user can open its folder, and web pages cannot reach it. Any program that runs as your user can use it, like it could run `adb` itself. See [AI clients (MCP)](/docs/guides/ai-clients/#security).
+
 ## How the page finds the gateway
 
 <!-- verify: phase 3 -->

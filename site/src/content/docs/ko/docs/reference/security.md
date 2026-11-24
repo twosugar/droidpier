@@ -1,7 +1,7 @@
 ---
 title: 보안
 description: 게이트웨이가 다른 웹 페이지와 다른 컴퓨터로부터 에뮬레이터 제어를 막는 방법 - 루프백 전용과 Origin 허용 목록.
-sourceHash: 08642471687c
+sourceHash: 28bc29a7e373
 ---
 
 페이지는 `droid.devpier.dev`에서 제공되지만, 에뮬레이터와 게이트웨이는 내 Mac에서 실행됩니다. 열어 둔 어떤 웹 페이지든 Mac의 프로그램에 연결을 시도할 수 있으므로, 게이트웨이는 모든 연결을 검사합니다.
@@ -21,6 +21,10 @@ sourceHash: 08642471687c
 
 <!-- verify: phase 3 -->
 그 밖의 Origin이거나 Origin이 없는 연결은 코드 `4003`으로 닫힙니다. 다른 사이트의 페이지는 포트를 추측하더라도 에뮬레이터를 제어할 수 없습니다.
+
+## AI 클라이언트 {#ai-clients}
+
+AI 클라이언트는 `droidpier mcp`를 통해 게이트웨이에 접근합니다. 네트워크 대신 Unix 소켓을 사용합니다: `~/Library/Application Support/Droidpier/mcp-<port>.sock`. 해당 폴더는 macOS 사용자만 열 수 있으며 웹 페이지는 접근할 수 없습니다. 사용자 계정으로 실행되는 모든 프로그램은 이 소켓을 사용할 수 있으며, `adb`를 직접 실행하는 것과 같습니다. [AI 클라이언트 (MCP)](/ko/docs/guides/ai-clients/#security)를 참조하세요.
 
 ## 페이지가 게이트웨이를 찾는 방법
 

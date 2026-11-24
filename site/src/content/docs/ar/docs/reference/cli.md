@@ -1,7 +1,7 @@
 ---
 title: سطر الأوامر
 description: الخيارات ومتغيرات البيئة لأمر بوابة Droidpier.
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | يوقف البوابة العاملة في الخلفية، فلا تبدأ بعد ذلك عند تسجيل الدخول. |
 | `droidpier status` | يعرض ما إذا كانت البوابة تعمل في الخلفية، مع معرّف العملية والمنفذ والإصدار وملف السجل. ويعرض أيضًا هل التحديثات التلقائية مفعّلة، مع نتيجة آخر فحص. |
 | `droidpier logs` | يطبع مسار ملف السجل وآخر 50 سطرًا منه. |
+| `droidpier mcp` | يوصّل عميل ذكاء اصطناعي بالبوابة الجارية عبر الإدخال والإخراج القياسيَّين. يبدأه العميل؛ لا تشغّله أنت مباشرةً. `--port` يختار البوابة حين لا تعمل على المنفذ `7300`. انظر [عملاء الذكاء الاصطناعي (MCP)](/ar/docs/guides/ai-clients/). |
 | `droidpier` | يشغّل البوابة في نافذة Terminal هذه إلى أن تضغط `Ctrl+C`. |
 
 إيقاف البوابة لا يوقف المحاكيات العاملة.
@@ -106,6 +108,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | المجموع الاختباري للإصدار المثبّت | `~/.local/share/droidpier/installed.sha256` |
 | إعدادات بوابة الخلفية | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | سجل بوابة الخلفية | `~/Library/Logs/Droidpier/droidpier.log` |
+| مقبس لعملاء الذكاء الاصطناعي | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## التحديثات التلقائية {#automatic-updates}
 
@@ -126,8 +129,10 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+إذا أضفت `droidpier mcp` إلى عميل ذكاء اصطناعي، فأزله من هناك أيضًا، مثلًا `claude mcp remove droidpier`.
 
 إذا كنت قد حذفت `droidpier` بالفعل لكن بوابة الخلفية ما زالت تعمل أو تبدأ عند تسجيل الدخول، فأزلها يدويًا:
 

@@ -9,6 +9,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -18,6 +19,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | Stop the background gateway. It no longer starts when you log in. |
 | `droidpier status` | Show whether the background gateway runs, with its process ID, port, version and log file. It also shows whether automatic updates are on, with the result of the last check. |
 | `droidpier logs` | Print the log file path and its last 50 lines. |
+| `droidpier mcp` | Connect an AI client to the running gateway, over standard input and output. The client starts it; you do not run it yourself. `--port` picks the gateway when it does not run on port `7300`. See [AI clients (MCP)](/docs/guides/ai-clients/). |
 | `droidpier` | Run the gateway in this Terminal window until you press `Ctrl+C`. |
 
 Stopping the gateway does not stop running emulators.
@@ -105,6 +107,7 @@ When Android SDK parts are missing, the gateway lists each one with a command to
 | Checksum of the installed version | `~/.local/share/droidpier/installed.sha256` |
 | Background gateway settings | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Background gateway log | `~/Library/Logs/Droidpier/droidpier.log` |
+| Socket for AI clients | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## Automatic updates
 
@@ -125,8 +128,10 @@ Stop the background gateway, then delete the files it uses:
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+If you added `droidpier mcp` to an AI client, remove it there too, for example `claude mcp remove droidpier`.
 
 If `droidpier` is already deleted but the background gateway still runs or starts when you log in, remove it by hand:
 
