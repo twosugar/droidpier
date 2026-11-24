@@ -112,3 +112,20 @@ test("自己 close：等着的命令马上失败，closed 完成", async () => {
   await assert.rejects(p, /断开/);
   await cdp.closed;
 });
+
+test("通道重置后第一个目标是临时的：转正时重开一次域，之后再来新目标不再重复开", async () => {
+  const f = fakeChannel();
+  const cdp = webkitCdp(f.ch);
+  f.push(created("page-1"));
+  const en = cdp.send("Console.enable");
+  await tick();
+  f.answer("page-1", { id: f.lastInner().id, result: {} });
+  await en;
+  f.push({ method: "Droidpier.channelReset" });
+  f.push(created("page-2", true));
+  f.push({ method: "Target.didCommitProvisionalTarget", params: { oldTargetId: "page-1", newTargetId: "page-2" } });
+  f.push(created("page-3"));
+  await tick();
+  const enables = f.sent.map((o) => JSON.parse(o.params.message)).filter((m) => m.method === "Console.enable");
+  assert.equal(enables.length, 2);
+});

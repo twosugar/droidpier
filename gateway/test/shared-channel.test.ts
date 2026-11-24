@@ -157,3 +157,33 @@ test("底层通道断了：每一方等着的回话也清掉，之后同编号�
   u.push({ id: outerId, result: {} });
   assert.deepEqual(got, []);
 });
+
+test("重置时另一个调试界面不搬（它认不得重置、域和断点都丢了）：直接断开让它重连；MCP 照搬", async () => {
+  const u = fakeUnderlying();
+  const shared = createSharedChannel(u.open);
+  const fe1 = await shared.attach("frontend");
+  let fe1Closed = 0;
+  fe1.onClose(() => fe1Closed++);
+  const tool = await shared.attach();
+  const got = inbox(tool);
+  // 第二个调试界面加入：重置，先到的调试界面断开（和 WebKit 一个页面一个调试端一致），MCP 搬过去
+  const fe2 = await shared.attach("frontend");
+  assert.equal(fe1Closed, 1);
+  assert.deepEqual(got.map((m) => m.method), ["Droidpier.channelReset"]);
+  fe2.close();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(got.map((m) => m.method), ["Droidpier.channelReset", "Droidpier.channelReset"]);
+  assert.equal(u.opened, 3);
+});
+
+test("排着队的重置：轮到时旧通道已经没人用或已作废，就不再开新通道", async () => {
+  const u = fakeUnderlying();
+  const shared = createSharedChannel(u.open);
+  const fe = await shared.attach("frontend");
+  const tool = await shared.attach();
+  fe.close();
+  tool.close();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(u.opened, 1);
+  assert.equal(u.closed, 1);
+});

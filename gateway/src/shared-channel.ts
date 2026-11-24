@@ -100,8 +100,17 @@ export function createSharedChannel(open: () => Promise<InspectorChannel>) {
       },
     ));
 
-  /** 关掉 old 重开一条，把 old 上的使用方（除了 leaving）搬过去。重开失败时它们都收到关闭。 */
+  /**
+   * 关掉 old 重开一条，把 old 上的 MCP 这类使用方搬过去。别的调试界面不搬：它不认识重置，开过的域、断点在新通道上都没了，
+   * 直接断开让它重连。重开失败时都收到关闭。排着队的重置轮到时 old 已经作废或没人用了，就什么都不做。
+   */
   const reset = async (old: Link) => {
+    if (old.retired || old.consumers.size === 0) return;
+    for (const c of [...old.consumers]) {
+      if (c.kind !== "frontend") continue;
+      old.consumers.delete(c);
+      c.closed();
+    }
     old.retired = true;
     if (link === old) link = null;
     forget((p) => p.l === old);

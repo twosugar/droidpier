@@ -55,6 +55,7 @@ export function webkitCdp(ch: InspectorChannel, timeoutMs = 10_000): CdpClient {
     }
     else if (msg.method === "Target.didCommitProvisionalTarget" && p.newTargetId) {
       setTarget(p.newTargetId);
+      replay = false;
       for (const [method, params] of enabled) post(p.newTargetId, nextId++, method, params);
     } else if (msg.method === "Target.targetDestroyed" && p.targetId === target) target = null;
     else if (msg.method === "Target.dispatchMessageFromTarget" && typeof p.message === "string") {
