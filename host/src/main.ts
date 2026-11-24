@@ -35,6 +35,8 @@ const LOGCAT_LEVEL = 3;
 const LOGCAT_READ_LEVEL = 4;
 // 从这个级别起网关能检测、清除设备的代理（proxyCheck / proxyClear）；旧网关不认，等不到回复
 const PROXY_LEVEL = 7;
+// 从这个级别起网关认 indicatePage（页面列表里悬停时整页高亮）
+const INDICATE_LEVEL = 8;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -899,6 +901,12 @@ export async function createHost(player: Player) {
       }
       // 拿到前端地址就在 testID="devtools" 的占位 View 里显示，返回 opened 让 TSX 展开控制台
       if (name === "emu.inspect") return inspect(needPage(name, args));
+      // 页面列表里悬停：on 为 true 时网关把那个页面整个高亮。旧网关不认这条，会逐条写日志，不发
+      if (name === "emu.indicatePage") {
+        const on = (args as { on?: unknown } | undefined)?.on === true;
+        if (gateway === undefined || gatewayBelow(gateway, INDICATE_LEVEL)) return { ok: false };
+        return ctl({ t: "indicatePage", ...needPage(name, args), on });
+      }
       if (name === "emu.devtoolsReload") {
         if (!devtoolsPage) return { ok: false };
         return inspect(devtoolsPage).then((r) => ({ ok: "opened" in r, ...r }));

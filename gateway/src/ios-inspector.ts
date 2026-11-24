@@ -287,6 +287,13 @@ export function createIosInspector(deps: { connect: () => Promise<Duplex>; log?:
       return listing;
     },
     open,
+    /**
+     * 让模拟器把这个页面整个盖上一层系统的高亮（Safari「开发」菜单里悬停页面时那层），on 为 false 时去掉
+     * （2026-11-24 iOS 18.3 模拟器实测）。不用建调试通道。
+     */
+    async indicate(appId: string, pageId: string, on: boolean): Promise<void> {
+      await send("_rpc_forwardIndicateWebView:", { WIRApplicationIdentifierKey: appId, WIRPageIdentifierKey: Number(pageId), WIRIndicateEnabledKey: on });
+    },
     /** 断开到模拟器的连接（会话关掉时）。 */
     close() {
       for (const ch of channels.values()) ch.closed();

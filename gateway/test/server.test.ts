@@ -3369,3 +3369,45 @@ test("proxyCheck：iOS 模拟器不走 adb，回不支持，不去检测", async
   assert.deepEqual(reply(c, "proxyCheck", 47), { t: "proxyCheck", rid: 47, proxy: null, error: "iOS 模拟器暂不支持这个功能" });
   assert.deepEqual(p.checked, []);
 });
+
+test("indicatePage：悬停有位置的 WebView 时发整页高亮，移开时清掉；没有位置的页面（浏览器标签页）不发", async (t) => {
+  const tab: WebViewPage = { ...PAGE, socket: "chrome_devtools_remote", pid: undefined, id: "p2" };
+  const { c } = await debugSetup(t, fakeDebug([{ ...PAGE, rect: { x: 0, y: 200, width: 1080, height: 2000 } }, tab]));
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: PAGE.socket, id: "p1", on: true }));
+  await until(() => c.msgs.some((m) => m.t === "highlight"));
+  assert.deepEqual(c.msgs.find((m) => m.t === "highlight")!.box.quads[0].points, [0, 200, 1080, 200, 1080, 2200, 0, 2200]);
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: PAGE.socket, id: "p1", on: false }));
+  await until(() => c.msgs.filter((m) => m.t === "highlight").length === 2);
+  assert.equal(c.msgs.filter((m) => m.t === "highlight")[1].box, null);
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: tab.socket, id: "p2", on: true }));
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: tab.socket, id: "p2", on: false }));
+  await sleep(50);
+  assert.equal(c.msgs.filter((m) => m.t === "highlight").length, 2);
+});
+
+test("indicatePage：iOS 会话让模拟器自己盖上系统的高亮，移开、断开连接时关掉", async (t) => {
+  const calls: unknown[][] = [];
+  const inspector = {
+    list: async () => [],
+    indicate: async (...a: unknown[]) => void calls.push(a),
+    close: () => {},
+  } as unknown as import("../src/ios-inspector.ts").IosInspector;
+  const { c } = await iosSetup(t, { ios: { inspector: () => ({ inspector, version: "27.0", ios: "27.0" }), webInspectorDir: "/nonexistent", hostShim: "/nonexistent" } });
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: "PID:1", id: "3", on: true }));
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: "PID:1", id: "3", on: false }));
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: "PID:1", id: "4", on: true }));
+  await until(() => calls.length === 3);
+  c.ws.close();
+  await until(() => calls.length === 4);
+  assert.deepEqual(calls, [["PID:1", "3", true], ["PID:1", "3", false], ["PID:1", "4", true], ["PID:1", "4", false]]);
+  assert.equal(c.msgs.some((m) => m.t === "highlight"), false);
+});
+
+test("indicatePage：整页高亮画着时转屏，旧位置的框马上清掉", async (t) => {
+  const { c } = await debugSetup(t, fakeDebug([{ ...PAGE, rect: { x: 0, y: 200, width: 1080, height: 2000 } }]));
+  c.ws.send(JSON.stringify({ t: "indicatePage", socket: PAGE.socket, id: "p1", on: true }));
+  await until(() => c.msgs.some((m) => m.t === "highlight"));
+  c.ws.send(JSON.stringify({ t: "rotate" }));
+  await until(() => c.msgs.filter((m) => m.t === "highlight").length === 2);
+  assert.equal(c.msgs.filter((m) => m.t === "highlight")[1].box, null);
+});

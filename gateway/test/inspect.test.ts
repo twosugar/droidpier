@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { browserView, createInspectInput, createInspectorSlot, highlightBox, inspectModeChange, liveValue, parseWmSize, pickMapping, scaleRect, toPageCss, toPanel } from "../src/inspect.ts";
+import { browserView, createInspectInput, createInspectorSlot, highlightBox, inspectModeChange, liveValue, pageBox, parseWmSize, pickMapping, scaleRect, toPageCss, toPanel } from "../src/inspect.ts";
 
 const j = (o: object) => JSON.stringify(o);
 
@@ -431,4 +431,19 @@ test("高亮：鼠标离开元素树（hideHighlight）后丢掉位置，下一�
   pending.shift()!({ toCss: (p) => p, toPanel: (p) => ({ x: p.x + 1000, y: p.y }) });
   await tick(); await tick();
   assert.equal((boxes.at(-1) as any).quads[0].points[0], 1000);
+});
+
+test("pageBox：WebView 在屏幕上的整块区域换成一层高亮，不带标签；转屏后按显示方向换到画面坐标", () => {
+  const dev = { width: 1080, height: 2340 };
+  const rect = { x: 0, y: 200, width: 1080, height: 2000 };
+  assert.deepEqual(pageBox(rect, dev, 0), {
+    quads: [{ points: [0, 200, 1080, 200, 1080, 2200, 0, 2200], color: "rgba(111,168,220,0.66)" }],
+    label: null,
+    size: "",
+  });
+  // 横屏（顺时针 90）：显示坐标 (x, y) 在画面上是 (y, 高 - x)
+  const land = { x: 100, y: 0, width: 2000, height: 1080 };
+  assert.deepEqual(pageBox(land, dev, 90)?.quads[0].points, [0, 2240, 0, 240, 1080, 240, 1080, 2240]);
+  // 放不进屏幕（方向猜错）就不画
+  assert.equal(pageBox(land, dev, 0), null);
 });
