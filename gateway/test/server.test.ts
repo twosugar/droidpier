@@ -3411,3 +3411,54 @@ test("indicatePage：整页高亮画着时转屏，旧位置的框马上清掉",
   await until(() => c.msgs.filter((m) => m.t === "highlight").length === 2);
   assert.equal(c.msgs.filter((m) => m.t === "highlight")[1].box, null);
 });
+
+// ─────────────── MCP ───────────────
+
+test("mcp（Android）：当前设备是页面上显示的那台；列页面、连页面走同一套 WebView 调试", async (t) => {
+  const { srv, f } = await debugSetup(t);
+  assert.deepEqual(await srv.mcp.current(), { id: "emulator-5554", name: "Pixel_5_API_34", platform: "android", kind: "emulator", width: 1080, height: 2340 });
+  assert.deepEqual(await srv.mcp.pages(), [PAGE]);
+  const { webkit } = await srv.mcp.connect(PAGE);
+  assert.equal(webkit, false);
+  assert.ok(f.calls.includes("cdp ws://127.0.0.1:9300/devtools/page/p1"), f.calls.join("\n"));
+});
+
+test("mcp（iOS）：页面里的调试界面开着时，MCP 和它共用同一条调试通道，各自的回话不串", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "webinspector-"));
+  await writeFile(join(dir, "Main.html"), "<html></html>");
+  const sent: any[] = [];
+  let toPage: ((m: string) => void) | null = null;
+  let opens = 0;
+  const page = { socket: "PID:1", id: "1", title: "Example", url: "https://example.com/", pkg: "com.apple.mobilesafari", visible: true };
+  const inspector = {
+    list: async () => [page],
+    open: async () => {
+      opens++;
+      return { send: (m: string) => void sent.push(JSON.parse(m)), onMessage: (cb: (m: string) => void) => void (toPage = cb), onClose: () => {}, close: () => {} };
+    },
+    close: () => {},
+  } as unknown as import("../src/ios-inspector.ts").IosInspector;
+  const s = await iosSetup(t, { ios: { inspector: () => ({ inspector, version: "27.0", ios: "27.0" }), webInspectorDir: dir, hostShim: join(dir, "Main.html") } });
+  assert.equal((await s.srv.mcp.current())?.platform, "ios");
+  s.c.ws.send(JSON.stringify({ t: "inspect", rid: 2, socket: "PID:1", id: "1" }));
+  await until(() => s.c.msgs.some((m) => m.t === "inspect"));
+  const wsPath = new URL((s.c.msgs.find((m) => m.t === "inspect") as { url: string }).url).searchParams.get("ws")!;
+  const fe = new WebSocket(`ws://${wsPath}`, { headers: { Origin: `http://127.0.0.1:${s.srv.port}` } });
+  const feGot: string[] = [];
+  fe.on("message", (d) => feGot.push(d.toString()));
+  await new Promise((r) => fe.on("open", r));
+  t.after(() => fe.terminate());
+  await until(() => toPage !== null);
+  toPage!(JSON.stringify({ method: "Target.targetCreated", params: { targetInfo: { targetId: "page-1", type: "page" } } }));
+  const { cdp, webkit } = await s.srv.mcp.connect(page);
+  assert.equal(webkit, true);
+  assert.equal(opens, 1);
+  const r = cdp.send("Runtime.evaluate", { expression: "1+1" });
+  await until(() => sent.length === 1);
+  const inner = JSON.parse(sent[0].params.message);
+  toPage!(JSON.stringify({ method: "Target.dispatchMessageFromTarget", params: { targetId: "page-1", message: JSON.stringify({ id: inner.id, result: { result: { value: 2 } } }) } }));
+  assert.deepEqual(await r, { result: { value: 2 } });
+  // 调试界面只收到 targetCreated，MCP 的回话没有送过去
+  await sleep(20);
+  assert.deepEqual(feGot.map((m) => JSON.parse(m).method), ["Target.targetCreated"]);
+});

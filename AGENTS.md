@@ -32,6 +32,10 @@ gateway/src/     The gateway (runs on Node 22.6+ directly from TypeScript; bundl
                    webinspectord_sim, shown in the system's WebInspectorUI (served under /webinspector/)
   webviews.ts, cdp.ts, devtools-proxy.ts, reverse.ts   H5 debugging: list WebView pages, drive them over CDP,
                    proxy the DevTools frontend, adb reverse to a local dev server
+  shared-channel.ts, webkit-cdp.ts   One debugging channel per iOS page shared by the page's WebInspectorUI and
+                   MCP (WebKit takes one channel per page), and that channel wrapped as a CdpClient
+  mcp.ts, mcp-tools.ts, mcp-socket.ts   MCP for AI clients: JSON-RPC, the tools (device, H5 pages, evaluate,
+                   console, screenshot), and the per-user Unix socket that `droidpier mcp` pipes stdio into
   setup.ts, installer.ts, catalog.ts   First-run environment check, SDK installs, device models and system images
   platform.ts      Everything platform specific: SDK paths, binary names, the discovery directory
   page-url.ts      The default port (7300) and the page address the gateway opens
@@ -101,6 +105,9 @@ The gateway serves its own copy of the page (`--local`, `http://127.0.0.1:<port>
 - **The gateway is local only.** It listens on `127.0.0.1` and accepts a WebSocket only from an allowed Origin
   (`auth.ts`: the public page, its own local page, and `--allow-origin` values). Never widen the listen address or the
   allowlist, and never add an endpoint that skips the check. The DevTools proxy takes one-time tickets.
+  The one other way in is the MCP socket (`gateway/src/mcp-socket.ts`): a Unix socket in a directory only the
+  user can open (0700, socket 0600), for AI clients through `droidpier mcp`. It accepts any process of the same user,
+  which could already run adb and simctl itself; never move it to TCP or loosen those permissions.
 - **Nothing leaves the Mac.** The public page is static; no device data, frames or files go anywhere but the local
   gateway.
 - **The emulator is the official one, unchanged.** Talk to it through gRPC (`emulator_controller.proto`, loaded from

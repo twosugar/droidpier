@@ -130,3 +130,10 @@ test("parseCli：--phones 已不起作用，接受但忽略", () => {
 test("parseCli：droidpier start --phones 不再把它写进后台服务", () => {
   assert.deepEqual((parseCli(["start", "--phones", "--port", "7310"]) as { args: string[] }).args, ["--port", "7310"]);
 });
+
+test("parseCli：mcp 子命令接到网关的 MCP，默认端口 7300，可以用 --port 指定；别的参数报错", () => {
+  assert.deepEqual(parseCli(["mcp"]), { kind: "mcp", port: 7300 });
+  assert.deepEqual(parseCli(["mcp", "--port", "7311"]), { kind: "mcp", port: 7311 });
+  assert.equal(parseCli(["mcp", "--local"]).kind, "error");
+  assert.match(USAGE, /droidpier mcp/);
+});

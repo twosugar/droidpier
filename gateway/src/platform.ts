@@ -61,6 +61,11 @@ export function serviceLogPath(label: string, home = homedir()): string {
   return join(home, "Library/Logs/Droidpier", label === SERVICE_LABEL ? "droidpier.log" : `${label}.log`);
 }
 
+/** 网关给 AI 客户端的 MCP socket（gateway/src/mcp-socket.ts）：每个端口一个，目录只给当前用户。路径不能超过 104 字节。 */
+export function mcpSocketPath(port: number, home = homedir()): string {
+  return join(home, "Library/Application Support/Droidpier", `mcp-${port}.sock`);
+}
+
 /** adb 可执行文件的绝对路径（adbPath 的别名）。 */
 export function adbBin(): string {
   return adbPath();

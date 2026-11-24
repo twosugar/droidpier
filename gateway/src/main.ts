@@ -6,7 +6,7 @@ import { startServer } from "./server.ts";
 import { deleteAvd, listAvds, renameAvd } from "./avd.ts";
 import { startAvd, stopAvd } from "./lifecycle.ts";
 import { cachedSession } from "./session-cache.ts";
-import { avdHome, serviceLogPath, discoveryDir, emulatorBin, iosHelperCacheDir, iosSimDevicePlist, openBrowser, WEB_INSPECTOR_DIR, sdkRoot, SYS_IMG_MANIFEST_URL } from "./platform.ts";
+import { avdHome, mcpSocketPath, serviceLogPath, discoveryDir, emulatorBin, iosHelperCacheDir, iosSimDevicePlist, openBrowser, WEB_INSPECTOR_DIR, sdkRoot, SYS_IMG_MANIFEST_URL } from "./platform.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,6 +37,9 @@ import { cleanupAll, exitHandler } from "./exit.ts";
 import { allowedOrigins, PUBLIC_ORIGIN } from "./auth.ts";
 import { buildPageUrl } from "./page-url.ts";
 import { parseCli, USAGE, versionLine } from "./cli.ts";
+import { createMcpServer } from "./mcp.ts";
+import { listenMcp, pipeMcp } from "./mcp-socket.ts";
+import { createMcpTools, MCP_INSTRUCTIONS } from "./mcp-tools.ts";
 import { checkPortFirst, explainBusyPort } from "./already-running.ts";
 import { cleanStaleUploads } from "./upload-temp.ts";
 import { realRotateIo, realServiceDeps, rotateLog, SERVICE_LABEL, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
@@ -67,6 +70,16 @@ if (cli.kind === "version") {
 if (cli.kind === "error") {
   console.error(`${cli.message}\n\n${USAGE}`);
   process.exit(1);
+}
+if (cli.kind === "mcp") {
+  // stdout 只能是 MCP 消息，说明都写到 stderr
+  try {
+    await pipeMcp({ path: mcpSocketPath(cli.port), stdin: process.stdin, stdout: process.stdout });
+    process.exit(0);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
 }
 if (cli.kind === "service") {
   if (process.platform !== "darwin") {
@@ -394,6 +407,13 @@ srv = await startServer({
   const pageUrl = buildPageUrl(process.argv, port);
   exitBusy(await explainBusyPort({ port, pageUrl, ownVersion: VERSION }), pageUrl);
 });
+// 给 AI 客户端的 MCP（droidpier mcp 接过来）：和页面共用设备和 H5 调试连接
+const mcpTools = createMcpTools(srv.mcp);
+const mcp = createMcpServer({ name: "droidpier", version: VERSION || "dev", instructions: MCP_INSTRUCTIONS, tools: () => mcpTools });
+const mcpListener = await listenMcp({ path: mcpSocketPath(srv.port), handle: (l) => mcp.handle(l), log: (s) => console.log(s) }).catch((e: Error) => {
+  console.log(`MCP 没有启动：${e.message}`);
+  return null;
+});
 const pageUrl = buildPageUrl(process.argv, srv.port);
 // 新版本稳定运行一分钟后不再数它的启动次数
 // 要重启时取消（restart、cleanup）：这一分钟里后台检查换上了更新的版本，计数属于那个版本，不能被这里删掉
@@ -424,6 +444,7 @@ const cleanup = () => (cleaning ??= (async () => {
     // srv.close() 会收掉当前设备的 webviews.close() 和 reverses.removeAll()
     closeServer: srv ? () => srv!.close() : undefined,
   });
+  await mcpListener?.close();
   last?.close();
   // 等取消订阅时异步删除 mmap 临时文件
   await new Promise((r) => setTimeout(r, 200));
