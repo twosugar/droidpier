@@ -139,6 +139,22 @@ export function scaleRect(rect: Rect, device: { width: number; height: number },
 }
 
 /**
+ * 页面列表里悬停时整页的高亮：WebView 在屏幕上的整块区域（显示方向的设备像素），一层默认的内容色、不带标签。
+ * 拿不到显示角度，按物理方向放（pickMapping）；放不进屏幕时返回 null，不画。
+ */
+export function pageBox(rect: Rect, device: { width: number; height: number }, physical: Rotation): HighlightBox | null {
+  const m = pickMapping({ rect, device, physical, angle: undefined, cssWidth: rect.width });
+  if (!m) return null;
+  const points: number[] = [];
+  for (const [x, y] of [[0, 0], [rect.width, 0], [rect.width, rect.height], [0, rect.height]]) {
+    const p = toPanel({ x, y }, device, m.rotation, rect, 1);
+    points.push(Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10);
+  }
+  const c = DEFAULT_COLORS.content;
+  return { quads: [{ points, color: `rgba(${c.r},${c.g},${c.b},${c.a})` }], label: null, size: "" };
+}
+
+/**
  * 映射用的显示方向和缩放。
  * 显示方向不一定是模拟器的物理方向（App 锁竖屏、关了自动旋转）：页面给了 screen.orientation.angle 就用它，
  * 它是 Android 的显示角度（逆时针），换成 toDevice 的顺时针；拿不到（比如停在断点上）时按物理方向猜。

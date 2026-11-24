@@ -15,8 +15,9 @@ export const PROTOCOL_VERSION = 1;
  * 5：mumu 列表、mumuOpen / mumuClose（从页面开关 MuMu 模拟器）。
  * 6：iosSims 列表、iosSimOpen / iosSimClose、iosCatalog / createIosSim（iOS 模拟器）；use 认 iOS 模拟器的 UDID；caps.logs。
  * 7：proxyCheck / proxyClear（检测、清除模拟器里连不上的代理）。
+ * 8：indicatePage（在 H5 页面列表里悬停时把那个页面整个高亮）。
  */
-export const GATEWAY_LEVEL = 7;
+export const GATEWAY_LEVEL = 8;
 
 /** logcatRead 一次最多要多少行（WebMCP 的 droidpier_read_logcat）。 */
 export const LOGCAT_READ_MAX = 1000;
@@ -340,6 +341,8 @@ export type ClientMsg =
   | { t: "navigate"; rid: number; socket: string; id: string; address: string }
   /** DevTools 选择元素模式下（收到 inspectMode on 且 mapped）代替触摸发：坐标同 touch，move 高亮、down + up 选中。 */
   | { t: "inspectPointer"; kind: "move" | "down" | "up"; x: number; y: number }
+  /** 页面列表里悬停到某个页面时 on=true，移开时 false：网关把那个页面在屏幕上整个高亮（像 Safari「开发」菜单那样）。 */
+  | { t: "indicatePage"; socket: string; id: string; on: boolean }
   /** 改 AVD 的显示名（name 是 id）；回复同 rid 的 renameAvd，成功后网关给所有页面发新的 avds。 */
   | { t: "renameAvd"; rid: number; name: string; displayName: string }
   /** 用户在确认框里确认过才发：删掉这台 AVD 的 .ini 和数据目录（系统镜像不动）；运行中、启动中的拒绝，带 stop 时先停止再删。回复同 rid 的 deleteAvd，成功后网关给所有页面发新的 avds。 */
@@ -555,6 +558,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "inspectPointer":
       if (!["move", "down", "up"].includes(o.kind as string) || !isNum(o.x) || !isNum(o.y)) return null;
       return { t: "inspectPointer", kind: o.kind as "move" | "down" | "up", x: o.x, y: o.y };
+    case "indicatePage":
+      if (!isStr(o.socket) || !isStr(o.id) || typeof o.on !== "boolean") return null;
+      return { t: "indicatePage", socket: o.socket, id: o.id, on: o.on };
     case "renameAvd":
       if (!isNum(o.rid) || !isStr(o.name) || !isStr(o.displayName)) return null;
       return { t: "renameAvd", rid: o.rid, name: o.name, displayName: o.displayName };

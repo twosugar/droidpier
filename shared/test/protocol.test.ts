@@ -214,7 +214,13 @@ test("parseClientMsg：logcatRead 校验 rid、filter、limit", () => {
   assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter: { pkg: "a b", level: "E", text: "" }, limit: 5 })), null);
 });
 
-test("GATEWAY_LEVEL 是 7（检测、清除模拟器的代理）", () => assert.equal(GATEWAY_LEVEL, 7));
+test("GATEWAY_LEVEL 是 8（悬停页面时整页高亮）", () => assert.equal(GATEWAY_LEVEL, 8));
+
+test("parseClientMsg：indicatePage 要 socket、id 和布尔的 on，多余字段丢掉", () => {
+  assert.deepEqual(parseClientMsg('{"t":"indicatePage","socket":"s","id":"1","on":true,"x":1}'), { t: "indicatePage", socket: "s", id: "1", on: true });
+  assert.equal(parseClientMsg('{"t":"indicatePage","socket":"s","id":"1","on":1}'), null);
+  assert.equal(parseClientMsg('{"t":"indicatePage","socket":"s","on":false}'), null);
+});
 
 test("parseClientMsg 解析 proxyCheck / proxyClear；没有数字 rid、proxyClear 没带 proxy 时返回 null", () => {
   assert.deepEqual(parseClientMsg('{"t":"proxyCheck","rid":1}'), { t: "proxyCheck", rid: 1 });

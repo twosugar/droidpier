@@ -196,3 +196,15 @@ test("open：建通道、前端消息转成 forwardSocketData；页面数据按 
   await new Promise((r) => setImmediate(r));
   assert.equal(closed, 1);
 });
+
+test("indicate：让模拟器把这个页面整个盖上系统的高亮（Safari「开发」菜单悬停时那层），关掉时发 false", async () => {
+  const d = fakeDaemon(() => {});
+  const ins = createIosInspector({ connect: async () => d.sock });
+  await ins.indicate("PID:58558", "12", true);
+  await ins.indicate("PID:58558", "12", false);
+  await until(() => d.sent.filter((m) => m.selector === "_rpc_forwardIndicateWebView:").length === 2);
+  const sent = d.sent.filter((m) => m.selector === "_rpc_forwardIndicateWebView:").map((m) => ({
+    app: m.arg.WIRApplicationIdentifierKey, page: m.arg.WIRPageIdentifierKey, on: m.arg.WIRIndicateEnabledKey,
+  }));
+  assert.deepEqual(sent, [{ app: "PID:58558", page: 12, on: true }, { app: "PID:58558", page: 12, on: false }]);
+});

@@ -8,7 +8,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { LatestFrame } from "./latest-frame.ts";
 import { createVideoSender } from "./video-sender.ts";
 import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, frontendFileUrl, inspectUrl, LOCAL_FRONTEND_PATH, localFrontendUrl, parseDevtoolsPath, proxyDevtools, type DevtoolsSession } from "./devtools-proxy.ts";
-import { browserView, createInspectorSlot, liveValue, pickMapping, scaleRect, toPageCss, toPanel, type HighlightTarget, type InspectPointer } from "./inspect.ts";
+import { browserView, createInspectorSlot, liveValue, pageBox, pickMapping, scaleRect, toPageCss, toPanel, type HighlightTarget, type InspectPointer } from "./inspect.ts";
 import { checkHost, checkUpgrade, createTickets, type Tickets } from "./auth.ts";
 import { createPeerCheck, type SocketsLookup } from "./peer.ts";
 import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
@@ -815,6 +815,7 @@ export async function startServer(opts: {
       // 转屏后 App 重新排版要一会儿：马上作废旧位置，过 1.5 秒按新的 /json 再算一次
       rotated: () => {
         inspector.relocate();
+        pageUnlight();
         clearTimeout(relocateTimer);
         relocateTimer = setTimeout(() => inspector.relocate(), 1500);
       },
@@ -978,6 +979,51 @@ export async function startServer(opts: {
       conn.session = undefined;
       // 换了设备或断开：画着的高亮和算好的位置都作废
       inspector.relocate();
+      iosUnlight();
+      pageUnlight();
+    };
+    // 页面列表里悬停的那个页面（indicatePage）。iOS 让模拟器自己盖系统的高亮，记下来好在移开、换页面、断开时关掉；
+    // Android 按 WebView 在屏幕上的位置画一层，pageSeq 作废还没算完的旧请求（移开得比 adb 列页面快）
+    let iosLit: { ins: IosInspector; socket: string; id: string } | null = null;
+    let iosChain = Promise.resolve();
+    let pageSeq = 0;
+    let pageLit = false;
+    const iosIndicate = (ins: IosInspector, socket: string, id: string, on: boolean) => {
+      iosChain = iosChain.then(() => ins.indicate(socket, id, on)).catch((e: Error) => log(`iOS 页面高亮失败：${e.message}`));
+    };
+    const iosUnlight = () => {
+      if (iosLit) iosIndicate(iosLit.ins, iosLit.socket, iosLit.id, false);
+      iosLit = null;
+    };
+    // 画着的整页框作废（移开、转屏、换设备），还没算完的也不再画
+    const pageUnlight = () => {
+      pageSeq++;
+      if (!pageLit) return;
+      pageLit = false;
+      send(ws, { t: "highlight", box: null });
+    };
+    const indicatePage = async (socket: string, id: string, on: boolean) => {
+      pageUnlight();
+      const my = pageSeq;
+      const s = conn.session;
+      const ios = s && !viaAdb(s) ? iosFor(s) : null;
+      if (iosLit && (!on || !ios || iosLit.ins !== ios.inspector || iosLit.socket !== socket || iosLit.id !== id)) iosUnlight();
+      if (!on || !s) return;
+      if (ios) {
+        if (iosLit) return;
+        iosLit = { ins: ios.inspector, socket, id };
+        return iosIndicate(ios.inspector, socket, id, true);
+      }
+      if (!opts.debug || isRebooting(s)) return;
+      const h = debugFor(s.id);
+      const page = (await listPages(h)).find((p) => p.socket === socket && p.id === id);
+      if (!page?.rect) return;
+      // 真机的画面是缩小过的视频（同 locate）
+      const display = s.kind === "phone" ? ((await h.d.displaySize?.().catch(() => null)) ?? null) : null;
+      const box = pageBox(scaleRect(page.rect, s.device, display), s.device, s.rotation);
+      if (!box || my !== pageSeq || conn.session !== s) return;
+      pageLit = true;
+      send(ws, { t: "highlight", box });
     };
     // 调试请求不进输入队列、不阻塞消息处理：navigate 最长要 10 秒
     const webviews = async (rid: number) => {
@@ -1514,6 +1560,9 @@ export async function startServer(opts: {
         case "webviews":
           void webviews(m.rid);
           break;
+        case "indicatePage":
+          indicatePage(m.socket, m.id, m.on).catch((e: Error) => log(`页面高亮失败：${e.message}`));
+          break;
         case "proxyCheck":
           void proxyCheck(m.rid);
           break;
@@ -1731,6 +1780,7 @@ export async function startServer(opts: {
 
     ws.on("close", () => {
       wsClosed = true;
+      iosUnlight();
       // 还在收分片的传输：删掉临时文件；已经在装的等 adb 结束后由 finishUpload 删
       if (upload && !upload.ended) abortUpload(upload, "连接断开");
       // 连接异常断开时若手指还按着，补发抬起，避免 Android 侧卡住

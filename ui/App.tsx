@@ -434,6 +434,8 @@ function AppSelect(props: {
   onChange: (value: string) => void; disabled?: boolean; search?: string; onOpen?: () => void;
   /** 搜索没有匹配时列表里说的话。 */
   empty?: string;
+  /** 鼠标移到某一行上时给它的 value，移开、弹层关掉时给 null。 */
+  onHover?: (value: string | null) => void;
   style: { width: number; flexShrink?: number; minWidth?: number };
 }) {
   // 触发器上字的宽度：放不下时按它中间省略；标题、地址、包名里常有放不下的一长段，用 noBreak 按字截断兜底（见 ui/ellipsis.ts）
@@ -443,7 +445,8 @@ function AppSelect(props: {
       popupStyle={{ backgroundColor: token("popover"), borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), padding: SPACE.part, minWidth: 220, maxHeight: 360, boxShadow: popupShadow() }}
       itemClass={SELECT_ITEM}
       renderItem={(item) => (
-        <View style={{ height: CONTROL.sm, justifyContent: "center", paddingHorizontal: SPACE.item }}>
+        <View style={{ height: CONTROL.sm, justifyContent: "center", paddingHorizontal: SPACE.item }}
+          onMouseEnter={props.onHover ? () => props.onHover!(item.value) : undefined} onMouseLeave={props.onHover ? () => props.onHover!(null) : undefined}>
           <Text class={SELECT_ITEM_TEXT} style={{ ...TYPE.body, numberOfLines: 1 }}>{noBreak(item.title)}</Text>
         </View>
       )}
@@ -453,7 +456,7 @@ function AppSelect(props: {
         height: CONTROL.sm, marginBottom: SPACE.part, paddingHorizontal: SPACE.item, borderRadius: token("radius-sm"), borderWidth: 1, borderColor: token("input"),
         backgroundColor: token("field"), color: token("foreground"), fontSize: TYPE.body.fontSize, ...inputColors(),
       }}
-      onOpenChange={({ open }) => { if (open) props.onOpen?.(); }}
+      onOpenChange={({ open }) => { if (open) props.onOpen?.(); else props.onHover?.(null); }}
       onChange={({ value }) => { if (value !== null) props.onChange(value); }}
       trigger={
         <View style={{ height: CONTROL.md, flexDirection: "row", alignItems: "center", gap: SPACE.part, paddingLeft: SPACE.inset, paddingRight: SPACE.item, borderRadius: token("radius"), borderWidth: 1, borderColor: token("input"), backgroundColor: token("field") }}
@@ -888,6 +891,17 @@ function H5Console(props: {
   // 标题只有空白（网页的 <title> 里常带换行）时也用地址
   const pageTitle = (p: Page) => `${visibleTitle(p.title) || middleEllipsis(p.url, URL_CHARS)}${p.visible ? "" : "（后台）"}`;
   const items = () => appPages().map((p) => ({ value: pageKey(p), title: pageTitle(p) }));
+  // 下拉框里悬停到哪个页面，就让网关在设备画面上把它整个高亮（像 Safari「开发」菜单）；移开时关掉上一个
+  let lit: { key: string; socket: string; id: string } | null = null;
+  const indicate = (key: string | null) => {
+    if (key === (lit?.key ?? null)) return;
+    if (lit) void host.call("emu.indicatePage", { socket: lit.socket, id: lit.id, on: false });
+    const p = key === null ? undefined : appPages().find((x) => pageKey(x) === key);
+    lit = p ? { key: key!, socket: p.socket, id: p.id } : null;
+    if (lit) void host.call("emu.indicatePage", { socket: lit.socket, id: lit.id, on: true });
+  };
+  // 控制台收起时下拉框可能还开着、停在某一行上
+  cleanup(() => indicate(null));
   // DevTools 还没打开时盖在占位区上的说明；打开被取消、失败了（原因在上面的提示条里）时给下一步
   const placeholder = () => {
     if (pages() === null) return "正在读取 H5 页面…";
@@ -904,7 +918,8 @@ function H5Console(props: {
           onChange={(value) => {
             const p = appPages().find((x) => pageKey(x) === value);
             if (p) inspect(p);
-          }} />
+          }}
+          onHover={indicate} />
         {/* 当前页面的地址：改了按回车跳转（localhost 自动 adb reverse），Escape 放弃修改 */}
         <FieldBox icon="link" label="页面地址" focused={addressFocused()} style={{ flex: 1, minWidth: 96, opacity: navigating() ? 0.6 : 1 }}
           trailing={<IconButton icon="copy" label="复制地址" size="sm" disabled={!currentUrl()} why="还没有页面地址" onPress={() => props.onCopy(currentUrl()!)} />}>
