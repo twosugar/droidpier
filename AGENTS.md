@@ -32,6 +32,10 @@ gateway/src/     The gateway (runs on Node 22.6+ directly from TypeScript; bundl
                    webinspectord_sim, shown in the system's WebInspectorUI (served under /webinspector/)
   webviews.ts, cdp.ts, devtools-proxy.ts, reverse.ts   H5 debugging: list WebView pages, drive them over CDP,
                    proxy the DevTools frontend, adb reverse to a local dev server
+  shared-channel.ts, webkit-cdp.ts   One debugging channel per iOS page shared by the page's WebInspectorUI and
+                   MCP (WebKit takes one channel per page), and that channel wrapped as a CdpClient
+  mcp.ts, mcp-tools.ts, mcp-socket.ts   MCP for AI clients: JSON-RPC, the tools (device, H5 pages, evaluate,
+                   console, screenshot), and the per-user Unix socket that `droidpier mcp` pipes stdio into
   setup.ts, installer.ts, catalog.ts   First-run environment check, SDK installs, device models and system images
   platform.ts      Everything platform specific: SDK paths, binary names, the discovery directory
   page-url.ts      The default port (7300) and the page address the gateway opens

@@ -15,6 +15,9 @@ import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
 import { normalizeTarget } from "../../shared/target-url.ts";
 import type { EmulatorSession } from "./emulator.ts";
 import type { IosInspector } from "./ios-inspector.ts";
+import type { McpDeps } from "./mcp-tools.ts";
+import { createSharedChannel } from "./shared-channel.ts";
+import { webkitCdp } from "./webkit-cdp.ts";
 import type { LogcatSub } from "./logcat.ts";
 import type { ProxyState } from "./proxy-check.ts";
 import type { LogFilter, LogLine } from "../../shared/logcat.ts";
@@ -240,6 +243,8 @@ export async function startServer(opts: {
   busy(): string | null;
   /** 给所有页面发一条更新状态（定时检查换上新版本、马上重启时）。 */
   notifyUpdate(r: { state: UpdateState; message?: string }): void;
+  /** MCP 工具用的设备和页面（gateway/src/mcp-tools.ts）。 */
+  mcp: McpDeps;
 }> {
   const log = opts.log ?? ((s: string) => console.log(s));
   const root = resolve(opts.staticDir);
@@ -306,6 +311,18 @@ export async function startServer(opts: {
   const listPages = (h: Debug) => (h.listing ??= h.d.webviews.list().finally(() => (h.listing = undefined)));
   // iOS 模拟器会话的调试连接（不走 adb）；没配 opts.ios 或不是 iOS 会话时为 null
   const iosFor = (s: EmulatorSession) => (!viaAdb(s) && opts.ios ? opts.ios.inspector(s.id) : null);
+  // iOS 页面一次只认一条调试通道：页面里的调试界面和 MCP 共用一条（gateway/src/shared-channel.ts）
+  const sharedChannels = new WeakMap<IosInspector, Map<string, ReturnType<typeof createSharedChannel>>>();
+  const iosChannel = (ins: IosInspector, appId: string, pageId: string) => {
+    let byPage = sharedChannels.get(ins);
+    if (!byPage) sharedChannels.set(ins, (byPage = new Map()));
+    const key = `${appId}/${pageId}`;
+    let shared = byPage.get(key);
+    if (!shared) byPage.set(key, (shared = createSharedChannel(() => ins.open(appId, pageId))));
+    return shared.attach();
+  };
+  // 页面最近一次接上的设备：MCP 操作的「当前设备」就是它
+  let lastShown: EmulatorSession | null = null;
   // 开着的 iOS 调试界面连接，按模拟器记：换设备、会话关掉时断开
   const iosProxies = new Set<{ ws: WebSocket; udid: string }>();
   const dropIosProxies = (keep?: string) => {
@@ -528,7 +545,7 @@ export async function startServer(opts: {
       const ios = owner?.session ? iosFor(owner.session) : null;
       if (!ios) return ws.close(CLOSE_UNKNOWN_SOCKET, "no ios simulator");
       const udid = owner!.session!.id;
-      ios.inspector.open(appId, pageId).then((ch) => {
+      iosChannel(ios.inspector, appId, pageId).then((ch) => {
         if (ws.readyState !== ws.OPEN) return ch.close();
         // 换设备、模拟器会话关掉时断开（同 Android 的 dropDebug）
         iosProxies.add({ ws, udid });
@@ -962,6 +979,7 @@ export async function startServer(opts: {
     };
     const attach = (s: EmulatorSession) => {
       conn.session = s;
+      lastShown = s;
       // 按着的手指属于旧会话，新会话里没有按下
       lastTouch = null;
       watch(s);
@@ -1821,8 +1839,51 @@ export async function startServer(opts: {
   });
   const addr = http.address();
   gatewayPort = typeof addr === "object" && addr ? addr.port : opts.port;
+  // MCP 的当前设备：页面还显示着的那台；没有页面开着时用网关手上的会话
+  const mcpSession = async () => {
+    const shown = lastShown && live().some((c) => c.session === lastShown) ? lastShown : null;
+    return shown ?? (await opts.getSession().catch(() => null));
+  };
+  const mcpNeed = async () => {
+    const s = await mcpSession();
+    if (!s) throw new Error("没有连接设备：先在 Droidpier 页面上打开一台设备");
+    if (isRebooting(s)) throw new Error(REBOOTING);
+    return s;
+  };
+  const mcp: McpDeps = {
+    current: async () => {
+      const s = await mcpSession();
+      return s && { id: s.id, name: s.avdName ?? s.id, platform: viaAdb(s) ? "android" : "ios", kind: s.kind, width: s.device.width, height: s.device.height };
+    },
+    pages: async () => {
+      const s = await mcpNeed();
+      if (!viaAdb(s)) {
+        const ios = iosFor(s);
+        if (!ios) throw new Error("这台 iOS 模拟器读不了 H5 页面");
+        return ios.inspector.list();
+      }
+      if (!opts.debug) throw new Error("网关没有 H5 调试");
+      return listPages(debugFor(s.id));
+    },
+    connect: async (page) => {
+      const s = await mcpNeed();
+      if (!viaAdb(s)) {
+        const ios = iosFor(s);
+        if (!ios) throw new Error("这台 iOS 模拟器读不了 H5 页面");
+        return { cdp: webkitCdp(await iosChannel(ios.inspector, page.socket, page.id)), webkit: true };
+      }
+      if (!opts.debug) throw new Error("网关没有 H5 调试");
+      const h = debugFor(s.id);
+      const port = h.d.webviews.portOf(page.socket) ?? ((await listPages(h)), h.d.webviews.portOf(page.socket));
+      if (port === undefined) throw new Error(`页面已经不在了：${page.socket}/${page.id}`);
+      return { cdp: await opts.debug.connectCdp(`ws://127.0.0.1:${port}/devtools/page/${encodeURIComponent(page.id)}`), webkit: false };
+    },
+    screenshot: async () => (await mcpNeed()).screenshot(),
+  };
+
   return {
     port: gatewayPort,
+    mcp,
     busy: () =>
       installing ? "正在安装 SDK"
       : booting() ? "设备正在开机"

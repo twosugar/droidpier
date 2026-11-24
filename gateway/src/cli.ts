@@ -13,6 +13,8 @@ export type ServiceCommand = "start" | "stop" | "status" | "logs";
 export type CliResult =
   | { kind: "run"; options: CliOptions }
   | { kind: "service"; command: ServiceCommand; args: string[]; noOpen: boolean }
+  /** 把 AI 客户端（Claude Code 等）的 stdio 接到这个端口的网关的 MCP（gateway/src/mcp-socket.ts）。 */
+  | { kind: "mcp"; port: number }
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "error"; message: string };
@@ -27,6 +29,8 @@ export const USAGE = [
   "  droidpier stop    停止后台运行，开机也不再自动启动",
   "  droidpier status  查看后台运行的状态",
   "  droidpier logs    打印日志位置和最近的日志",
+  "  droidpier mcp [--port <端口>]",
+  "                   给 AI 客户端用的 MCP 服务（stdio），接到运行中的网关：claude mcp add droidpier -- droidpier mcp",
   "  droidpier [--port <端口>] [--local] [--no-open]",
   "                   在当前终端里运行，按 Ctrl+C 停止",
   "",
@@ -43,6 +47,12 @@ export function parseCli(args: string[]): CliResult {
   if (args.includes("-h") || args.includes("--help")) return { kind: "help" };
   if (args.includes("--version")) return { kind: "version" };
   const [first, ...rest] = args;
+  if (first === "mcp") {
+    if (rest.length === 0) return { kind: "mcp", port: DEFAULT_PORT };
+    const port = Number(rest[1]);
+    if (rest[0] !== "--port" || rest.length !== 2 || !Number.isInteger(port) || port <= 0 || port > 65535) return { kind: "error", message: `droidpier mcp 只认 --port <端口>：${rest.join(" ")}` };
+    return { kind: "mcp", port };
+  }
   if (first !== undefined && SERVICE_COMMANDS.includes(first)) {
     const command = first as ServiceCommand;
     if (command !== "start") return rest.length ? { kind: "error", message: `多余的参数：${rest[0]}` } : { kind: "service", command, args: [], noOpen: false };

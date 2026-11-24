@@ -57,6 +57,7 @@ droidpier start [--port <port>] [--local] [--no-open]   # run in the background 
 droidpier stop                                          # stop it; it no longer starts at login
 droidpier status                                        # running? pid, port, version, log file
 droidpier logs                                          # log file path and its last lines
+droidpier mcp [--port <port>]                           # MCP server (stdio) for AI clients, through the running gateway
 droidpier [--port <port>] [--local] [--no-open]         # run in this terminal until Ctrl+C
 droidpier --version | --help
 ```
@@ -73,12 +74,22 @@ droidpier --version | --help
 
 An unknown option or a stray argument makes `droidpier` exit with a message instead of being ignored.
 
+### MCP for AI clients
+
+`droidpier mcp` lets an AI client such as Claude Code use the device the Droidpier page is showing: list its H5 pages, run JavaScript in one, read its console and take a screenshot. Add it once:
+
+```sh
+claude mcp add droidpier -- droidpier mcp
+```
+
+It talks to the running gateway through a Unix socket in `~/Library/Application Support/Droidpier/` that only your user can open; no TCP port is added. The gateway shares its debugging connections with the page: on an iOS simulator, where WebKit allows one debugger per page, the AI and the page's console use the same connection, so they no longer push each other off as a separate tool such as iwdp would.
+
 ### Uninstall
 
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
 
 Quitting or killing the background gateway is not enough: it starts again. If `droidpier` is already deleted but the background gateway still runs or starts at login, remove it by hand:

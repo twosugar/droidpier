@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { androidUserHome, avdHome, explicitAvdHome } from "../src/platform.ts";
+import { androidUserHome, avdHome, explicitAvdHome, mcpSocketPath } from "../src/platform.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -30,4 +30,8 @@ test("avdHome：ANDROID_AVD_HOME 是空字符串时当没设，用 ~/.android/av
 test("androidUserHome：ANDROID_USER_HOME 非空时用它，否则 ~/.android", () => {
   withEnv({ ANDROID_USER_HOME: "/u/.android" }, () => assert.equal(androidUserHome(), "/u/.android"));
   withEnv({ ANDROID_USER_HOME: "" }, () => assert.equal(androidUserHome(), join(homedir(), ".android")));
+});
+
+test("mcpSocketPath：按端口一个，放在只给自己的 Application Support/Droidpier 下", () => {
+  assert.equal(mcpSocketPath(7300, "/Users/u"), "/Users/u/Library/Application Support/Droidpier/mcp-7300.sock");
 });
