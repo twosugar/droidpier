@@ -131,3 +131,9 @@ test("fileKind：Android 设备上拖来 iOS 的 .app 不当普通文件放进�
   assert.deepEqual(fileKind("Longbridge.app.tar"), { kind: "unsupported", ext: ".app" });
   assert.deepEqual(fileKind("notes.tar"), { kind: "file" });
 });
+
+test("sanitizeFileName：名字太长截断时保住 .app.tar 整个后缀，网关还认得是 App", () => {
+  const name = sanitizeFileName(`${"长".repeat(80)}.app.tar`)!;
+  assert.ok(name.endsWith(".app.tar"), name);
+  assert.deepEqual(iosFileKind(name), { kind: "ios-app", format: "tar" });
+});

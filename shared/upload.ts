@@ -19,7 +19,8 @@ export function sanitizeFileName(raw: string): string | null {
   if (!name || /^\.+$/.test(name)) return null;
   if (utf8Bytes(name) > NAME_MAX_BYTES) {
     const dot = name.lastIndexOf(".");
-    const ext = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : "";
+    // 页面打包的 .app 要保住整个 .app.tar，网关靠它认出是 App
+    const ext = name.toLowerCase().endsWith(APP_TAR_SUFFIX) ? name.slice(-APP_TAR_SUFFIX.length) : dot > 0 && name.length - dot <= 16 ? name.slice(dot) : "";
     name = cutToBytes(name.slice(0, name.length - ext.length), NAME_MAX_BYTES - utf8Bytes(ext)) + ext;
   }
   return name;

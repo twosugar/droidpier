@@ -38,6 +38,8 @@ const LOGCAT_READ_LEVEL = 4;
 const PROXY_LEVEL = 7;
 // 从这个级别起网关认 indicatePage（页面列表里悬停时整页高亮）
 const INDICATE_LEVEL = 8;
+// 从这个级别起网关能给 iOS 模拟器装 App（拖进来的 .app、.zip、.ipa）；旧网关回「暂不支持」
+const IOS_APP_LEVEL = 9;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -682,7 +684,9 @@ export async function createHost(player: Player) {
   const takeFiles = (list: File[]) => {
     const why = dropBlocked();
     if (why) return player.hostEvent("emu.notice", { text: why, error: true });
-    if (list.length) uploads.add(list, { ios: caps?.adb === false });
+    const ios = caps?.adb === false;
+    const gatewayTooOld = ios && gateway !== undefined && gatewayBelow(gateway, IOS_APP_LEVEL) ? tooOldText("给 iOS 模拟器装 App", INSTALL) : undefined;
+    if (list.length) uploads.add(list, { ios, gatewayTooOld });
   };
   // 「发送文件…」：选好的文件和拖进来的走同一条路。不放进 DOM，click() 照样弹出选择框；
   // 要在用户的点击里调用（Chrome 要求用户激活，2026-11-17 实测 host.call 到这里时激活还在）
@@ -727,7 +731,8 @@ export async function createHost(player: Player) {
     dragEvent(false);
     // 条目要在 drop 事件里同步取，之后就拿不到了；有文件夹（.app）时按条目读，没有时照旧用 files
     const entries = [...e.dataTransfer!.items].filter((i) => i.kind === "file").map((i) => i.webkitGetAsEntry() as DropEntry | null);
-    if (!entries.some((en) => en?.isDirectory)) return takeFiles([...e.dataTransfer!.files]);
+    // 拖不了（没连设备、重启中）时不去读整个文件夹，直接给出原因
+    if (!entries.some((en) => en?.isDirectory) || dropBlocked()) return takeFiles([...e.dataTransfer!.files]);
     filesFromDrop(entries.filter((en): en is DropEntry => en !== null)).then(
       ({ files, skipped }) => {
         for (const text of skipped) player.hostEvent("emu.notice", { text, error: true });

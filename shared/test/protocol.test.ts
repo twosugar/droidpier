@@ -214,7 +214,7 @@ test("parseClientMsg：logcatRead 校验 rid、filter、limit", () => {
   assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter: { pkg: "a b", level: "E", text: "" }, limit: 5 })), null);
 });
 
-test("GATEWAY_LEVEL 是 8（悬停页面时整页高亮）", () => assert.equal(GATEWAY_LEVEL, 8));
+test("GATEWAY_LEVEL 是 9（给 iOS 模拟器装 App）", () => assert.equal(GATEWAY_LEVEL, 9));
 
 test("parseClientMsg：indicatePage 要 socket、id 和布尔的 on，多余字段丢掉", () => {
   assert.deepEqual(parseClientMsg('{"t":"indicatePage","socket":"s","id":"1","on":true,"x":1}'), { t: "indicatePage", socket: "s", id: "1", on: true });

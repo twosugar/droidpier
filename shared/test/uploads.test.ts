@@ -160,3 +160,10 @@ test("iOS 模拟器：不是 App 的文件在页面上就标失败，不发给�
   assert.deepEqual(h.msgs, []);
   assert.deepEqual(last().map((i) => [i.state, i.error]), [["failed", IOS_ONLY_APPS]]);
 });
+
+test("iOS 模拟器：网关太旧（不会装 App）时在页面上就说要更新网关，不发给网关", () => {
+  const { h, u, last } = harness();
+  u.add([file("Demo.app.tar", 10)], { ios: true, gatewayTooOld: "网关版本较旧，不会给 iOS 模拟器装 App" });
+  assert.deepEqual(h.msgs, []);
+  assert.deepEqual(last().map((i) => [i.state, i.error]), [["failed", "网关版本较旧，不会给 iOS 模拟器装 App"]]);
+});
