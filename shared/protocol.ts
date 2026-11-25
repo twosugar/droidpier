@@ -16,8 +16,9 @@ export const PROTOCOL_VERSION = 1;
  * 6：iosSims 列表、iosSimOpen / iosSimClose、iosCatalog / createIosSim（iOS 模拟器）；use 认 iOS 模拟器的 UDID；caps.logs。
  * 7：proxyCheck / proxyClear（检测、清除模拟器里连不上的代理）。
  * 8：indicatePage（在 H5 页面列表里悬停时把那个页面整个高亮）。
+ * 9：iOS 模拟器的 upload 装 App（.app 打成的 tar、.zip、.ipa）。
  */
-export const GATEWAY_LEVEL = 8;
+export const GATEWAY_LEVEL = 9;
 
 /** logcatRead 一次最多要多少行（WebMCP 的 droidpier_read_logcat）。 */
 export const LOGCAT_READ_MAX = 1000;

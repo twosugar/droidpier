@@ -1,12 +1,12 @@
 import type { ClientMsg, ServerMsg, UploadState } from "../../shared/protocol.ts";
-import { canSendChunk, encodeUploadChunk, fileKind, nextChunk, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { APP_TAR_SUFFIX, canSendChunk, encodeUploadChunk, fileKind, IOS_ONLY_APPS, iosFileKind, nextChunk, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
 
-/** 页面上显示的一个文件。received 是网关已收下的字节。 */
+/** 页面上显示的一个文件。received 是网关已收下的字节。kind：apk 装到 Android，app 装到 iOS 模拟器，file 放进下载文件夹。 */
 export type UploadItem = {
   id: number;
   name: string;
   size: number;
-  kind: "apk" | "file";
+  kind: "apk" | "app" | "file";
   state: "waiting" | UploadState;
   received: number;
   error?: string;
@@ -75,7 +75,7 @@ export function createUploads(opts: {
     const item = items.find((i) => i.state === "waiting");
     if (!item) return;
     const file = files.get(item.id)!;
-    if (!opts.send({ t: "upload", id: item.id, name: item.name, size: item.size })) {
+    if (!opts.send({ t: "upload", id: item.id, name: file.name, size: item.size })) {
       fail(item, "没有连上网关");
       changed();
       return pump();
@@ -91,13 +91,20 @@ export function createUploads(opts: {
   };
 
   return {
-    /** 加进队列；格式不支持、太大的直接标失败。 */
-    add(list: File[]) {
+    /**
+     * 加进队列；格式不支持、太大的直接标失败。ios：当前设备是 iOS 模拟器，只收 App；gatewayTooOld：网关不会装 App 时给的说明。
+     * 页面打包的 .app 文件名带 .tar（见 drop-entries.ts），列表里显示原名。
+     */
+    add(list: File[], o: { ios?: boolean; gatewayTooOld?: string } = {}) {
       for (const f of list) {
+        const shown = f.name.toLowerCase().endsWith(APP_TAR_SUFFIX) ? f.name.slice(0, -".tar".length) : f.name;
         const k = fileKind(f.name);
-        const item: UploadItem = { id: nextId++, name: f.name, size: f.size, kind: k.kind === "apk" ? "apk" : "file", state: "waiting", received: 0 };
+        const kind: UploadItem["kind"] = o.ios ? "app" : k.kind === "apk" ? "apk" : "file";
+        const item: UploadItem = { id: nextId++, name: shown, size: f.size, kind, state: "waiting", received: 0 };
         items.push(item);
-        if (k.kind === "unsupported") fail(item, `暂不支持 ${k.ext}，请提供 .apk`);
+        if (o.ios && o.gatewayTooOld) fail(item, o.gatewayTooOld);
+        else if (o.ios && iosFileKind(f.name).kind === "unsupported") fail(item, IOS_ONLY_APPS);
+        else if (!o.ios && k.kind === "unsupported") fail(item, `暂不支持 ${k.ext}，请提供 .apk`);
         else if (f.size > UPLOAD_MAX_BYTES) fail(item, "文件太大：最大 2 GB");
         else files.set(item.id, f);
       }

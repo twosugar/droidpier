@@ -19,7 +19,8 @@ export function sanitizeFileName(raw: string): string | null {
   if (!name || /^\.+$/.test(name)) return null;
   if (utf8Bytes(name) > NAME_MAX_BYTES) {
     const dot = name.lastIndexOf(".");
-    const ext = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : "";
+    // 页面打包的 .app 要保住整个 .app.tar，网关靠它认出是 App
+    const ext = name.toLowerCase().endsWith(APP_TAR_SUFFIX) ? name.slice(-APP_TAR_SUFFIX.length) : dot > 0 && name.length - dot <= 16 ? name.slice(dot) : "";
     name = cutToBytes(name.slice(0, name.length - ext.length), NAME_MAX_BYTES - utf8Bytes(ext)) + ext;
   }
   return name;
@@ -42,13 +43,30 @@ function cutToBytes(s: string, max: number): string {
 
 export type FileKind = { kind: "apk" } | { kind: "file" } | { kind: "unsupported"; ext: string };
 
+/** 页面把拖进来的 .app 文件夹打成 tar 传过来时，文件名后面加的后缀。 */
+export const APP_TAR_SUFFIX = ".app.tar";
+
 /** 按扩展名分：.apk 安装，几种 APK 包格式暂不支持，其他文件放进下载文件夹。 */
 export function fileKind(name: string): FileKind {
+  if (name.toLowerCase().endsWith(APP_TAR_SUFFIX)) return { kind: "unsupported", ext: ".app" };
   const dot = name.lastIndexOf(".");
   const ext = dot > 0 ? name.slice(dot).toLowerCase() : "";
   if (ext === ".apk") return { kind: "apk" };
   if (UNSUPPORTED.includes(ext)) return { kind: "unsupported", ext };
   return { kind: "file" };
+}
+
+/** iOS 模拟器上拖了不是 App 的东西时的提示。 */
+export const IOS_ONLY_APPS = "iOS 模拟器只能装 App：拖 .app 文件夹，或装着 .app 的 .zip / .ipa";
+
+export type IosFileKind = { kind: "ios-app"; format: "tar" | "zip" } | { kind: "unsupported" };
+
+/** iOS 模拟器只装 App：页面打包的 .app 是 tar，.zip / .ipa（里面装着 .app）用 zip 解。 */
+export function iosFileKind(name: string): IosFileKind {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(APP_TAR_SUFFIX)) return { kind: "ios-app", format: "tar" };
+  if (lower.endsWith(".zip") || lower.endsWith(".ipa")) return { kind: "ios-app", format: "zip" };
+  return { kind: "unsupported" };
 }
 
 const HINT: Record<string, string> = {

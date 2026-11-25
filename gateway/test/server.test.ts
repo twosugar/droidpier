@@ -1842,7 +1842,7 @@ test("reboot：没有连接设备时回提示", async (t) => {
 
 // ---- 拖文件进设备 ----
 import { readdir, readFile as readFileFs } from "node:fs/promises";
-import { encodeUploadChunk, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { encodeUploadChunk, IOS_ONLY_APPS, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
 import type { FileOps } from "../src/server.ts";
 
 /** 假 adb：记下参数和调用时临时文件的内容；out / err 决定结果，gate 为真时挂起到 release()。 */
@@ -3182,7 +3182,7 @@ test("iOS 模拟器会话关闭：页面收到 emulator-closed（不是等手机
   await until(() => readies() > before);
 });
 
-test("iOS 模拟器（caps.adb=false）：H5 列表、日志、传文件直接回不支持，不碰 adb", async (t) => {
+test("iOS 模拟器（caps.adb=false）：H5 列表、日志直接回不支持，不是 App 的文件说清楚能装什么，不碰 adb", async (t) => {
   const debugCalls: string[] = [];
   const debug = { forDevice: (id: string) => { debugCalls.push(id); throw new Error("不该调到"); }, connectCdp: async () => { throw new Error("no"); } } as unknown as DebugDeps;
   const { c } = await iosSetup(t, { debug, logcatRead: async () => { throw new Error("不该调到"); }, files: { adb: async () => { throw new Error("不该调到"); } } });
@@ -3194,7 +3194,7 @@ test("iOS 模拟器（caps.adb=false）：H5 列表、日志、传文件直接�
   assert.equal((c.msgs.find((m) => m.t === "logcatRead") as { error?: string }).error, "iOS 模拟器暂不支持这个功能");
   c.ws.send(JSON.stringify({ t: "upload", id: 1, name: "a.apk", size: 10 }));
   await until(() => c.msgs.some((m) => m.t === "upload" && m.state === "failed"));
-  assert.equal((c.msgs.find((m) => m.t === "upload" && m.state === "failed") as { error?: string }).error, "iOS 模拟器暂不支持这个功能");
+  assert.equal((c.msgs.find((m) => m.t === "upload" && m.state === "failed") as { error?: string }).error, IOS_ONLY_APPS);
   assert.deepEqual(debugCalls, []);
 });
 
@@ -3461,4 +3461,39 @@ test("mcp（iOS）：页面里的调试界面开着时，MCP 和它共用同一�
   // 调试界面只收到 targetCreated，MCP 的回话没有送过去
   await sleep(20);
   assert.deepEqual(feGot.map((m) => JSON.parse(m).method), ["Target.targetCreated"]);
+});
+
+// ─────────────── iOS 模拟器装 App ───────────────
+
+async function iosUploadSetup(t: import("node:test").TestContext, install: (udid: string, archive: string, format: "tar" | "zip") => Promise<void>) {
+  const root = await mkdtemp(join(tmpdir(), "emu-upload-"));
+  const calls: Array<{ udid: string; name: string; format: string; content: string }> = [];
+  const files: FileOps = {
+    tmpRoot: root,
+    adb: async () => { throw new Error("不该调到 adb"); },
+    iosInstall: async (udid, archive, format) => {
+      calls.push({ udid, name: archive.split("/").pop()!, format, content: await readFileFs(archive, "utf8") });
+      await install(udid, archive, format);
+    },
+  };
+  const s = await iosSetup(t, { files });
+  const ups = (id: number) => s.c.msgs.filter((m) => m.t === "upload" && m.id === id);
+  return { ...s, root, calls, ups, last: (id: number) => ups(id).at(-1) };
+}
+
+test("iOS 模拟器：拖来的 .app（页面打成 tar）收齐后装到这台模拟器，回 installing、done，删掉临时文件", async (t) => {
+  const u = await iosUploadSetup(t, async () => {});
+  await sendFile(u.c, 1, "Demo.app.tar", Buffer.from("tar-bytes"), u.ups);
+  await until(() => u.last(1)?.state === "done");
+  assert.deepEqual(u.ups(1).map((m) => m.state).filter((x) => x !== "uploading"), ["installing", "done"]);
+  assert.deepEqual(u.calls, [{ udid: IOS_UDID, name: "Demo.app.tar", format: "tar", content: "tar-bytes" }]);
+  await until(async () => (await readdir(u.root)).length === 0);
+});
+
+test("iOS 模拟器：装不上时回 failed 带原因；.zip 按 zip 解", async (t) => {
+  const u = await iosUploadSetup(t, async () => { throw new Error("这是给 iPhone 真机编的包，模拟器装不了"); });
+  await sendFile(u.c, 2, "build.zip", Buffer.from("zip-bytes"), u.ups);
+  await until(() => u.last(2)?.state === "failed");
+  assert.match(u.last(2).error, /真机/);
+  assert.equal(u.calls[0].format, "zip");
 });

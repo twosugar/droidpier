@@ -9,7 +9,7 @@ import { cachedSession } from "./session-cache.ts";
 import { avdHome, mcpSocketPath, serviceLogPath, discoveryDir, emulatorBin, iosHelperCacheDir, iosSimDevicePlist, openBrowser, WEB_INSPECTOR_DIR, sdkRoot, SYS_IMG_MANIFEST_URL } from "./platform.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { checkEnv, realEnvDeps } from "./setup.ts";
 import { cleanStaleInstallTmp, createInstaller, fetchWithIdle, realInstallerDeps, requireRepoUrl } from "./installer.ts";
 import { buildCatalog, realCatalogDeps } from "./catalog.ts";
@@ -25,7 +25,8 @@ import { isIosSimUdid } from "../../shared/protocol.ts";
 import { turnOffAutoPrivateDns } from "./private-dns.ts";
 import { checkProxy, clearProxy } from "./proxy-check.ts";
 import { createPhones } from "./phones.ts";
-import { connectIosSim, createHelperSpawner, createIosSims, hasHomeButton, helperSourcePath, nativeAssetPath, simctl, simctlDeviceOps } from "./ios-sim.ts";
+import { installIosApp } from "./ios-app.ts";
+import { connectIosSim, createHelperSpawner, run, createIosSims, hasHomeButton, helperSourcePath, nativeAssetPath, simctl, simctlDeviceOps } from "./ios-sim.ts";
 import { createIosInspector, legacyProtocolVersion, type IosInspector } from "./ios-inspector.ts";
 import { execFile } from "node:child_process";
 import { createMumu, MUMU_APP, MUMU_TOOL, mumuInstalled, probePort } from "./mumu.ts";
@@ -379,7 +380,11 @@ srv = await startServer({
     catalog: () => buildCatalog(catalogDeps),
   },
   // 装大 APK 要几分钟；走单独的长任务队列，不挡 H5 列表这类短命令（gateway/src/adb.ts）
-  files: { adb: (id, args) => adb.long(id)(args, 10 * 60_000) },
+  files: {
+    adb: (id, args) => adb.long(id)(args, 10 * 60_000),
+    // 临时文件所在的目录也用来解包，传完由 server.ts 一起删
+    iosInstall: (udid, archive, format) => installIosApp({ run }, { udid, archive, format, workDir: dirname(archive) }).then(() => {}),
+  },
   debug: {
     forDevice: (id) => {
       const exec = makeAdbExec(id);

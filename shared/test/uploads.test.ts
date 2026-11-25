@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createUploads, type UploadItem } from "../../host/src/uploads.ts";
-import { decodeUploadChunk, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES, UPLOAD_WINDOW_BYTES } from "../upload.ts";
+import { decodeUploadChunk, IOS_ONLY_APPS, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES, UPLOAD_WINDOW_BYTES } from "../upload.ts";
 import type { ClientMsg } from "../protocol.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -143,4 +143,27 @@ test("文件在传的过程中变小了：标失败并取消，不发残缺的�
   assert.equal(last()[0].state, "failed");
   assert.match(last()[0].error!, /变/);
   assert.deepEqual(h.msgs.at(-1), { t: "uploadCancel", id: 1 });
+});
+
+test("iOS 模拟器：拖来的 .app 列表里显示原名、发给网关带 .tar；装完说已安装，不说放进下载文件夹", () => {
+  const { h, u, last } = harness();
+  u.add([file("Demo.app.tar", 10)], { ios: true });
+  assert.deepEqual(h.msgs, [{ t: "upload", id: 1, name: "Demo.app.tar", size: 10 }]);
+  assert.deepEqual(last().map((i) => [i.name, i.kind]), [["Demo.app", "app"]]);
+  u.onMsg({ t: "upload", id: 1, state: "done" });
+  assert.deepEqual(h.notices, []);
+});
+
+test("iOS 模拟器：不是 App 的文件在页面上就标失败，不发给网关", () => {
+  const { h, u, last } = harness();
+  u.add([file("photo.png", 10)], { ios: true });
+  assert.deepEqual(h.msgs, []);
+  assert.deepEqual(last().map((i) => [i.state, i.error]), [["failed", IOS_ONLY_APPS]]);
+});
+
+test("iOS 模拟器：网关太旧（不会装 App）时在页面上就说要更新网关，不发给网关", () => {
+  const { h, u, last } = harness();
+  u.add([file("Demo.app.tar", 10)], { ios: true, gatewayTooOld: "网关版本较旧，不会给 iOS 模拟器装 App" });
+  assert.deepEqual(h.msgs, []);
+  assert.deepEqual(last().map((i) => [i.state, i.error]), [["failed", "网关版本较旧，不会给 iOS 模拟器装 App"]]);
 });
