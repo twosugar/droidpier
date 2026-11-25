@@ -1,7 +1,7 @@
 ---
 title: 安全性
 description: 网关如何防止其他网页和其他计算机控制你的模拟器——仅回环地址和来源白名单。
-sourceHash: 08642471687c
+sourceHash: 28bc29a7e373
 ---
 
 页面从 `droid.devpier.dev` 提供，但模拟器和网关运行在你的 Mac 上。你打开的任何网页都可能尝试连接到你 Mac 上的程序，因此网关会检查每个连接。
@@ -21,6 +21,10 @@ sourceHash: 08642471687c
 
 <!-- verify: phase 3 -->
 来源不在列表中或无来源的连接会以代码 `4003` 关闭。其他网站的页面无法控制你的模拟器，即使猜到了端口。
+
+## AI 客户端 {#ai-clients}
+
+AI 客户端通过 `droidpier mcp` 连接网关，它走 Unix socket 而不是网络：`~/Library/Application Support/Droidpier/mcp-<port>.sock`。只有你的 macOS 用户能打开它所在的文件夹，网页无法访问它。以你的用户身份运行的任何程序都可以使用它，就像它本来也能自己运行 `adb` 一样。见 [AI 客户端（MCP）](/zh-cn/docs/guides/ai-clients/#security)。
 
 ## 页面如何找到网关
 

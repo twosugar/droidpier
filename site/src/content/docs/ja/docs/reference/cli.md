@@ -1,7 +1,7 @@
 ---
 title: コマンドライン
 description: Droidpier ゲートウェイコマンドのオプションと環境変数。
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | バックグラウンドのゲートウェイを止めます。ログイン時にも起動しなくなります。 |
 | `droidpier status` | バックグラウンドのゲートウェイが動いているかを、プロセス ID、ポート、バージョン、ログファイルとともに表示します。 自動更新が有効かどうかと、前回のチェック結果も表示します。 |
 | `droidpier logs` | ログファイルのパスと最後の 50 行を表示します。 |
+| `droidpier mcp` | 標準入出力を通じて AI クライアントを動作中のゲートウェイに接続します。クライアントが起動します。自分では実行しません。`--port` はゲートウェイがポート `7300` で動いていない場合に指定します。[AI クライアント (MCP)](/ja/docs/guides/ai-clients/) を参照してください。 |
 | `droidpier` | `Ctrl+C` を押すまで、このターミナルウィンドウでゲートウェイを動かします。 |
 
 ゲートウェイを止めても、実行中のエミュレーターは止まりません。
@@ -106,6 +108,7 @@ Android SDK のコンポーネントが不足している場合、ゲートウ�
 | インストール済みバージョンのチェックサム | `~/.local/share/droidpier/installed.sha256` |
 | バックグラウンドのゲートウェイの設定 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | バックグラウンドのゲートウェイのログ | `~/Library/Logs/Droidpier/droidpier.log` |
+| AI クライアント用ソケット | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## 自動更新 {#automatic-updates}
 
@@ -126,8 +129,10 @@ Android SDK のコンポーネントが不足している場合、ゲートウ�
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+`droidpier mcp` を AI クライアントに追加していた場合は、そちらでも削除してください。例: `claude mcp remove droidpier`。
 
 `droidpier` をすでに削除したのに、バックグラウンドのゲートウェイがまだ動いている、またはログイン時に起動する場合は、手動で取り除きます。
 

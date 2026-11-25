@@ -1,7 +1,7 @@
 ---
 title: कमांड लाइन
 description: Droidpier गेटवे कमांड के विकल्प और environment variables।
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | बैकग्राउंड गेटवे को बंद करता है। लॉग इन पर यह फिर शुरू नहीं होता। |
 | `droidpier status` | दिखाता है कि बैकग्राउंड गेटवे चल रहा है या नहीं, उसके प्रोसेस ID, पोर्ट, संस्करण और लॉग फ़ाइल के साथ। यह भी दिखाता है कि अपने-आप अपडेट चालू हैं या नहीं, और पिछली जाँच का नतीजा। |
 | `droidpier logs` | लॉग फ़ाइल का पाथ और उसकी आख़िरी 50 पंक्तियाँ दिखाता है। |
+| `droidpier mcp` | AI क्लाइंट को चल रहे गेटवे से standard input और output के ज़रिए जोड़ता है। क्लाइंट इसे शुरू करता है; आप इसे खुद नहीं चलाते। `--port` गेटवे को तब चुनता है जब वह पोर्ट `7300` पर नहीं चल रहा। [AI क्लाइंट (MCP)](/hi/docs/guides/ai-clients/) देखें। |
 | `droidpier` | गेटवे को इसी Terminal विंडो में तब तक चलाता है जब तक आप `Ctrl+C` न दबाएँ। |
 
 गेटवे बंद करने से चल रहे एमुलेटर बंद नहीं होते।
@@ -106,6 +108,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | इंस्टॉल किए गए वर्ज़न का checksum | `~/.local/share/droidpier/installed.sha256` |
 | बैकग्राउंड गेटवे की सेटिंग | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | बैकग्राउंड गेटवे का लॉग | `~/Library/Logs/Droidpier/droidpier.log` |
+| AI क्लाइंट के लिए सॉकेट | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## अपने-आप अपडेट {#automatic-updates}
 
@@ -126,8 +129,10 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+अगर आपने `droidpier mcp` को किसी AI क्लाइंट में जोड़ा था, तो उसे वहाँ से भी हटाएँ, जैसे `claude mcp remove droidpier`।
 
 अगर `droidpier` पहले ही मिटा दिया गया है, लेकिन बैकग्राउंड गेटवे अब भी चल रहा है या लॉग इन पर शुरू होता है, तो उसे हाथ से हटाएँ:
 

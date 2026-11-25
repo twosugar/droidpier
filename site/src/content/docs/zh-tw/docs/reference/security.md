@@ -1,7 +1,7 @@
 ---
 title: 安全性
 description: 閘道如何防止其他網頁和其他電腦控制你的模擬器——僅回送位址和來源允許清單。
-sourceHash: 08642471687c
+sourceHash: 28bc29a7e373
 ---
 
 頁面從 `droid.devpier.dev` 提供，但模擬器和閘道執行在你的 Mac 上。你開啟的任何網頁都可能嘗試連接到你 Mac 上的程式，因此閘道會檢查每個連線。
@@ -21,6 +21,10 @@ sourceHash: 08642471687c
 
 <!-- verify: phase 3 -->
 來源不在清單中或無來源的連線會以代碼 `4003` 關閉。其他網站的頁面無法控制你的模擬器，即使猜到了連接埠。
+
+## AI 客戶端 {#ai-clients}
+
+AI 客戶端透過 `droidpier mcp` 連接閘道，使用 Unix socket 而非網路：`~/Library/Application Support/Droidpier/mcp-<port>.sock`。只有你的 macOS 使用者才能開啟其資料夾，網頁無法存取它。任何以你的使用者身分執行的程式都可以使用它，就像可以自行執行 `adb` 一樣。請參閱 [AI 客戶端 (MCP)](/zh-tw/docs/guides/ai-clients/#security)。
 
 ## 頁面如何找到閘道
 

@@ -1,7 +1,7 @@
 ---
 title: Ligne de commande
 description: Options et variables d’environnement de la commande de la passerelle Droidpier.
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | Arrête la passerelle en arrière-plan. Elle ne démarre plus à l’ouverture de session. |
 | `droidpier status` | Indique si la passerelle en arrière-plan tourne, avec son ID de processus, son port, sa version et son fichier journal. Elle indique aussi si les mises à jour automatiques sont activées, avec le résultat de la dernière vérification. |
 | `droidpier logs` | Affiche le chemin du fichier journal et ses 50 dernières lignes. |
+| `droidpier mcp` | Connecte un client IA à la passerelle en cours d'exécution, via l'entrée et la sortie standard. Le client le démarre ; vous ne l'exécutez pas vous-même. `--port` sélectionne la passerelle quand elle ne tourne pas sur le port `7300`. Voir [Clients IA (MCP)](/fr/docs/guides/ai-clients/). |
 | `droidpier` | Fait tourner la passerelle dans cette fenêtre Terminal jusqu’à ce que vous appuyiez sur `Ctrl+C`. |
 
 Arrêter la passerelle n’arrête pas les émulateurs en cours.
@@ -106,6 +108,7 @@ Quand des parties de l’Android SDK manquent, la passerelle liste chacune avec 
 | Somme de contrôle de la version installée | `~/.local/share/droidpier/installed.sha256` |
 | Réglages de la passerelle en arrière-plan | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | Journal de la passerelle en arrière-plan | `~/Library/Logs/Droidpier/droidpier.log` |
+| Socket pour les clients IA | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## Mises à jour automatiques {#automatic-updates}
 
@@ -126,8 +129,10 @@ Arrêtez la passerelle en arrière-plan, puis supprimez les fichiers qu’elle u
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+Si vous avez ajouté `droidpier mcp` à un client IA, retirez-le également là-bas, par exemple `claude mcp remove droidpier`.
 
 Si `droidpier` est déjà supprimé mais que la passerelle en arrière-plan tourne encore ou démarre à l’ouverture de session, retirez-la à la main :
 

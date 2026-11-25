@@ -1,7 +1,7 @@
 ---
 title: 命令列
 description: Droidpier 閘道命令的選項和環境變數。
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | 停止在背景執行的閘道，登入時也不再自動啟動。 |
 | `droidpier status` | 顯示背景閘道是否在執行，以及它的程序 ID、連接埠、版本和記錄檔。 也會顯示自動更新是否開啟，以及上次檢查的結果。 |
 | `droidpier logs` | 列印記錄檔路徑和最後 50 行。 |
+| `droidpier mcp` | 透過標準輸入輸出將 AI 客戶端連接到執行中的閘道。由客戶端啟動它，你不需要自己執行。`--port` 指定閘道不在連接埠 `7300` 上執行時的連接埠。請參閱 [AI 客戶端 (MCP)](/zh-tw/docs/guides/ai-clients/)。 |
 | `droidpier` | 在目前的終端機視窗中執行閘道，直到你按 `Ctrl+C`。 |
 
 停止閘道不會停止正在執行的模擬器。
@@ -106,6 +108,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | 已安裝版本的檢查碼 | `~/.local/share/droidpier/installed.sha256` |
 | 背景閘道的設定 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | 背景閘道的記錄檔 | `~/Library/Logs/Droidpier/droidpier.log` |
+| AI 客戶端的 Socket | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## 自動更新 {#automatic-updates}
 
@@ -126,8 +129,10 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+如果你已將 `droidpier mcp` 新增到 AI 客戶端，請也在那裡移除它，例如 `claude mcp remove droidpier`。
 
 如果 `droidpier` 已經刪掉了，但背景閘道還在執行或登入時還會啟動，就手動移除它：
 

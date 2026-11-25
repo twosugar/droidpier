@@ -1,7 +1,7 @@
 ---
 title: 命令行
 description: Droidpier 网关命令的选项和环境变量。
-sourceHash: e4588fa7564a
+sourceHash: f83b2a6fb1bc
 ---
 
 <!-- verify: phase 3 -->
@@ -10,6 +10,7 @@ droidpier start [--port <port>] [--local] [--no-open] [--no-auto-update]
 droidpier stop
 droidpier status
 droidpier logs
+droidpier mcp [--port <port>]
 droidpier [--port <port>] [--local] [--no-open]
 ```
 
@@ -19,6 +20,7 @@ droidpier [--port <port>] [--local] [--no-open]
 | `droidpier stop` | 停止后台运行的网关，登录时也不再自动启动。 |
 | `droidpier status` | 显示后台网关是否在运行，以及它的进程 ID、端口、版本和日志文件。 还会显示自动更新是否开启，以及上次检查的结果。 |
 | `droidpier logs` | 打印日志文件路径和最后 50 行。 |
+| `droidpier mcp` | 通过标准输入输出把 AI 客户端接到正在运行的网关。由客户端启动，你不用自己运行。网关不在 `7300` 端口上运行时，用 `--port` 指定。见 [AI 客户端（MCP）](/zh-cn/docs/guides/ai-clients/)。 |
 | `droidpier` | 在当前终端窗口中运行网关，直到你按 `Ctrl+C`。 |
 
 停止网关不会停止正在运行的模拟器。
@@ -106,6 +108,7 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 | 已安装版本的校验和 | `~/.local/share/droidpier/installed.sha256` |
 | 后台网关的设置 | `~/Library/LaunchAgents/dev.devpier.droidpier.plist` |
 | 后台网关的日志 | `~/Library/Logs/Droidpier/droidpier.log` |
+| 给 AI 客户端的 socket | `~/Library/Application Support/Droidpier/mcp-<port>.sock` |
 
 ## 自动更新 {#automatic-updates}
 
@@ -126,8 +129,10 @@ curl -fsSL https://droid.devpier.dev/install.sh | DROIDPIER_FOREGROUND=1 sh
 ```sh
 droidpier stop
 rm -f ~/.local/bin/droidpier ~/.local/bin/droidpier.prev
-rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier
+rm -r ~/.local/share/droidpier ~/Library/Logs/Droidpier "$HOME/Library/Application Support/Droidpier"
 ```
+
+如果你把 `droidpier mcp` 加到了 AI 客户端里，也在客户端里删掉它，例如 `claude mcp remove droidpier`。
 
 如果 `droidpier` 已经删掉了，但后台网关还在运行或登录时还会启动，就手动移除它：
 
