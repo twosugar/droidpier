@@ -63,7 +63,7 @@ type Catalog = {
 };
 type NewAvd = { name: string; device: DeviceModel; image: SystemImage };
 type Upload = {
-  id: number; name: string; size: number; kind: "apk" | "file";
+  id: number; name: string; size: number; kind: "apk" | "app" | "file";
   state: "waiting" | "uploading" | "installing" | "pushing" | "done" | "failed"; received: number; error?: string;
 };
 type Confirm = { kind: "install"; ids: EnvId[] } | { kind: "avd"; avd: NewAvd };
@@ -198,7 +198,7 @@ const uploadText = (u: Upload) => {
   if (u.state === "uploading") return `上传 ${u.size ? Math.floor((u.received / u.size) * 100) : 100}%`;
   if (u.state === "installing") return "安装中…";
   if (u.state === "pushing") return "放进「下载」文件夹…";
-  if (u.state === "done") return u.kind === "apk" ? "已安装" : "已放进「下载」文件夹";
+  if (u.state === "done") return u.kind === "file" ? "已放进「下载」文件夹" : "已安装";
   return failText("失败", u.error);
 };
 const uploadEnded = (u: Upload) => u.state === "done" || u.state === "failed";
@@ -1867,7 +1867,7 @@ function App() {
   // 主区现在连着的真机（不是真机时为 undefined）；lastPhone 给重启中手机暂时不在列表里时用
   let lastPhone: PhoneInfo | undefined;
   const currentIos = () => currentIosSimOf(iosSims(), { kind: kind(), deviceId: deviceId(), state: state() });
-  // 设备走 adb 才有 H5 调试、日志、装 APK（iOS 模拟器没有）；旧网关不报，当作有
+  // 设备走 adb 才有日志、装 APK、检测网络（iOS 模拟器装的是 App）；旧网关不报，当作有
   const viaAdb = () => caps()?.adb !== false;
   const currentPhone = () => {
     const p = currentPhoneOf(phones(), lastPhone, { kind: kind(), deviceId: deviceId(), state: state() });
@@ -2527,6 +2527,9 @@ function App() {
                 <IconButton variant="toolbar" icon="more" label="更多操作" />
               }>
                 {/* 和把文件拖到画面上走同一条路（host 的 emu.pickFiles 打开选择文件框） */}
+                <If when={!viaAdb()}>
+                  <Item label="安装 App…" disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
+                </If>
                 <If when={viaAdb()}>
                   <Item label="安装 APK 或发送文件…" disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
                   <Item label={proxyBusy() ? "正在检测网络…" : "检测网络"} disabled={proxyBusy() || !shownIsLive() || state() !== "connected"} onSelect={checkNetwork} />
@@ -2602,7 +2605,7 @@ function App() {
                         {drag().blocked ? `不能发送：${drag().blocked}` : `松开以发送到 ${currentAvd() ? avdLabel(currentAvd()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : "这台设备"}`}
                       </Text>
                       <If when={!drag().blocked}>
-                        <Text style={{ color: token("muted-foreground"), ...TYPE.caption, textAlign: "center" }}>APK 会直接安装，其他文件放进「下载」文件夹</Text>
+                        <Text style={{ color: token("muted-foreground"), ...TYPE.caption, textAlign: "center" }}>{viaAdb() ? "APK 会直接安装，其他文件放进「下载」文件夹" : "拖 .app 文件夹，或装着 .app 的 .zip / .ipa 来安装"}</Text>
                       </If>
                     </View>
                   </If>
@@ -2638,7 +2641,7 @@ function App() {
             </Toolbar>
             {/* 一直占着一行，焦点进出时画面不跳 */}
             <Text role="summary" style={{ ...TYPE.caption, color: keyboardShown() ? token("foreground") : token("muted-foreground"), textAlign: "center", minHeight: TYPE.caption.lineHeight }}>
-              {keyboardShown() ? "已接管键盘 · Shift+Tab 离开" : shownIsLive() && caps()?.input !== false ? "点屏幕用键盘输入 · 也可以把 APK 或文件拖到画面上" : ""}
+              {keyboardShown() ? "已接管键盘 · Shift+Tab 离开" : shownIsLive() && caps()?.input !== false ? (viaAdb() ? "点屏幕用键盘输入 · 也可以把 APK 或文件拖到画面上" : "点屏幕用键盘输入 · 也可以把 .app 拖到画面上安装") : ""}
             </Text>
           </View>
           {/* 画面上方的提示同一时间只显示一条（ui/banners.ts 的先后），盖住的地方少；后面排着几条写在能关掉的那条里。

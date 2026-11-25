@@ -372,7 +372,8 @@ export function helperSourcePath(standalone: boolean): string {
 // 「The file couldn't be opened using the specified text encoding」（2026-11-22 实测）。统一给 UTF-8
 const UTF8_ENV = { ...process.env, LANG: "en_US.UTF-8" };
 
-const run = (cmd: string, args: string[], timeout: number) =>
+/** 跑一个命令，返回 stdout；失败时抛错，message 是 stderr。 */
+export const run = (cmd: string, args: string[], timeout: number) =>
   new Promise<string>((resolve, reject) =>
     execFile(cmd, args, { timeout, maxBuffer: 64 * 2 ** 20, env: UTF8_ENV }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim())) : resolve(out))));
 

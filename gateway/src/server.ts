@@ -27,7 +27,7 @@ import { AdbUnresponsive } from "./adb.ts";
 import { gbText, spaceCheck } from "../../shared/disk-space.ts";
 import { avdNameError, createItems, ramMbFor } from "../../shared/avd-spec.ts";
 import { UPLOAD_DIR_PREFIX } from "./upload-temp.ts";
-import { BIN_UPLOAD, checkChunk, decodeUploadChunk, fileKind, installFailure, PUSH_DIR, sanitizeFileName, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { BIN_UPLOAD, checkChunk, decodeUploadChunk, fileKind, installFailure, IOS_ONLY_APPS, iosFileKind, PUSH_DIR, sanitizeFileName, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
 import {
   BIN_SCREENSHOT,
   binKind,
@@ -137,6 +137,8 @@ export type DebugDeps = {
 export type FileOps = {
   /** 在这台设备上跑一条长 adb 命令（install / push），返回 stdout；失败时 Error.message 带着 adb 的输出。 */
   adb(id: string, args: string[]): Promise<string>;
+  /** 把 App 装到这台 iOS 模拟器（gateway/src/ios-app.ts）：archive 是收下的包；失败时 Error.message 是给人看的原因。不传时 iOS 模拟器不收文件。 */
+  iosInstall?(udid: string, archive: string, format: "tar" | "zip"): Promise<void>;
   /** 临时文件建在这下面，默认 os.tmpdir()。 */
   tmpRoot?: string;
   /** 收分片阶段多久没有新分片就中止，默认 30 秒。 */
@@ -1193,7 +1195,7 @@ export async function startServer(opts: {
     // 传文件：upload 是正在收分片的那个，同一连接同一时间只有一个；收齐后交给 adb（长任务队列里排队），位置马上让出
     // 写文件按到达顺序串在 chain 上，chain 自己不会失败
     type Upload = {
-      id: number; name: string; kind: "apk" | "file"; size: number; session: EmulatorSession;
+      id: number; name: string; kind: "apk" | "file" | "ios-app"; format?: "tar" | "zip"; size: number; session: EmulatorSession;
       arrived: number; written: number; dir: string | null; fh: FileHandle | null; chain: Promise<void>;
       /** 不再收分片：收完了、失败了或连接断了。 */
       ended: boolean;
@@ -1237,23 +1239,34 @@ export async function startServer(opts: {
       if (!files) return fail("这个网关不支持传文件");
       const s = conn.session;
       if (!s) return fail("没有连接设备");
-      if (!viaAdb(s)) return fail(NO_ADB);
       if (isRebooting(s)) return fail(REBOOTING);
       const name = sanitizeFileName(m.name);
       if (!name) return fail("文件名不合法");
-      const k = fileKind(name);
-      if (k.kind === "unsupported") return fail(`暂不支持 ${k.ext}，请提供 .apk`);
+      let kind: Upload["kind"];
+      let format: Upload["format"];
+      if (!viaAdb(s)) {
+        // iOS 模拟器只装 App（gateway/src/ios-app.ts）
+        const k = iosFileKind(name);
+        if (k.kind === "unsupported") return fail(IOS_ONLY_APPS);
+        if (!files.iosInstall) return fail("这个网关不能给 iOS 模拟器装 App");
+        kind = "ios-app";
+        format = k.format;
+      } else {
+        const k = fileKind(name);
+        if (k.kind === "unsupported") return fail(`暂不支持 ${k.ext}，请提供 .apk`);
+        kind = k.kind;
+      }
       if (m.size > UPLOAD_MAX_BYTES) return fail("文件太大：最大 2 GB");
       // 页面一次只传一个：还在收的旧传输是页面已经不要了的
       if (upload) abortUpload(upload, "页面开始传下一个文件，这个已作废");
       const u: Upload = {
-        id: m.id, name, kind: k.kind, size: m.size, session: s,
+        id: m.id, name, kind, format, size: m.size, session: s,
         arrived: 0, written: 0, dir: null, fh: null, chain: Promise.resolve(), ended: false, idle: null,
       };
       upload = u;
       transfers.add(u);
       touchIdle(u);
-      log(`页面传来 ${name}（${m.size} 字节），${k.kind === "apk" ? "安装到" : "放进"} ${s.id}`);
+      log(`页面传来 ${name}（${m.size} 字节），${kind === "file" ? "放进" : "安装到"} ${s.id}`);
       u.chain = (async () => {
         try {
           u.dir = await mkdtemp(join(files.tmpRoot ?? tmpdir(), UPLOAD_DIR_PREFIX));
@@ -1305,7 +1318,18 @@ export async function startServer(opts: {
         // 同一个设备 id（emulator-<serial>）可能已换成另一台 AVD，按会话认人
         if (s !== u.session) return uploadMsg(u.id, "failed", { error: "设备已切换，没有安装" });
         if (isRebooting(s)) return uploadMsg(u.id, "failed", { error: REBOOTING });
-        uploadMsg(u.id, u.kind === "apk" ? "installing" : "pushing");
+        uploadMsg(u.id, u.kind === "file" ? "pushing" : "installing");
+        if (u.kind === "ios-app") {
+          try {
+            await files.iosInstall!(id, path, u.format!);
+            log(`${u.name} 已安装到 ${id}`);
+            uploadMsg(u.id, "done");
+          } catch (e) {
+            log(`${u.name} 安装失败：${(e as Error).message}`);
+            uploadMsg(u.id, "failed", { error: (e as Error).message });
+          }
+          return;
+        }
         try {
           const out = u.kind === "apk"
             ? await files.adb(id, ["install", "-r", "-t", path])

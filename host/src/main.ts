@@ -12,6 +12,7 @@ import { gatewayAnswers, gatewayPort, isLoopbackHost, isSupportedBrowser, parseP
 import { createRenderer } from "./renderer.ts";
 import { createVideoPipe, webCodecsDecoder } from "./video.ts";
 import { createUploads } from "./uploads.ts";
+import { filesFromDrop, type DropEntry } from "./drop-entries.ts";
 import { parseZoom, ZOOM_STEPS } from "../../shared/zoom.ts";
 import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
@@ -675,13 +676,13 @@ export async function createHost(player: Player) {
     ime.value = "";
   });
 
-  // 文件拖到屏幕上：APK 安装，其他文件放进下载文件夹。拖到屏幕外不让浏览器自己打开文件
+  // 文件拖到屏幕上：APK 安装，其他文件放进下载文件夹；iOS 模拟器上装 App（.app 文件夹、.zip、.ipa）。拖到屏幕外不让浏览器自己打开文件
   const dropBlocked = () =>
     state === "connected" ? null : state === "rebooting" ? `${kind === "phone" ? "手机" : "模拟器"}正在重启，等它开机后再试` : "没有连接设备";
   const takeFiles = (list: File[]) => {
     const why = dropBlocked();
     if (why) return player.hostEvent("emu.notice", { text: why, error: true });
-    if (list.length) uploads.add(list);
+    if (list.length) uploads.add(list, { ios: caps?.adb === false });
   };
   // 「发送文件…」：选好的文件和拖进来的走同一条路。不放进 DOM，click() 照样弹出选择框；
   // 要在用户的点击里调用（Chrome 要求用户激活，2026-11-17 实测 host.call 到这里时激活还在）
@@ -724,7 +725,16 @@ export async function createHost(player: Player) {
     e.stopPropagation();
     dragDepth = 0;
     dragEvent(false);
-    takeFiles([...e.dataTransfer!.files]);
+    // 条目要在 drop 事件里同步取，之后就拿不到了；有文件夹（.app）时按条目读，没有时照旧用 files
+    const entries = [...e.dataTransfer!.items].filter((i) => i.kind === "file").map((i) => i.webkitGetAsEntry() as DropEntry | null);
+    if (!entries.some((en) => en?.isDirectory)) return takeFiles([...e.dataTransfer!.files]);
+    filesFromDrop(entries.filter((en): en is DropEntry => en !== null)).then(
+      ({ files, skipped }) => {
+        for (const text of skipped) player.hostEvent("emu.notice", { text, error: true });
+        takeFiles(files);
+      },
+      (err: Error) => player.hostEvent("emu.notice", { text: `读文件夹失败：${err.message}`, error: true }),
+    );
   });
   window.addEventListener("dragover", (e) => {
     if (!hasFiles(e)) return;

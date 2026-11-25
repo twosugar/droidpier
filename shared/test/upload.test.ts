@@ -1,19 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  BIN_UPLOAD,
-  canSendChunk,
-  checkChunk,
-  decodeUploadChunk,
-  encodeUploadChunk,
-  fileKind,
-  installFailure,
-  nextChunk,
-  sanitizeFileName,
-  UPLOAD_CHUNK_BYTES,
-  UPLOAD_HEADER_BYTES,
-  UPLOAD_WINDOW_BYTES,
-} from "../upload.ts";
+import { BIN_UPLOAD, canSendChunk, checkChunk, decodeUploadChunk, encodeUploadChunk, fileKind, installFailure, nextChunk, sanitizeFileName, UPLOAD_CHUNK_BYTES, UPLOAD_HEADER_BYTES, UPLOAD_WINDOW_BYTES, iosFileKind } from "../upload.ts";
 import { parseClientMsg } from "../protocol.ts";
 
 test("文件名只留最后一段，去掉目录和 ..", () => {
@@ -130,4 +117,17 @@ test("parseClientMsg：upload 要有数字 id、字符串 name、非负整数 si
   assert.equal(parseClientMsg(JSON.stringify({ t: "upload", id: 1, name: 3, size: 10 })), null);
   assert.equal(parseClientMsg(JSON.stringify({ t: "upload", id: 1, name: "a", size: -1 })), null);
   assert.equal(parseClientMsg(JSON.stringify({ t: "upload", id: 1, name: "a", size: 1.5 })), null);
+});
+
+test("iosFileKind：页面打包的 .app 按 tar 解，.zip / .ipa 按 zip 解，别的 iOS 模拟器收不了", () => {
+  assert.deepEqual(iosFileKind("Longbridge.app.tar"), { kind: "ios-app", format: "tar" });
+  assert.deepEqual(iosFileKind("build.ZIP"), { kind: "ios-app", format: "zip" });
+  assert.deepEqual(iosFileKind("App.ipa"), { kind: "ios-app", format: "zip" });
+  assert.deepEqual(iosFileKind("photo.png"), { kind: "unsupported" });
+  assert.deepEqual(iosFileKind("x.tar"), { kind: "unsupported" });
+});
+
+test("fileKind：Android 设备上拖来 iOS 的 .app 不当普通文件放进下载文件夹", () => {
+  assert.deepEqual(fileKind("Longbridge.app.tar"), { kind: "unsupported", ext: ".app" });
+  assert.deepEqual(fileKind("notes.tar"), { kind: "file" });
 });
