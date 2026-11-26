@@ -1,4 +1,5 @@
 import { avdNameError } from "./avd-spec.ts";
+import type { Msg } from "./i18n.ts";
 import type { LogFilter, LogLevel, LogLine } from "./logcat.ts";
 
 /** 协议版本号。 */
@@ -31,20 +32,24 @@ export type UpdateState = "checking" | "latest" | "restarting" | "deferred" | "f
 
 /** 自动更新失败的类别，和给用户看的话（页面和 droidpier status 共用）。 */
 export const UPDATE_FAILURES = {
-  network: "连不上下载站",
-  manifest: "下载站上的版本信息不对",
-  unsigned: "下载站上的版本没有签名",
-  signature: "下载站上的版本签名不对",
-  checksum: "下载的文件校验不通过",
-  unpack: "解压失败",
-  "bad-binary": "新版本运行不起来",
-  "not-writable": "没有权限写入安装目录",
-  install: "替换文件失败",
-} as const;
+  network: { en: "Cannot reach the download site", zh: "连不上下载站" },
+  manifest: { en: "The version information on the download site is wrong", zh: "下载站上的版本信息不对" },
+  unsigned: { en: "The version on the download site is not signed", zh: "下载站上的版本没有签名" },
+  signature: { en: "The signature of the version on the download site is wrong", zh: "下载站上的版本签名不对" },
+  checksum: { en: "The downloaded file failed its checksum", zh: "下载的文件校验不通过" },
+  unpack: { en: "Unpacking failed", zh: "解压失败" },
+  "bad-binary": { en: "The new version does not run", zh: "新版本运行不起来" },
+  "not-writable": { en: "No permission to write to the install folder", zh: "没有权限写入安装目录" },
+  install: { en: "Replacing the files failed", zh: "替换文件失败" },
+} satisfies Record<string, Msg>;
 export type UpdateFailure = keyof typeof UPDATE_FAILURES;
 
-/** failed 的 message 转成给人看的话；不认识的类别（更新的网关加的）原样给出。 */
-export const updateFailureText = (m: string | undefined) => (m && m in UPDATE_FAILURES ? UPDATE_FAILURES[m as UpdateFailure] : m ?? "未知原因");
+/** failed 的 message 转成给人看的话（两种语言）；不认识的类别（更新的网关加的）原样给出。 */
+export const updateFailureMsg = (m: string | undefined): Msg =>
+  m && m in UPDATE_FAILURES ? UPDATE_FAILURES[m as UpdateFailure] : m ? { en: m, zh: m } : { en: "Unknown reason", zh: "未知原因" };
+
+/** updateFailureMsg 的中文，droidpier status 用。 */
+export const updateFailureText = (m: string | undefined) => updateFailureMsg(m).zh;
 
 /** 官方公网页面的来源。部署自己的一套时，构建用环境变量 PUBLIC_ORIGIN 换掉它（docs/deploy.md）。 */
 export const OFFICIAL_ORIGIN = "https://droid.devpier.dev";
@@ -55,7 +60,12 @@ export function installCmd(origin: string): string {
 }
 
 /** 设备里的 adb 没有响应时，页面上统一显示的话。 */
-export const ADB_UNRESPONSIVE = "模拟器里的 adb 没有响应（常见于模拟器长时间运行后）。可以点「重启模拟器」恢复。";
+export const ADB_UNRESPONSIVE_MSG: Msg = {
+  en: "adb in the emulator is not responding (common after the emulator has run for a long time). Restart the emulator to recover.",
+  zh: "模拟器里的 adb 没有响应（常见于模拟器长时间运行后）。可以点「重启模拟器」恢复。",
+};
+/** ADB_UNRESPONSIVE_MSG 的中文：网关发给页面的 message（网关的文字还只有中文）。 */
+export const ADB_UNRESPONSIVE = ADB_UNRESPONSIVE_MSG.zh;
 
 /**
  * 判断客户端（页面）版本与网关版本是否兼容。

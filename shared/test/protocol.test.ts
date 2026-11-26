@@ -1,20 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  GATEWAY_LEVEL,
-  LOGCAT_READ_MAX,
-  BIN_FRAME,
-  BIN_SCREENSHOT,
-  BIN_VIDEO,
-  encodeVideoHeader,
-  decodeVideoHeader,
-  FRAME_HEADER_BYTES,
-  encodeFrameHeader,
-  decodeFrameHeader,
-  binKind,
-  parseClientMsg,
-  compatibility,
-} from "../protocol.ts";
+import { GATEWAY_LEVEL, LOGCAT_READ_MAX, BIN_FRAME, BIN_SCREENSHOT, BIN_VIDEO, encodeVideoHeader, decodeVideoHeader, FRAME_HEADER_BYTES, encodeFrameHeader, decodeFrameHeader, binKind, parseClientMsg, compatibility, ADB_UNRESPONSIVE, ADB_UNRESPONSIVE_MSG, updateFailureMsg, updateFailureText } from "../protocol.ts";
 
 test("encodeFrameHeader 结果长度为 20，前 4 字节是 BIN_FRAME", () => {
   const buf = encodeFrameHeader({ seq: 7, width: 1080, height: 2340, tsMs: 123 });
@@ -264,4 +250,12 @@ test("parseClientMsg 解析 iosCatalog / createIosSim；名字为空、太长、
     { name: "a", deviceType: dt, runtime: "iOS 18.3" },
     { name: "--help", deviceType: dt, runtime: rt },
   ]) assert.equal(parseClientMsg(JSON.stringify({ t: "createIosSim", rid: 3, ...bad })), null, JSON.stringify(bad));
+});
+
+test("updateFailureMsg / ADB_UNRESPONSIVE_MSG：页面的两种语言；中文版本给网关和 droidpier status 用", () => {
+  assert.deepEqual(updateFailureMsg("network"), { en: "Cannot reach the download site", zh: "连不上下载站" });
+  assert.equal(updateFailureText("network"), "连不上下载站");
+  assert.deepEqual(updateFailureMsg("weird"), { en: "weird", zh: "weird" });
+  assert.equal(updateFailureMsg(undefined).en, "Unknown reason");
+  assert.equal(ADB_UNRESPONSIVE, ADB_UNRESPONSIVE_MSG.zh);
 });
