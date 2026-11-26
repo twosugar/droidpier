@@ -43,6 +43,15 @@ static MouseFn mouseMessage;
 static ButtonFn buttonMessage;
 static KeyboardFn keyboardMessage;
 static size_t fbWidth, fbHeight;
+// 界面方向（设备顺时针转过的角度）和转正后的视频尺寸：帧缓冲永远是竖的，界面横过来时（折叠机展开）画面在里面是躺着的，
+// 编码前按方向转正，视频是 outW x outH；触摸照旧按帧缓冲坐标
+static int rotationDeg;
+// 正在用的屏在 class 0 屏里的序号，也是 dtuhidd 触摸的 target：折叠机外屏要发 1，发 0 点不动
+// （2026-11-26 iPhone Duo 实测外屏；内屏按同样的顺序是 0，未单独验证）。iPhone 只有一块屏，一直是 0。encodeQ 写、inputQ 读
+static _Atomic uint64_t screenIndex;
+static size_t outW, outH;
+static VTPixelRotationSessionRef rotator;
+static CVPixelBufferPoolRef rotatedPool;
 static VTCompressionSessionRef encoder;
 static BOOL forceKey = YES, touching = NO;
 static NSData *lastConfig;
@@ -78,7 +87,7 @@ static void fail(NSString *msg) {
 static void video(BOOL config, BOOL key, NSData *data) {
   NSMutableData *b = [NSMutableData dataWithCapacity:data.length + 9];
   uint8_t flags = (config ? 1 : 0) | (key ? 2 : 0);
-  uint32_t w = (uint32_t)fbWidth, h = (uint32_t)fbHeight;
+  uint32_t w = (uint32_t)outW, h = (uint32_t)outH;
   [b appendBytes:&flags length:1];
   [b appendBytes:&w length:4];
   [b appendBytes:&h length:4];
@@ -125,7 +134,7 @@ static void onEncoded(OSStatus st, CMSampleBufferRef sb) {
 
 static void createEncoder(void) {
   NSDictionary *spec = @{(id)kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: @YES};
-  OSStatus st = VTCompressionSessionCreate(NULL, (int32_t)fbWidth, (int32_t)fbHeight, kCMVideoCodecType_H264,
+  OSStatus st = VTCompressionSessionCreate(NULL, (int32_t)outW, (int32_t)outH, kCMVideoCodecType_H264,
                                            (__bridge CFDictionaryRef)spec, NULL, NULL, NULL, NULL, &encoder);
   if (st != noErr) fail([NSString stringWithFormat:@"创建 H.264 编码器失败（%d）", (int)st]);
   VTSessionSetProperty(encoder, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
@@ -149,6 +158,21 @@ static void encodeCurrent(void);
 static const int64_t REPEAT_AFTER_NS = 100 * NSEC_PER_MSEC;
 static uint64_t frameGen;
 
+// 帧缓冲是不是全黑：隔 16 个像素取一个点看 RGB。灭着的屏是纯黑；点亮的屏至少有状态栏的白字
+static BOOL surfaceBlank(IOSurfaceRef s) {
+  if (!s || IOSurfaceLock(s, kIOSurfaceLockReadOnly, NULL) != kIOReturnSuccess) return YES;
+  const uint8_t *p = IOSurfaceGetBaseAddress(s);
+  size_t w = IOSurfaceGetWidth(s), h = IOSurfaceGetHeight(s), row = IOSurfaceGetBytesPerRow(s);
+  BOOL blank = YES;
+  for (size_t y = 0; blank && y < h; y += 16)
+    for (size_t x = 0; x < w; x += 16) {
+      const uint8_t *px = p + y * row + x * 4;
+      if (px[0] | px[1] | px[2]) { blank = NO; break; }
+    }
+  IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, NULL);
+  return blank;
+}
+
 static void encodeFresh(void) {
   encodeCurrent();
   uint64_t gen = ++frameGen;
@@ -159,20 +183,55 @@ static void encodeFresh(void) {
   });
 }
 
+// 读正在用的屏的界面方向（1 竖、2 倒、3 / 4 横），换成页面的方向（设备顺时针转过的角度）。3 对 90 是对着画面试出来的：
+// 折叠机展开后是 3，按 90 转正后画面是正的、点按的位置对得上；合上是 1；iPhone 一直是 1
+// （2026-11-26 Xcode 27.1 iPhone Duo / iPhone 16 Pro 实测）。只在 encodeQ 上调
+static void readRotation(void) {
+  id props = [screenPort respondsToSelector:sel_registerName("screenProperties")] ? CALL(screenPort, "screenProperties") : nil;
+  long o = props ? ((long (*)(id, SEL))objc_msgSend)(props, sel_registerName("uiOrientation")) : 1;
+  rotationDeg = o == 2 ? 180 : o == 3 ? 90 : o == 4 ? 270 : 0;
+}
+
 static void encodeCurrent(void) {
   IOSurfaceRef s = (__bridge IOSurfaceRef)CALL(screenPort, "framebufferSurface");
   if (!s) return;
-  if (IOSurfaceGetWidth(s) != fbWidth || IOSurfaceGetHeight(s) != fbHeight) {
-    fbWidth = IOSurfaceGetWidth(s);
-    fbHeight = IOSurfaceGetHeight(s);
+  size_t w = IOSurfaceGetWidth(s), h = IOSurfaceGetHeight(s);
+  size_t ow = rotationDeg % 180 ? h : w, oh = rotationDeg % 180 ? w : h;
+  if (w != fbWidth || h != fbHeight || ow != outW || oh != outH) {
+    fbWidth = w;
+    fbHeight = h;
+    outW = ow;
+    outH = oh;
     if (encoder) { VTCompressionSessionInvalidate(encoder); CFRelease(encoder); encoder = NULL; }
+    if (rotatedPool) { CVPixelBufferPoolRelease(rotatedPool); rotatedPool = NULL; }
     lastConfig = nil;
     forceKey = YES;
-    event(@{@"t": @"ready", @"width": @(fbWidth), @"height": @(fbHeight)});
+    event(@{@"t": @"ready", @"width": @(fbWidth), @"height": @(fbHeight), @"rotation": @(rotationDeg)});
   }
   if (!encoder) createEncoder();
   CVPixelBufferRef pb = NULL;
   if (CVPixelBufferCreateWithIOSurface(NULL, s, NULL, &pb) != kCVReturnSuccess) return;
+  if (rotationDeg) {
+    // 设备顺时针转了 r，画面在帧缓冲里就是逆时针躺着的：顺时针转 r 转正
+    if (!rotator && VTPixelRotationSessionCreate(NULL, &rotator) != noErr) { CVPixelBufferRelease(pb); return; }
+    CFStringRef angle = rotationDeg == 90 ? kVTRotation_CW90 : rotationDeg == 180 ? kVTRotation_180 : kVTRotation_CCW90;
+    VTSessionSetProperty(rotator, kVTPixelRotationPropertyKey_Rotation, angle);
+    if (!rotatedPool) {
+      NSDictionary *attrs = @{(id)kCVPixelBufferPixelFormatTypeKey: @(CVPixelBufferGetPixelFormatType(pb)),
+                              (id)kCVPixelBufferWidthKey: @(outW), (id)kCVPixelBufferHeightKey: @(outH),
+                              (id)kCVPixelBufferIOSurfacePropertiesKey: @{}};
+      CVPixelBufferPoolCreate(NULL, NULL, (__bridge CFDictionaryRef)attrs, &rotatedPool);
+    }
+    CVPixelBufferRef out = NULL;
+    if (!rotatedPool || CVPixelBufferPoolCreatePixelBuffer(NULL, rotatedPool, &out) != kCVReturnSuccess ||
+        VTPixelRotationSessionRotateImage(rotator, pb, out) != noErr) {
+      if (out) CVPixelBufferRelease(out);
+      CVPixelBufferRelease(pb);
+      return;
+    }
+    CVPixelBufferRelease(pb);
+    pb = out;
+  }
   NSDictionary *opts = forceKey ? @{(id)kVTEncodeFrameOptionKey_ForceKeyFrame: @YES} : nil;
   forceKey = NO;
   VTCompressionSessionEncodeFrameWithOutputHandler(encoder, pb, CMTimeMake(pts++, 60), kCMTimeInvalid,
@@ -279,7 +338,7 @@ static void touch(double x, double y, BOOL down, uint64_t edge) {
     // 0 开始、1 移动、2 结束
     xpc_dictionary_set_uint64(p, "eventType", !down ? 2 : dtuTouching ? 1 : 0);
     xpc_dictionary_set_uint64(p, "edge", edge);
-    xpc_dictionary_set_uint64(p, "target", 0);
+    xpc_dictionary_set_uint64(p, "target", screenIndex);
     dtuTouching = down;
     dtuSend("IndigoDigitizerEvent", p);
     return;
@@ -381,32 +440,55 @@ int main(int argc, char **argv) {
 
     device = findDevice(dev, @(argv[2]));
     if (!device) fail(@"找不到这台模拟器");
-    // 一台模拟器有好几个显示端口：外接屏是 display class 1，折叠机（iPhone Duo）还有两块 class 0 的屏，
-    // 只有正在用的那块有帧缓冲。取第一块有帧缓冲的 class 0；刚开机时还没有，等一会儿（2026-11-21 实测 iPhone Duo）
-    for (int tries = 0; !screenPort && tries < 40; tries++) {
+    // 一台模拟器有好几个显示端口：外接屏是 display class 1，折叠机（iPhone Duo）有两块 class 0 的屏（外屏、内屏），
+    // 两块都有帧缓冲，没点亮的那块是全黑的；电源状态、背光这些属性两块一样，看不出哪块亮着（2026-11-26 Xcode 27.1 iOS 27.1 实测）。
+    // 所以两块都订帧：只有点亮的屏会出新帧，哪块出了新帧就推哪块（开合铰链后跟着换）。刚连上画面静止时先取不是全黑的那块。
+    // 刚开机时还没有帧缓冲，等一会儿（2026-11-21 实测 iPhone Duo）
+    NSMutableArray *screens = [NSMutableArray array];
+    for (int tries = 0; !screens.count && tries < 40; tries++) {
       for (id port in CALL(CALL(device, "io"), "ioPorts")) {
         id desc = CALL(port, "descriptor");
         if (![desc respondsToSelector:sel_registerName("framebufferSurface")] ||
             ![desc respondsToSelector:sel_registerName("registerScreenCallbacksWithUUID:callbackQueue:frameCallback:surfacesChangedCallback:propertiesChangedCallback:")]) continue;
         if (((uint16_t (*)(id, SEL))objc_msgSend)(CALL(desc, "state"), sel_registerName("displayClass")) != 0) continue;
         if (!CALL(desc, "framebufferSurface")) continue;
-        screenPort = desc;
-        break;
+        [screens addObject:desc];
       }
-      if (!screenPort) usleep(250000);
+      if (!screens.count) usleep(250000);
     }
-    if (!screenPort) fail(@"模拟器没有屏幕（没开机？）");
+    if (!screens.count) fail(@"模拟器没有屏幕（没开机？）");
+    for (NSUInteger i = 0; i < screens.count; i++)
+      if (!surfaceBlank((__bridge IOSurfaceRef)CALL(screens[i], "framebufferSurface"))) { screenPort = screens[i]; screenIndex = i; break; }
+    if (!screenPort) screenPort = screens.firstObject;
     NSError *e = nil;
     // 必须给会话重置回调：initWithDevice:error: 不给，模拟器那边的 HID 会话一重置，SimulatorKit 就调空指针崩掉（2026-11-21 实测）
     hidClient = ((id (*)(id, SEL, id, id, NSError **, id))objc_msgSend)([objc_getClass("_TtC12SimulatorKit24SimDeviceLegacyHIDClient") alloc],
         sel_registerName("initWithDevice:sessionResetQueue:error:sessionResetHandler:"), device, inputQ, &e, ^{ touching = NO; });
     if (!hidClient) fail([NSString stringWithFormat:@"连不上模拟器的触摸输入：%@", e.localizedDescription]);
 
-    void (^frame)(void) = ^{ encodeFresh(); };
-    ((void (*)(id, SEL, id, id, id, id, id))objc_msgSend)(screenPort, sel_registerName("registerScreenCallbacksWithUUID:callbackQueue:frameCallback:surfacesChangedCallback:propertiesChangedCallback:"),
-                                                       [NSUUID UUID], encodeQ, frame, frame, ^{});
+    for (NSUInteger i = 0; i < screens.count; i++) {
+      id desc = screens[i];
+      // 回调都在 encodeQ 上，screenPort 只在这里换。熄灭的屏可能还补一帧全黑，不换过去
+      void (^frame)(void) = ^{
+        if (desc != screenPort) {
+          if (surfaceBlank((__bridge IOSurfaceRef)CALL(desc, "framebufferSurface"))) return;
+          screenPort = desc;
+          screenIndex = i;
+          readRotation();
+        }
+        encodeFresh();
+      };
+      // 界面方向变了（开合铰链）：重读方向，按新方向出一帧
+      void (^props)(void) = ^{
+        if (desc != screenPort) return;
+        readRotation();
+        encodeFresh();
+      };
+      ((void (*)(id, SEL, id, id, id, id, id))objc_msgSend)(desc, sel_registerName("registerScreenCallbacksWithUUID:callbackQueue:frameCallback:surfacesChangedCallback:propertiesChangedCallback:"),
+                                                         [NSUUID UUID], encodeQ, frame, frame, props);
+    }
     // 先出一帧：画面静止时帧回调不来，页面也要能看到当前画面
-    dispatch_async(encodeQ, ^{ encodeFresh(); });
+    dispatch_async(encodeQ, ^{ readRotation(); encodeFresh(); });
     // 先连好 dtuhidd，第一下点按不用等存活探测
     dispatch_async(inputQ, ^{ dtuConnect(); });
 
