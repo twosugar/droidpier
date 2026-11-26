@@ -329,3 +329,19 @@ test("connectIosSim：小程序没报能转（旧小程序、不支持的系统�
   await assert.rejects(s.hinge!(90), /暂不支持/);
   assert.equal(h.writes.length, 0);
 });
+
+test("connectIosSim：连上时界面已经横着的 iPhone 从这个朝向接着转；折叠机不猜，从竖的开始", async () => {
+  const h = fakeHelper();
+  const pending = connectIosSim(A, "iPhone 16 Pro", deps(h));
+  await new Promise((r) => setImmediate(r));
+  h.push(Buffer.concat([eventPkt({ t: "ready", width: 1206, height: 2622, rotation: 90, rotate: true }), videoPkt(2, 2622, 1206, [1])]));
+  const s = await pending;
+  await s.rotate("right");
+  const h2 = fakeHelper();
+  const p2 = connectIosSim(A, "iPhone Duo", deps(h2));
+  await new Promise((r) => setImmediate(r));
+  h2.push(Buffer.concat([eventPkt({ t: "ready", width: 2007, height: 2853, rotation: 90, rotate: true, hinge: true }), videoPkt(2, 2853, 2007, [1])]));
+  const s2 = await p2;
+  await s2.rotate("right");
+  assert.deepEqual([...h.writes, ...h2.writes].map((l) => JSON.parse(l).value), ["pud", "landscape-right"]);
+});

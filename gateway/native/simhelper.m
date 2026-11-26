@@ -394,6 +394,7 @@ static xpc_object_t coreDevice(NSString *service, const char *action) {
 static void purpleOrient(uint32_t orientation) {
   mach_port_t port = simLookup(@"PurpleWorkspacePort");
   if (port == MACH_PORT_NULL) { event(@{@"t": @"error", @"message": @"找不到模拟器的 PurpleWorkspacePort"}); return; }
+
   uint32_t buf[28] = {0};
   mach_msg_header_t *h = (mach_msg_header_t *)buf;
   h->msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
@@ -404,22 +405,27 @@ static void purpleOrient(uint32_t orientation) {
   buf[0x48 / 4] = 4;
   buf[0x4C / 4] = orientation;
   kern_return_t kr = mach_msg(h, MACH_SEND_MSG | MACH_SEND_TIMEOUT, 108, 0, MACH_PORT_NULL, 2000, MACH_PORT_NULL);
+  // lookup 每次给一份发送权，用完还回去
+  mach_port_deallocate(mach_task_self(), port);
   if (kr != KERN_SUCCESS) event(@{@"t": @"error", @"message": [NSString stringWithFormat:@"转朝向没发出去（%d）", kr]});
 }
 
 // 每块屏的触摸 target（同 idb 的 SimulatorTouchscreenProtocol）：CoreDevice 的 displayinfo 给出屏名和它的 uniqueId，
 // dtuhidd 的 universalhidservice 列出触摸屏服务和它对着的 displayUUID，触摸屏的服务编号是 0x100 + target。
 // iPhone Duo 是外屏 LCD → 1、内屏 LCD-1 → 3；内屏发 0、1、2 都点不动（2026-11-26 Xcode 27.1 iOS 27.1 实测）。
-// 查不到（旧 Xcode、旧系统）就留空，触摸照旧发 screenIndex。在 inputQ 上调，只查一次
+// 查不到（旧 Xcode、旧系统）就留空，触摸照旧发 screenIndex；刚开机时服务可能还没起来，按下时隔 5 秒再查，最多 6 次。在 inputQ 上调
 static void loadTouchTargets(void) {
-  static BOOL tried;
-  if (tried || screenNames.count < 2) return;
-  tried = YES;
+  static int tries;
+  static uint64_t retryAt;
+  if (touchTargets || screenNames.count < 2 || tries >= 6 || clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < retryAt) return;
+  tries++;
+  retryAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + 5 * NSEC_PER_SEC;
   xpc_object_t info = coreDevice(@"com.apple.coredevice.feature.getdisplayinfo", "com.apple.coredevice.action.displayinfo");
   xpc_object_t displays = info ? xpc_dictionary_get_value(info, "displays") : nil;
   if (!displays || xpc_get_type(displays) != XPC_TYPE_ARRAY) return;
   NSMutableDictionary<NSString *, NSString *> *nameByUUID = [NSMutableDictionary dictionary];
   xpc_array_apply(displays, ^bool(size_t i, xpc_object_t d) {
+    if (xpc_get_type(d) != XPC_TYPE_DICTIONARY) return true;
     NSString *name = xpcString(d, "name"), *uid = xpcString(d, "uniqueId");
     if (name && uid) nameByUUID[uid] = name;
     return true;
@@ -454,7 +460,9 @@ static BOOL vendorConnect(void) {
   if (vendor || !(deviceMotion || hingeAngle)) return NO;
   __block xpc_connection_t c = nil;
   c = simConnect(VENDOR_SERVICE, ^(xpc_object_t ev) {
-    if (ev == XPC_ERROR_CONNECTION_INVALID) dispatch_async(inputQ, ^{ if (vendor == c) vendor = nil; });
+    // 断开或 dtuhidd 重启（INTERRUPTED）都重连：重启后旧连接上的虚拟服务没了，要走重连后等匹配的路
+    if (ev == XPC_ERROR_CONNECTION_INVALID || ev == XPC_ERROR_CONNECTION_INTERRUPTED)
+      dispatch_async(inputQ, ^{ if (vendor == c) { xpc_connection_cancel(c); vendor = nil; } });
   });
   vendor = c;
   return c != nil;
@@ -491,6 +499,7 @@ static void touch(double x, double y, BOOL down, uint64_t edge) {
     xpc_dictionary_set_uint64(p, "eventType", !down ? 2 : dtuTouching ? 1 : 0);
     xpc_dictionary_set_uint64(p, "edge", edge);
     if (down && !dtuTouching) {
+      loadTouchTargets();
       uint64_t i = screenIndex;
       NSNumber *t = i < screenNames.count ? touchTargets[screenNames[i]] : nil;
       touchTarget = t ? t.unsignedLongLongValue : i;
@@ -626,7 +635,9 @@ int main(int argc, char **argv) {
     xpc_object_t motion = coreDevice(@"com.apple.coredevice.feature.monitormotion", "com.apple.coredevice.action.querymotioncapabilities");
     deviceMotion = motion && xpc_dictionary_get_bool(motion, "deviceMotionState");
     hingeAngle = motion && xpc_dictionary_get_bool(motion, "hingeAngle");
-    canRotate = deviceMotion || simLookup(@"PurpleWorkspacePort") != MACH_PORT_NULL;
+    mach_port_t purple = deviceMotion ? MACH_PORT_NULL : simLookup(@"PurpleWorkspacePort");
+    canRotate = deviceMotion || purple != MACH_PORT_NULL;
+    if (purple) mach_port_deallocate(mach_task_self(), purple);
     NSError *e = nil;
     // 必须给会话重置回调：initWithDevice:error: 不给，模拟器那边的 HID 会话一重置，SimulatorKit 就调空指针崩掉（2026-11-21 实测）
     hidClient = ((id (*)(id, SEL, id, id, NSError **, id))objc_msgSend)([objc_getClass("_TtC12SimulatorKit24SimDeviceLegacyHIDClient") alloc],

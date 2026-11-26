@@ -272,8 +272,9 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
   let closed = false;
   let firstKey: (() => void) | null = null;
   let failStart: ((e: Error) => void) | null = null;
-  // 设备朝向在 ORIENTS 里的位置：模拟器开机时是竖的，之后只有这里转它
-  let orient = 0;
+  // 设备朝向在 ORIENTS 里的位置。连上时按界面方向猜（iPhone 的界面方向基本就是设备朝向，App 不支持横屏时猜成竖的）；
+  // 折叠机展开时界面本来就是横的，猜不出，当竖的
+  let orient: number | null = null;
 
   const helper = await deps.spawnHelper(udid);
   const close = (why: string) => {
@@ -335,7 +336,7 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     // 转设备朝向；界面跟着转了，小程序的 ready 报新方向，经 onRotation 广播。App 不支持这个方向时界面不动
     async rotate(dir = "right") {
       if (!session.caps.rotate) return unsupported();
-      orient = (orient + (dir === "left" ? 3 : 1)) % 4;
+      orient = ((orient ?? 0) + (dir === "left" ? 3 : 1)) % 4;
       cmd({ t: "orient", value: ORIENTS[orient] });
       return session.rotation;
     },
@@ -360,6 +361,7 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
       if (e.t === "ready") {
         session.caps = { ...IOS_SIM_CAPS, rotate: e.rotate === true, ...(e.hinge === true ? { hinge: true } : {}) };
         const r = e.rotation ?? 0;
+        orient ??= e.hinge === true ? 0 : r / 90;
         const changed = r !== session.rotation || e.width !== session.device.width || e.height !== session.device.height;
         session.device = { width: e.width, height: e.height };
         session.rotation = r;
