@@ -16,6 +16,7 @@ import { filesFromDrop, type DropEntry } from "./drop-entries.ts";
 import { parseZoom, ZOOM_STEPS } from "../../shared/zoom.ts";
 import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
+import { LANGS, parseLang, setLangSource, type Lang } from "../../shared/i18n.ts";
 import { registerTools } from "./webmcp.ts";
 import { gatewayBanner, gatewayBelow, shouldRequestUpdate, timeoutText, tooOldText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
 import type { LogFilter } from "../../shared/logcat.ts";
@@ -70,6 +71,10 @@ const ZOOM_KEY = "droidpier.zoom";
 // 页面外观存在这台浏览器里；存储不可用（隐私模式等）时每次都跟随系统
 const THEME_KEY = "droidpier.theme";
 const SIDEBAR_KEY = "droidpier.sidebar";
+// 界面语言存在这台浏览器里，默认英文；host 自己的提示也按它出（shared/i18n.ts）
+const LANG_KEY = "droidpier.lang";
+let hostLang: Lang = parseLang(readPref(LANG_KEY));
+setLangSource(() => hostLang);
 // 还不知道设备尺寸、容器也没量出来时，hello 用这个尺寸（网关会夹到设备尺寸内）
 const FALLBACK_CSS = { width: 540, height: 1170 };
 const RESIZE_DEBOUNCE_MS = 150;
@@ -1058,6 +1063,13 @@ export async function createHost(player: Player) {
         const theme = (args as { theme?: unknown } | undefined)?.theme;
         if (!THEMES.includes(theme as never)) throw new Error("emu.setTheme 需要 theme：system、light 或 dark");
         return { ok: writePref(THEME_KEY, theme as string) };
+      }
+      if (name === "emu.lang") return hostLang;
+      if (name === "emu.setLang") {
+        const lang = (args as { lang?: unknown } | undefined)?.lang;
+        if (!LANGS.includes(lang as Lang)) throw new Error("emu.setLang needs lang: en or zh");
+        hostLang = lang as Lang;
+        return { ok: writePref(LANG_KEY, hostLang) };
       }
       // 侧栏收起与否，存在这台浏览器里
       if (name === "emu.sidebar") return { hidden: readPref(SIDEBAR_KEY) === "hidden" };

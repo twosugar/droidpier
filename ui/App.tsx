@@ -12,6 +12,7 @@ import { gbText, spaceCheck } from "../shared/disk-space";
 import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
 import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type IosCatalog, type IosSimInfo, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
+import { LANGS, parseLang, setLangSource, t, type Lang, type Msg } from "../shared/i18n";
 import { deviceFrame } from "../shared/screen";
 import { glideFrames, poseAt, REST, startPose, turnAngle, type Glide } from "./device-motion";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
@@ -976,11 +977,13 @@ function ZoomControl(props: { zoom: number; onZoom: (z: number) => void }) {
   );
 }
 
-const THEME_OPTIONS: { theme: Theme; icon: IconName; label: string }[] = [
-  { theme: "system", icon: "monitor", label: "跟随系统" },
-  { theme: "light", icon: "sun", label: "浅色" },
-  { theme: "dark", icon: "moon", label: "深色" },
+const THEME_OPTIONS: { theme: Theme; icon: IconName; label: Msg }[] = [
+  { theme: "system", icon: "monitor", label: { en: "System", zh: "跟随系统" } },
+  { theme: "light", icon: "sun", label: { en: "Light", zh: "浅色" } },
+  { theme: "dark", icon: "moon", label: { en: "Dark", zh: "深色" } },
 ];
+/** 语言选项：每种语言用它自己的写法，切错了也认得回来。 */
+const LANG_LABEL: Record<Lang, string> = { en: "English", zh: "中文" };
 
 /**
  * 页面外观三选一（跟随系统、浅色、深色）的分段控件，放在菜单里：每格是 menuitemradio，
@@ -988,13 +991,28 @@ const THEME_OPTIONS: { theme: Theme; icon: IconName; label: string }[] = [
  */
 function ThemePicker(props: { value: Theme; onPick: (t: Theme) => void }) {
   return (
-    <View role="group" accessibilityLabel="外观" style={{ flexDirection: "row", gap: SPACE.hair, padding: SPACE.hair, borderRadius: token("radius"), backgroundColor: token("muted") }}>
+    <View role="group" accessibilityLabel={t({ en: "Appearance", zh: "外观" })} style={{ flexDirection: "row", gap: SPACE.hair, padding: SPACE.hair, borderRadius: token("radius"), backgroundColor: token("muted") }}>
       <Each of={THEME_OPTIONS} key={(o) => o.theme}>{(o) => (
         <MenuItem role="menuitemradio" checked={props.value === o().theme} closeOnSelect={false} onSelect={() => props.onPick(o().theme)}
-          accessibilityLabel={`外观：${o().label}`}
+          accessibilityLabel={t({ en: `Appearance: ${o().label.en}`, zh: `外观：${o().label.zh}` })}
           style={{ width: CONTROL.sm, height: CONTROL.sm - 2 * SPACE.hair, alignItems: "center", justifyContent: "center", borderRadius: token("radius-sm"), borderWidth: 1, borderColor: "transparent", ...ease() }}
           checkedStyle={{ backgroundColor: token("background"), borderColor: token("border") }} focusStyle={{ borderColor: token("ring") }}>
           <Icon name={o().icon} size={ICON.sm} tint={props.value === o().theme ? token("foreground") : token("muted-foreground")} />
+        </MenuItem>
+      )}</Each>
+    </View>
+  );
+}
+
+/** 菜单里的语言选择，样子和外观的一样，选项是文字。 */
+function LangPicker(props: { value: Lang; onPick: (l: Lang) => void }) {
+  return (
+    <View role="group" accessibilityLabel={t({ en: "Language", zh: "语言" })} style={{ flexDirection: "row", gap: SPACE.hair, padding: SPACE.hair, borderRadius: token("radius"), backgroundColor: token("muted") }}>
+      <Each of={[...LANGS]} key={(l) => l}>{(l) => (
+        <MenuItem role="menuitemradio" checked={props.value === l()} closeOnSelect={false} onSelect={() => props.onPick(l())} accessibilityLabel={LANG_LABEL[l()]}
+          style={{ height: CONTROL.sm - 2 * SPACE.hair, paddingHorizontal: SPACE.item, alignItems: "center", justifyContent: "center", borderRadius: token("radius-sm"), borderWidth: 1, borderColor: "transparent", ...ease() }}
+          checkedStyle={{ backgroundColor: token("background"), borderColor: token("border") }} focusStyle={{ borderColor: token("ring") }}>
+          <Text style={{ ...TYPE.caption, color: props.value === l() ? token("foreground") : token("muted-foreground") }}>{LANG_LABEL[l()]}</Text>
         </MenuItem>
       )}</Each>
     </View>
@@ -1024,11 +1042,11 @@ const releaseOnOpen = (e: { open: boolean }) => {
  * 侧栏底部的按钮：点开向上的菜单，里面是官网、文档和外观。
  * setup：环境还缺东西、环境检查卡片被关掉了时，菜单里给一项把它重新打开（文字是项的名字）。
  */
-function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => void; setup: string | null; onSetup: () => void }) {
+function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => void; lang: Lang; onLang: (l: Lang) => void; setup: string | null; onSetup: () => void }) {
   return (
     <Menu placement="top" offset={SPACE.item} popupStyle={{ ...menuPopup("bottom left"), minWidth: 248 }} popupStartingStyle={popOut("below")} popupEndingStyle={popOut("below")}
       onOpenChange={releaseOnOpen} trigger={
-      <Button accessibilityLabel="Droidpier 菜单" class={EXPANDED} hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ borderColor: token("ring") }}
+      <Button accessibilityLabel={t({ en: "Droidpier menu", zh: "Droidpier 菜单" })} class={EXPANDED} hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ borderColor: token("ring") }}
         style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingHorizontal: SPACE.item, borderRadius: token("radius"), borderWidth: 1, borderColor: "transparent", ...ease() }}>
         <Mark size={28} />
         <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body, fontWeight: WEIGHT.strong }}>Droidpier</Text>
@@ -1044,13 +1062,18 @@ function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => voi
         </View>
       </View>
       <MenuLine />
-      <Item icon="globe" label="官网" trail="↗" onSelect={() => void openUrl(`${props.site}/`)} />
-      <Item icon="book" label="使用文档" trail="↗" onSelect={() => void openUrl(props.site + DOCS_PATH)} />
+      <Item icon="globe" label={t({ en: "Website", zh: "官网" })} trail="↗" onSelect={() => void openUrl(`${props.site}/`)} />
+      <Item icon="book" label={t({ en: "Documentation", zh: "使用文档" })} trail="↗" onSelect={() => void openUrl(props.site + DOCS_PATH)} />
       <If when={props.setup}>{(label) => <Item icon="monitor" label={label()} onSelect={props.onSetup} />}</If>
       <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingLeft: SPACE.item, paddingRight: SPACE.part }}>
         <Icon name="sun" size={ICON.md} tint={token("muted-foreground")} />
-        <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>外观</Text>
+        <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>{t({ en: "Appearance", zh: "外观" })}</Text>
         <ThemePicker value={props.theme} onPick={props.onTheme} />
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingLeft: SPACE.item, paddingRight: SPACE.part }}>
+        <Icon name="globe" size={ICON.md} tint={token("muted-foreground")} />
+        <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>{t({ en: "Language", zh: "语言" })}</Text>
+        <LangPicker value={props.lang} onPick={props.onLang} />
       </View>
     </Menu>
   );
@@ -1434,6 +1457,18 @@ function App() {
     if (picked) return;
     theme.set(parseTheme(t));
     setColorScheme(theme());
+  });
+  // 界面语言：默认英文，读到这台浏览器存的选择后换过去（host 的 emu.lang）；界面里的 t() 都读它
+  const lang = signal<Lang>("en");
+  setLangSource(() => lang());
+  let langPicked = false;
+  const pickLang = (l: Lang) => {
+    langPicked = true;
+    lang.set(l);
+    host.call("emu.setLang", { lang: l });
+  };
+  host.call("emu.lang", {}).then((l: unknown) => {
+    if (!langPicked) lang.set(parseLang(l));
   });
   const site = signal(OFFICIAL_ORIGIN);
   host.call("emu.site", {}).then((o: unknown) => {
@@ -2462,7 +2497,7 @@ function App() {
             </If>
           </Scroll>
           <View style={{ height: 1, marginHorizontal: ROW_X, backgroundColor: token("border-subtle") }} />
-          <AppMenu site={site()} theme={theme()} onTheme={pickTheme} setup={setupMenuLabel()}
+          <AppMenu site={site()} theme={theme()} onTheme={pickTheme} lang={lang()} onLang={pickLang} setup={setupMenuLabel()}
             onSetup={() => { animateNext(); setupDismissed.set(false); setupWanted.set(true); }} />
         </View>
       </If>
