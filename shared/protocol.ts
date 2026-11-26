@@ -19,8 +19,9 @@ export const PROTOCOL_VERSION = 1;
  * 8：indicatePage（在 H5 页面列表里悬停时把那个页面整个高亮）。
  * 9：iOS 模拟器的 upload 装 App（.app 打成的 tar、.zip、.ipa）。
  * 10：hello 的 lang 和 lang 消息：网关按页面的语言发文字（没说时中文）。
+ * 11：iOS 模拟器能旋转（caps.rotate），折叠机能开合铰链（caps.hinge、hinge 消息）。
  */
-export const GATEWAY_LEVEL = 10;
+export const GATEWAY_LEVEL = 11;
 
 /** logcatRead 一次最多要多少行（WebMCP 的 droidpier_read_logcat）。 */
 export const LOGCAT_READ_MAX = 1000;
@@ -184,7 +185,8 @@ export type AvdInfo = {
 /** scroll：能收原生滚动（scroll 消息）；没有时页面用滑动模拟滚轮。 */
 /** adb：设备走 adb，能用 H5 调试、日志、装 APK、传文件；只有 false 时才没有（iOS 模拟器），旧网关不发。 */
 /** logs：不走 adb 也有日志面板（iOS 模拟器的 log stream）；走 adb 的设备不带这一项也有。 */
-export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean; scroll: boolean; adb?: boolean; logs?: boolean };
+/** hinge：折叠机（iPhone Duo 模拟器），能开合铰链（hinge 消息）；别的设备和旧网关不发。 */
+export type DeviceCaps = { rotate: boolean; reboot: boolean; stop: boolean; clipboard: boolean; input: boolean; scroll: boolean; adb?: boolean; logs?: boolean; hinge?: boolean };
 
 /** emulator：第三方模拟器，mumu 是 MuMu 模拟器（侧栏单独一组）；真机没有这个字段，旧网关也不发。 */
 /**
@@ -346,6 +348,8 @@ export type ClientMsg =
   | { t: "use"; name: string }
   /** 不带 dir 时顺时针（旧页面不带）。 */
   | { t: "rotate"; dir?: RotateDir }
+  /** 折叠机的铰链角度：0 合上、180 展开。只在 caps.hinge 为 true 时发。 */
+  | { t: "hinge"; angle: number }
   | { t: "screenshot" }
   /** 页面转到后台：停推画面，直到 resume。 */
   | { t: "pause" }
@@ -541,6 +545,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
       if (o.dir === undefined) return { t: "rotate" };
       if (o.dir !== "left" && o.dir !== "right") return null;
       return { t: "rotate", dir: o.dir };
+    case "hinge":
+      if (!isNum(o.angle) || o.angle < 0 || o.angle > 180) return null;
+      return { t: "hinge", angle: o.angle };
     case "avds":
     case "stop":
     case "screenshot":

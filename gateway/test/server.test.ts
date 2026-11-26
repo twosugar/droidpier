@@ -3162,6 +3162,19 @@ test("use 开着的 iOS 模拟器的 UDID：ready 带 caps.adb=false，画面走
   await until(() => videoTags(c).length === 2);
 });
 
+test("hinge：有铰链的会话收到角度；没有铰链的设备回「这台设备没有铰链」，不调用会话", async (t) => {
+  const { c, sim } = await iosSetup(t);
+  const angles: number[] = [];
+  sim.hinge = async (a: number) => void angles.push(a);
+  c.ws.send(JSON.stringify({ t: "hinge", angle: 90 }));
+  await until(() => c.msgs.some((m) => m.t === "error"));
+  assert.equal(c.msgs.find((m) => m.t === "error")!.message, "这台设备没有铰链");
+  sim.caps = { ...sim.caps, hinge: true };
+  c.ws.send(JSON.stringify({ t: "hinge", angle: 180 }));
+  await until(() => angles.length === 1);
+  assert.deepEqual(angles, [180]);
+});
+
 test("use 没开机的 iOS 模拟器 UDID：当普通设备名找，找不到就回没有在运行", async (t) => {
   const i = fakeIosSims([{ ...IOS_SIM, state: "shutdown" }]);
   const fa = fakeAvd({});

@@ -66,6 +66,9 @@ test("parseClientMsg 解析 rotate 的方向，认不出的方向返回 null", (
   assert.deepEqual(parseClientMsg('{"t":"rotate","dir":"right"}'), { t: "rotate", dir: "right" });
   assert.equal(parseClientMsg('{"t":"rotate","dir":"up"}'), null);
   assert.equal(parseClientMsg('{"t":"rotate","dir":1}'), null);
+  assert.deepEqual(parseClientMsg('{"t":"hinge","angle":90}'), { t: "hinge", angle: 90 });
+  assert.deepEqual(parseClientMsg('{"t":"hinge","angle":0,"x":1}'), { t: "hinge", angle: 0 });
+  for (const a of ["-1", "181", '"90"', "null"]) assert.equal(parseClientMsg(`{"t":"hinge","angle":${a}}`), null, a);
 });
 
 test("BIN_SCREENSHOT 值为 2", () => {
@@ -200,7 +203,7 @@ test("parseClientMsg：logcatRead 校验 rid、filter、limit", () => {
   assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter: { pkg: "a b", level: "E", text: "" }, limit: 5 })), null);
 });
 
-test("GATEWAY_LEVEL 是 10（网关按页面的语言发文字）", () => assert.equal(GATEWAY_LEVEL, 10));
+test("GATEWAY_LEVEL 是 11（iOS 模拟器能旋转、折叠机能开合铰链）", () => assert.equal(GATEWAY_LEVEL, 11));
 
 test("parseClientMsg：indicatePage 要 socket、id 和布尔的 on，多余字段丢掉", () => {
   assert.deepEqual(parseClientMsg('{"t":"indicatePage","socket":"s","id":"1","on":true,"x":1}'), { t: "indicatePage", socket: "s", id: "1", on: true });

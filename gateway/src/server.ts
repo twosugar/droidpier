@@ -1574,6 +1574,18 @@ export async function startServer(opts: {
             (e: Error) => send(ws, { t: "error", message: withReason({ en: "Rotation failed", zh: "旋转失败" }, e) }),
           ));
           break;
+        case "hinge": {
+          if (!conn.session?.caps.hinge || !conn.session.hinge) {
+            send(ws, { t: "error", message: { en: "This device has no hinge", zh: "这台设备没有铰链" } });
+            break;
+          }
+          // 屏幕换了（折叠机开合）由 onRotation 广播
+          const { angle } = m;
+          enqueue("hinge", (s) => (s.hinge?.(angle) ?? Promise.resolve()).catch(
+            (e: Error) => send(ws, { t: "error", message: withReason({ en: "Moving the hinge failed", zh: "开合铰链失败" }, e) }),
+          ));
+          break;
+        }
         case "pause":
           paused = true;
           subscribe();

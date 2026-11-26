@@ -294,3 +294,38 @@ test("connectIosSim：方向没变但帧缓冲尺寸变了（换到另一块屏�
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(turns, [0]);
 });
+
+test("connectIosSim：小程序报能转、有铰链时 caps 跟着改；rotate 按顺时针顺序发设备朝向，hinge 原样发角度", async () => {
+  const h = fakeHelper();
+  const pending = connectIosSim(A, "iPhone Duo", deps(h));
+  await new Promise((r) => setImmediate(r));
+  h.push(Buffer.concat([eventPkt({ t: "ready", width: 2007, height: 2853, rotation: 90, rotate: true, hinge: true }), videoPkt(2, 2853, 2007, [1])]));
+  const s = await pending;
+  assert.deepEqual(s.caps, { ...IOS_SIM_CAPS, rotate: true, hinge: true });
+  assert.equal(await s.rotate("right"), 90);
+  await s.rotate("right");
+  await s.rotate("left");
+  await s.rotate("left");
+  await s.rotate("left");
+  await s.hinge!(0);
+  assert.deepEqual(h.writes.map((l) => JSON.parse(l)), [
+    { t: "orient", value: "landscape-right" },
+    { t: "orient", value: "pud" },
+    { t: "orient", value: "landscape-right" },
+    { t: "orient", value: "portrait" },
+    { t: "orient", value: "landscape-left" },
+    { t: "hinge", angle: 0 },
+  ]);
+});
+
+test("connectIosSim：小程序没报能转（旧小程序、不支持的系统）时 rotate、hinge 报不支持，不发命令", async () => {
+  const h = fakeHelper();
+  const pending = connectIosSim(A, "iPhone 11", deps(h));
+  await new Promise((r) => setImmediate(r));
+  h.push(Buffer.concat([eventPkt({ t: "ready", width: 828, height: 1792 }), videoPkt(2, 828, 1792, [1])]));
+  const s = await pending;
+  assert.deepEqual(s.caps, IOS_SIM_CAPS);
+  await assert.rejects(s.rotate("right"), /暂不支持/);
+  await assert.rejects(s.hinge!(90), /暂不支持/);
+  assert.equal(h.writes.length, 0);
+});
