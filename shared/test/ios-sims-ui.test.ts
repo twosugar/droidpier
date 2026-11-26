@@ -16,10 +16,10 @@ test("iosSimRows：默认只列没关机的并报出收起了几台；展开或�
 });
 
 test("iosSimStatus：运行中的是当前画面时同安卓模拟器行，说「运行中 · 当前画面」", () => {
-  assert.equal(iosSimStatus(on, true), "运行中 · 当前画面");
-  assert.equal(iosSimStatus(on, false), "运行中");
-  assert.equal(iosSimStatus(off, false), "未运行");
-  assert.equal(iosSimStatus(booting, false), "启动中…");
+  assert.equal(iosSimStatus(on, true), "Running · On screen");
+  assert.equal(iosSimStatus(on, false), "Running");
+  assert.equal(iosSimStatus(off, false), "Not running");
+  assert.equal(iosSimStatus(booting, false), "Starting…");
 });
 
 test("currentIosSimOf：phone 会话的 deviceId 对上 UDID、且已连接或重启中才算", () => {

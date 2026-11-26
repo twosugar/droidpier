@@ -1,5 +1,6 @@
 // 侧栏「手机」「MuMu 模拟器」分组和主区标题的真机文案
 import type { MumuInfo, PhoneInfo } from "../shared/protocol";
+import { t, type Msg } from "../shared/i18n.ts";
 
 /** 行标题：「Samsung SM-G9910」；没查到型号时用设备 id。 */
 export function phoneLabel(p: PhoneInfo): string {
@@ -8,16 +9,16 @@ export function phoneLabel(p: PhoneInfo): string {
   return `${p.manufacturer.charAt(0).toUpperCase()}${p.manufacturer.slice(1)} ${p.model}`;
 }
 
-const STATUS: Record<Exclude<PhoneInfo["state"], "device">, string> = {
-  unauthorized: "请在手机上允许 USB 调试",
-  offline: "离线，重新插拔试试",
+const STATUS: Record<Exclude<PhoneInfo["state"], "device">, Msg> = {
+  unauthorized: { en: "Allow USB debugging on the phone", zh: "请在手机上允许 USB 调试" },
+  offline: { en: "Offline. Try plugging it in again", zh: "离线，重新插拔试试" },
 };
 
 /** 行副标题：连接状态和用户该做什么；current 表示它就是主区正在显示的设备。 */
 export function phoneStatus(p: PhoneInfo, current: boolean): string {
-  if (p.state === "device") return current ? "当前画面" : "可用";
-  if (p.emulator === "mumu") return "离线，MuMu 可能已关机";
-  return STATUS[p.state];
+  if (p.state === "device") return current ? t({ en: "On screen", zh: "当前画面" }) : t({ en: "Available", zh: "可用" });
+  if (p.emulator === "mumu") return t({ en: "Offline. MuMu may be shut down", zh: "离线，MuMu 可能已关机" });
+  return t(STATUS[p.state]);
 }
 
 /** 只有 adb 状态为 device 的手机能切过去。 */
@@ -70,13 +71,17 @@ export function mumuRows(mumu: MumuInfo[] | null, phones: PhoneInfo[] | null): M
   return rows;
 }
 
-const MUMU_STATE: Record<Exclude<MumuInfo["state"], "running">, string> = { stopped: "未运行", starting: "启动中…", stopping: "关机中…" };
+const MUMU_STATE: Record<Exclude<MumuInfo["state"], "running">, Msg> = {
+  stopped: { en: "Not running", zh: "未运行" },
+  starting: { en: "Starting…", zh: "启动中…" },
+  stopping: { en: "Shutting down…", zh: "关机中…" },
+};
 
 /** 行副标题：没开机、开关机中照 MuMu 的状态说；开着的按 adb 里那台说（同真机），adb 还没连上时说正在连接。 */
 export function mumuRowStatus(r: MumuRow, current: boolean): string {
-  if (r.mumu && r.mumu.state !== "running") return MUMU_STATE[r.mumu.state];
+  if (r.mumu && r.mumu.state !== "running") return t(MUMU_STATE[r.mumu.state]);
   // MuMu 说在运行、adb 里那台还没上线（刚开机时旧条目还是离线）：在连，不是关机了
-  if (!r.phone || (r.mumu && r.phone.state !== "device")) return "正在连接…";
+  if (!r.phone || (r.mumu && r.phone.state !== "device")) return t({ en: "Connecting…", zh: "正在连接…" });
   return phoneStatus(r.phone, current);
 }
 

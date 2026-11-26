@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BIN_UPLOAD, canSendChunk, checkChunk, decodeUploadChunk, encodeUploadChunk, fileKind, installFailure, nextChunk, sanitizeFileName, UPLOAD_CHUNK_BYTES, UPLOAD_HEADER_BYTES, UPLOAD_WINDOW_BYTES, iosFileKind } from "../upload.ts";
+import { BIN_UPLOAD, canSendChunk, checkChunk, decodeUploadChunk, encodeUploadChunk, fileKind, installFailure, nextChunk, sanitizeFileName, UPLOAD_CHUNK_BYTES, UPLOAD_HEADER_BYTES, UPLOAD_WINDOW_BYTES, iosFileKind, IOS_ONLY_APPS, IOS_ONLY_APPS_MSG } from "../upload.ts";
 import { parseClientMsg } from "../protocol.ts";
 
 test("文件名只留最后一段，去掉目录和 ..", () => {
@@ -136,4 +136,9 @@ test("sanitizeFileName：名字太长截断时保住 .app.tar 整个后缀，网
   const name = sanitizeFileName(`${"长".repeat(80)}.app.tar`)!;
   assert.ok(name.endsWith(".app.tar"), name);
   assert.deepEqual(iosFileKind(name), { kind: "ios-app", format: "tar" });
+});
+
+test("IOS_ONLY_APPS_MSG：页面的两种语言；IOS_ONLY_APPS 是其中的中文（网关用）", () => {
+  assert.equal(IOS_ONLY_APPS, IOS_ONLY_APPS_MSG.zh);
+  assert.match(IOS_ONLY_APPS_MSG.en, /^iOS simulators only install apps/);
 });

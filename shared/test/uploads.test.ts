@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createUploads, type UploadItem } from "../../host/src/uploads.ts";
-import { decodeUploadChunk, IOS_ONLY_APPS, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES, UPLOAD_WINDOW_BYTES } from "../upload.ts";
+import { decodeUploadChunk, IOS_ONLY_APPS_MSG, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES, UPLOAD_WINDOW_BYTES } from "../upload.ts";
 import type { ClientMsg } from "../protocol.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -67,8 +67,8 @@ test("不支持的格式和超过 2 GB 的在页面上就标失败，不发给�
   u.add([file("x.xapk", 1), fakeBig("huge.apk", UPLOAD_MAX_BYTES + 1)]);
   assert.equal(h.msgs.length, 0);
   assert.deepEqual(last().map((i) => [i.state, i.error]), [
-    ["failed", "暂不支持 .xapk，请提供 .apk"],
-    ["failed", "文件太大：最大 2 GB"],
+    ["failed", ".xapk is not supported, please provide a .apk file"],
+    ["failed", "File is too large: maximum 2 GB"],
   ]);
 });
 
@@ -86,7 +86,7 @@ test("非 APK 放好后给一句提示", () => {
   u.onMsg({ t: "upload", id: 1, state: "uploading", received: 0 });
   u.onMsg({ t: "upload", id: 1, state: "pushing" });
   u.onMsg({ t: "upload", id: 1, state: "done" });
-  assert.deepEqual(h.notices, ["n.txt 已放到 下载 文件夹"]);
+  assert.deepEqual(h.notices, ["Saved n.txt to the Download folder"]);
 });
 
 test("网关一直不回（旧网关不认识 upload）：超时后标失败", async () => {
@@ -94,7 +94,7 @@ test("网关一直不回（旧网关不认识 upload）：超时后标失败", a
   u.add([file("a.apk", 1)]);
   await sleep(40);
   assert.equal(last()[0].state, "failed");
-  assert.match(last()[0].error!, /升级/);
+  assert.match(last()[0].error!, /upgrade/);
 });
 
 test("连接断开：进行中和排队的都标失败；没连上时添加直接失败", () => {
@@ -129,7 +129,7 @@ test("读文件失败：标失败并告诉网关取消", async () => {
   u.onMsg({ t: "upload", id: 1, state: "uploading", received: 0 });
   await sleep(10);
   assert.equal(last()[0].state, "failed");
-  assert.match(last()[0].error!, /读文件失败/);
+  assert.match(last()[0].error!, /Failed to read file/);
   assert.deepEqual(h.msgs.at(-1), { t: "uploadCancel", id: 1 });
 });
 
@@ -141,7 +141,7 @@ test("文件在传的过程中变小了：标失败并取消，不发残缺的�
   await sleep(10);
   assert.equal(h.chunks.length, 0);
   assert.equal(last()[0].state, "failed");
-  assert.match(last()[0].error!, /变/);
+  assert.match(last()[0].error!, /changed/);
   assert.deepEqual(h.msgs.at(-1), { t: "uploadCancel", id: 1 });
 });
 
@@ -158,7 +158,7 @@ test("iOS 模拟器：不是 App 的文件在页面上就标失败，不发给�
   const { h, u, last } = harness();
   u.add([file("photo.png", 10)], { ios: true });
   assert.deepEqual(h.msgs, []);
-  assert.deepEqual(last().map((i) => [i.state, i.error]), [["failed", IOS_ONLY_APPS]]);
+  assert.deepEqual(last().map((i) => [i.state, i.error]), [["failed", IOS_ONLY_APPS_MSG.en]]);
 });
 
 test("iOS 模拟器：网关太旧（不会装 App）时在页面上就说要更新网关，不发给网关", () => {

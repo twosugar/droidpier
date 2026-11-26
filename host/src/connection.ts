@@ -26,6 +26,7 @@ import {
 } from "../../shared/protocol.ts";
 import { classifyFailure, refineLocalFailure, type LocalPermission } from "./launch.ts";
 import { createPending } from "./pending.ts";
+import { t } from "../../shared/i18n.ts";
 import type { GatewayInfo, UpdateReport } from "./gateway-update.ts";
 import type { LogLine } from "../../shared/logcat.ts";
 
@@ -284,7 +285,7 @@ export function createConnection(opts: {
     };
     sock.onclose = (e) => {
       if (ws === sock) ws = null;
-      pending.failAll("与网关断开");
+      pending.failAll(t({ en: "Disconnected from gateway", zh: "与网关断开" }));
       if (opened) opts.onClose?.();
       if (pendingVersionError) {
         const { code, upgrade } = pendingVersionError;

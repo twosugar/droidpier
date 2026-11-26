@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { avdNameError, createItems, DISPLAY_NAME_MAX, displayNameError, defaultAvdName, pickDefaultImage, ramMbFor } from "../avd-spec.ts";
+import { avdNameError, createItems, DISPLAY_NAME_MAX, displayNameError, defaultAvdName, pickDefaultImage, ramMbFor, avdNameErrorMsg, displayNameErrorMsg } from "../avd-spec.ts";
 import { spaceCheck } from "../disk-space.ts";
 import { parseClientMsg, type SystemImage } from "../protocol.ts";
 
@@ -85,4 +85,13 @@ test("displayNameError：空名字、控制字符、太长都给原因，正常�
   assert.match(displayNameError("a\nb")!, /控制字符/);
   assert.match(displayNameError("x".repeat(DISPLAY_NAME_MAX + 1))!, /最多/);
   assert.equal(displayNameError("测".repeat(DISPLAY_NAME_MAX)), null);
+});
+
+test("avdNameErrorMsg / displayNameErrorMsg：给页面的两种语言；avdNameError / displayNameError 仍是中文（网关用）", () => {
+  assert.deepEqual(avdNameErrorMsg("", []), { en: "Enter a device ID", zh: "请输入设备 ID" });
+  assert.equal(avdNameError("", []), "请输入设备 ID");
+  assert.equal(avdNameErrorMsg("Pixel", ["pixel"])?.en, "A device named pixel already exists");
+  assert.equal(displayNameErrorMsg("")?.en, "Enter a display name");
+  assert.equal(displayNameError(""), "请输入显示名称");
+  assert.equal(avdNameErrorMsg("ok_1", []), null);
 });

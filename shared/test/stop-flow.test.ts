@@ -31,7 +31,7 @@ test("停止中的确认框关不掉；停完关掉框，提示已停止", () =>
   const done = run([{ kind: "done", name: "Pixel_9" }], r.flow);
   assert.equal(done.flow.ask, null);
   assert.equal(isStopping(done.flow, "Pixel_9"), false);
-  assert.deepEqual(done.notices, [{ text: "已停止 Pixel 9" }]);
+  assert.deepEqual(done.notices, [{ text: "Stopped Pixel 9" }]);
 });
 
 test("失败时原因留在框里，框还开着，可以再试", () => {
@@ -46,7 +46,7 @@ test("失败时原因留在框里，框还开着，可以再试", () => {
 
 test("列表先看到它停了就算停完，后到的回复不再提示一次", () => {
   const r = run([{ kind: "open", target: pixel }, { kind: "confirm" }, { kind: "gone", name: "Pixel_9" }, { kind: "done", name: "Pixel_9" }, { kind: "failed", name: "Pixel_9", text: "x" }]);
-  assert.deepEqual(r.notices, [{ text: "已停止 Pixel 9" }]);
+  assert.deepEqual(r.notices, [{ text: "Stopped Pixel 9" }]);
   assert.equal(r.flow.ask, null);
 });
 

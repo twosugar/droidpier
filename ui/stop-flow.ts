@@ -1,3 +1,5 @@
+import { t } from "../shared/i18n.ts";
+
 /**
  * 停止设备的流程：确认框（ask）→ 停止中（stopping，几台可以同时停）→ 停完或失败。
  * 网关的 stopAvd 等设备真的停了才回（旧网关由 host 改用 stop 再看列表，见 host/src/main.ts 的 stopOld），回复就是结果；
@@ -36,11 +38,11 @@ export function stopStep(f: StopFlow, e: StopEvent): StopStep {
     }
     default: {
       // 已经收过尾的（列表先看到停了，回复后到）不再提示一次
-      const t = f.stopping.find((x) => x.name === e.name);
-      if (!t) return { flow: f };
-      const stopping = f.stopping.filter((x) => x !== t);
+      const target = f.stopping.find((x) => x.name === e.name);
+      if (!target) return { flow: f };
+      const stopping = f.stopping.filter((x) => x !== target);
       const asked = f.ask?.name === e.name;
-      if (e.kind !== "failed") return { flow: { ...f, stopping, ask: asked ? null : f.ask }, notice: { text: `已停止 ${t.label}` } };
+      if (e.kind !== "failed") return { flow: { ...f, stopping, ask: asked ? null : f.ask }, notice: { text: t({ en: `Stopped ${target.label}`, zh: `已停止 ${target.label}` }) } };
       return asked ? { flow: { ...f, stopping, error: e.text } } : { flow: { ...f, stopping }, notice: { text: e.text, error: true } };
     }
   }

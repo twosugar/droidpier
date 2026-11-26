@@ -129,11 +129,15 @@ The gateway serves its own copy of the page (`--local`, `http://127.0.0.1:<port>
 ## Code conventions
 
 - TypeScript run directly by Node 22.6+ (type stripping): only erasable syntax, so no `enum`, `namespace` or
-  parameter properties. Imports in `gateway/`, `host/` and `shared/` name the `.ts` file; `ui/` imports omit it (nsh
-  resolves them).
-- Code comments, log lines and user-facing strings (the page, gateway messages, errors) are in Chinese, as the
-  existing code is; README and these guides are in English. Comments explain why, and carry the source of measured
-  numbers (version and date: "2026-11-12 实测").
+  parameter properties. Imports in `gateway/`, `host/` and `shared/` name the `.ts` file; `ui/App.tsx` imports omit it (nsh
+  resolves them). The small `ui/*.ts` modules name it when they import a value, since their tests load them in Node.
+- Code comments and log lines are in Chinese, as the existing code is; README and these guides are in English.
+  Comments explain why, and carry the source of measured numbers (version and date: "2026-11-12 实测").
+- Text the page and the host module show comes in English (the default) and Chinese, written where it is used:
+  `t({ en: "Install APK…", zh: "安装 APK…" })` (`shared/i18n.ts`). The user's choice is stored in the browser
+  (`emu.lang`). Gateway messages are still Chinese only; a text in `shared/` that both use comes as a `{ en, zh }`
+  value with the old name kept as its Chinese (`avdNameErrorMsg` / `avdNameError`). The tools the page gives to an AI
+  (`host/src/webmcp.ts`) are described in English only.
 - Pure logic goes in a small module with its own test (`ui/h5-poll.ts`, `shared/screen.ts`); `ui/App.tsx` and
   `host/src/main.ts` wire them together.
 - Tests use `node:test` and `node:assert/strict`; one test file per module, named after it. Tests for `host/src` and
@@ -153,7 +157,7 @@ Details and examples: "Commits and pull requests" in [CONTRIBUTING.md](CONTRIBUT
   user, not which files changed.
 - The body explains why, wrapped at 72 columns: the problem, the cause, the fix and what it costs.
 - Pull request titles and descriptions, review comments and replies to them are in English only, though code
-  comments, log lines and user-facing strings stay in Chinese. Chinese text quoted from the code or the page stays
+  comments and log lines stay in Chinese. Chinese text quoted from the code or the page stays
   as it is.
 - One commit / PR does one thing; no unrelated refactors, cleanup or formatting.
 - A PR that changes the protocol says so and states whether `PROTOCOL_VERSION` moved and why.

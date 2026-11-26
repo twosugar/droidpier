@@ -1,3 +1,4 @@
+import type { Msg } from "./i18n.ts";
 /** 二进制消息类型：页面发给网关的文件分片（4 字节 kind + 4 字节传输 id + 数据）。 */
 export const BIN_UPLOAD = 3;
 export const UPLOAD_HEADER_BYTES = 8;
@@ -57,7 +58,12 @@ export function fileKind(name: string): FileKind {
 }
 
 /** iOS 模拟器上拖了不是 App 的东西时的提示。 */
-export const IOS_ONLY_APPS = "iOS 模拟器只能装 App：拖 .app 文件夹，或装着 .app 的 .zip / .ipa";
+export const IOS_ONLY_APPS_MSG: Msg = {
+  en: "iOS simulators only install apps: drop a .app folder, or a .zip / .ipa that holds one",
+  zh: "iOS 模拟器只能装 App：拖 .app 文件夹，或装着 .app 的 .zip / .ipa",
+};
+/** IOS_ONLY_APPS_MSG 的中文，网关用。 */
+export const IOS_ONLY_APPS = IOS_ONLY_APPS_MSG.zh;
 
 export type IosFileKind = { kind: "ios-app"; format: "tar" | "zip" } | { kind: "unsupported" };
 

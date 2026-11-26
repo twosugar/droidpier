@@ -1,5 +1,6 @@
 import type { ClientMsg, ServerMsg, UploadState } from "../../shared/protocol.ts";
-import { APP_TAR_SUFFIX, canSendChunk, encodeUploadChunk, fileKind, IOS_ONLY_APPS, iosFileKind, nextChunk, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { APP_TAR_SUFFIX, canSendChunk, encodeUploadChunk, fileKind, IOS_ONLY_APPS_MSG, iosFileKind, nextChunk, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** 页面上显示的一个文件。received 是网关已收下的字节。kind：apk 装到 Android，app 装到 iOS 模拟器，file 放进下载文件夹。 */
 export type UploadItem = {
@@ -59,12 +60,12 @@ export function createUploads(opts: {
         data = new Uint8Array(await a.file.slice(start, end).arrayBuffer());
       } catch (e) {
         a.reading = false;
-        if (active === a) giveUp(a, `读文件失败：${(e as Error).message}`);
+        if (active === a) giveUp(a, t({ en: `Failed to read file: ${(e as Error).message}`, zh: `读文件失败：${(e as Error).message}` }));
         return;
       }
       a.reading = false;
       if (active !== a || a.item.state !== "uploading") return;
-      if (data.byteLength !== end - start) return giveUp(a, "文件在传的过程中变了，请重新拖入");
+      if (data.byteLength !== end - start) return giveUp(a, t({ en: "File changed during upload, please drop it again", zh: "文件在传的过程中变了，请重新拖入" }));
       if (!opts.sendBinary(encodeUploadChunk(a.item.id, data))) return;
       a.sent = end;
     }
@@ -76,7 +77,7 @@ export function createUploads(opts: {
     if (!item) return;
     const file = files.get(item.id)!;
     if (!opts.send({ t: "upload", id: item.id, name: file.name, size: item.size })) {
-      fail(item, "没有连上网关");
+      fail(item, t({ en: "Not connected to the gateway", zh: "没有连上网关" }));
       changed();
       return pump();
     }
@@ -84,7 +85,7 @@ export function createUploads(opts: {
     const a: Active = { item, file, sent: 0, reading: false, timer: null };
     a.timer = setTimeout(() => {
       if (active !== a || a.timer === null) return;
-      giveUp(a, "网关没有回应：可能要升级网关（重新运行安装命令）");
+      giveUp(a, t({ en: "Gateway did not respond: gateway may need an upgrade (run the install command again)", zh: "网关没有回应：可能要升级网关（重新运行安装命令）" }));
     }, opts.replyTimeoutMs);
     active = a;
     changed();
@@ -103,9 +104,9 @@ export function createUploads(opts: {
         const item: UploadItem = { id: nextId++, name: shown, size: f.size, kind, state: "waiting", received: 0 };
         items.push(item);
         if (o.ios && o.gatewayTooOld) fail(item, o.gatewayTooOld);
-        else if (o.ios && iosFileKind(f.name).kind === "unsupported") fail(item, IOS_ONLY_APPS);
-        else if (!o.ios && k.kind === "unsupported") fail(item, `暂不支持 ${k.ext}，请提供 .apk`);
-        else if (f.size > UPLOAD_MAX_BYTES) fail(item, "文件太大：最大 2 GB");
+        else if (o.ios && iosFileKind(f.name).kind === "unsupported") fail(item, t(IOS_ONLY_APPS_MSG));
+        else if (!o.ios && k.kind === "unsupported") fail(item, t({ en: `${k.ext} is not supported, please provide a .apk file`, zh: `暂不支持 ${k.ext}，请提供 .apk` }));
+        else if (f.size > UPLOAD_MAX_BYTES) fail(item, t({ en: "File is too large: maximum 2 GB", zh: "文件太大：最大 2 GB" }));
         else files.set(item.id, f);
       }
       changed();
@@ -126,11 +127,11 @@ export function createUploads(opts: {
         return;
       }
       item.state = m.state;
-      if (m.state === "failed") fail(item, m.error ?? "未知原因");
+      if (m.state === "failed") fail(item, m.error ?? t({ en: "Unknown reason", zh: "未知原因" }));
       if (isEnded(item)) {
         files.delete(item.id);
         finishActive();
-        if (item.state === "done" && item.kind === "file") opts.onNotice(`${item.name} 已放到 下载 文件夹`);
+        if (item.state === "done" && item.kind === "file") opts.onNotice(t({ en: `Saved ${item.name} to the Download folder`, zh: `${item.name} 已放到 下载 文件夹` }));
       }
       changed();
       pump();
@@ -140,7 +141,7 @@ export function createUploads(opts: {
       let any = false;
       for (const i of items) {
         if (isEnded(i)) continue;
-        fail(i, "与网关断开");
+        fail(i, t({ en: "Disconnected from gateway", zh: "与网关断开" }));
         any = true;
       }
       finishActive();

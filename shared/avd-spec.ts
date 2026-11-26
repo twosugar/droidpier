@@ -1,3 +1,4 @@
+import type { Msg } from "./i18n.ts";
 import type { SystemImage } from "./protocol.ts";
 
 /** 一台 AVD 要的空闲空间（MB）：模拟器 32.1 第一次启动时的检查“Not enough space to create userdata partition … need 12288 MB”（2026-11-12 实测）。 */
@@ -22,26 +23,32 @@ export function defaultAvdName(modelName: string, api: string, existing: string[
  * existing 不分大小写比较（macOS 的文件系统默认不分）。
  * 原因里不写主语：网关在前面加「设备名不对：」（gateway/src/server.ts），页面上它就写在「设备 ID」输入框下面，两处读着都通。
  */
-export function avdNameError(name: string, existing: string[]): string | null {
-  if (name === "") return "请输入设备 ID";
-  if (!/^[A-Za-z0-9._-]+$/.test(name)) return "只能用英文字母、数字、点、下划线和短横线";
+export function avdNameErrorMsg(name: string, existing: string[]): Msg | null {
+  if (name === "") return { en: "Enter a device ID", zh: "请输入设备 ID" };
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) return { en: "Use only letters, digits, dots, underscores and hyphens", zh: "只能用英文字母、数字、点、下划线和短横线" };
   // 开头是 - 时命令行（emulator -avd、avdmanager）会把它当成选项
-  if (!/^[A-Za-z0-9]/.test(name)) return "要以英文字母或数字开头";
+  if (!/^[A-Za-z0-9]/.test(name)) return { en: "Start with a letter or a digit", zh: "要以英文字母或数字开头" };
   const same = existing.find((n) => n.toLowerCase() === name.toLowerCase());
-  return same ? `已有同名设备 ${same}` : null;
+  return same ? { en: `A device named ${same} already exists`, zh: `已有同名设备 ${same}` } : null;
 }
+
+/** avdNameErrorMsg 的中文，网关用（网关的文字还只有中文）。 */
+export const avdNameError = (name: string, existing: string[]): string | null => avdNameErrorMsg(name, existing)?.zh ?? null;
 
 /** 显示名的长度上限（字符）：侧栏一行放得下，再长也看不全。 */
 export const DISPLAY_NAME_MAX = 50;
 
 /** 显示名不能用时的原因；能用返回 null。它是 config.ini 里的一行，所以不能有换行等控制字符。 */
-export function displayNameError(name: string): string | null {
+export function displayNameErrorMsg(name: string): Msg | null {
   const t = name.trim();
-  if (t === "") return "请输入显示名称";
-  if (/[\u0000-\u001f\u007f]/.test(name)) return "显示名称里不能有换行等控制字符";
-  if ([...t].length > DISPLAY_NAME_MAX) return `显示名称最多 ${DISPLAY_NAME_MAX} 个字`;
+  if (t === "") return { en: "Enter a display name", zh: "请输入显示名称" };
+  if (/[\u0000-\u001f\u007f]/.test(name)) return { en: "A display name cannot contain line breaks or other control characters", zh: "显示名称里不能有换行等控制字符" };
+  if ([...t].length > DISPLAY_NAME_MAX) return { en: `A display name has at most ${DISPLAY_NAME_MAX} characters`, zh: `显示名称最多 ${DISPLAY_NAME_MAX} 个字` };
   return null;
 }
+
+/** displayNameErrorMsg 的中文，网关用。 */
+export const displayNameError = (name: string): string | null => displayNameErrorMsg(name)?.zh ?? null;
 
 /** 新设备的内存（MB）：低于 API 28 的镜像用 2048，其余 4096。 */
 export function ramMbFor(apiLevel: number): number {

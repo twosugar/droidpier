@@ -9,9 +9,10 @@ import { failText } from "../shared/fail-text";
 import { logCells } from "./log-columns";
 import { isStaleStatus } from "./status-rev";
 import { gbText, spaceCheck } from "../shared/disk-space";
-import { AVD_DISK_MB, avdNameError, createItems, defaultAvdName, displayNameError, ramMbFor } from "../shared/avd-spec";
-import { ADB_UNRESPONSIVE, OFFICIAL_ORIGIN, type DeviceCaps, type IosCatalog, type IosSimInfo, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
+import { AVD_DISK_MB, avdNameErrorMsg, createItems, defaultAvdName, displayNameErrorMsg, ramMbFor } from "../shared/avd-spec";
+import { ADB_UNRESPONSIVE_MSG, OFFICIAL_ORIGIN, type DeviceCaps, type IosCatalog, type IosSimInfo, type MumuInfo, type PhoneInfo, type Rotation } from "../shared/protocol";
 import { parseTheme, type Theme } from "../shared/theme";
+import { LANGS, parseLang, setLangSource, t, type Lang, type Msg } from "../shared/i18n";
 import { deviceFrame } from "../shared/screen";
 import { glideFrames, poseAt, REST, startPose, turnAngle, type Glide } from "./device-motion";
 import { parseZoom, stepZoom, ZOOM_STEPS } from "../shared/zoom";
@@ -43,7 +44,7 @@ type WebViewsResult = { list: Page[]; error?: string; adbStuck?: boolean };
 type ProxyResult = { ok: boolean; proxy: string | null; untrusted?: string[]; error: string | null; adbStuck: boolean };
 /** 检测网络发现的问题：代理连不上，或代理能连通但在解密 HTTPS、设备不信任它的证书（apps 是受影响的 App 包名）。 */
 type ProxyIssue = { proxy: string; kind: "dead" } | { proxy: string; kind: "untrusted"; apps: string[] };
-type Msg = { text: string; error?: boolean; adbStuck?: boolean };
+type StatusMsg = { text: string; error?: boolean; adbStuck?: boolean };
 /** 网关比页面旧时画面上方的提示（host/src/gateway-update.ts）。 */
 type GatewayBanner = { kind: "updating" | "manual"; text: string; command?: string };
 type EnvId = "emulator" | "platform-tools" | "system-image" | "avd";
@@ -131,79 +132,116 @@ const PRESS = 0.97;
 /** 不能点的控件的不透明度。 */
 const DISABLED = 0.4;
 
-const LABEL: Record<State, string> = {
-  connecting: "连接中…",
-  connected: "已连接",
-  "no-emulator": "没有运行中的模拟器",
-  "emulator-closed": "模拟器已停止",
-  "phone-closed": "手机已断开",
-  booting: "启动中…",
-  rebooting: "重启中…",
-  disconnected: "和网关断开了，正在重连…",
-  "gateway-outdated": "网关版本过旧",
-  "page-outdated": "页面版本过旧：按 ⌘⇧R 强制刷新",
-  "unsupported-browser": "不支持这个浏览器",
-  "lna-denied": "无法访问本机",
-  "lna-prompt": "等待允许访问本机",
-  "bad-origin": "来源未被允许",
-  "no-gateway": "还没连上网关",
-  refused: "网关没有接受这个浏览器的连接",
+const LABEL: Record<State, Msg> = {
+  connecting: { en: "Connecting…", zh: "连接中…" },
+  connected: { en: "Connected", zh: "已连接" },
+  "no-emulator": { en: "No emulator running", zh: "没有运行中的模拟器" },
+  "emulator-closed": { en: "Emulator stopped", zh: "模拟器已停止" },
+  "phone-closed": { en: "Phone disconnected", zh: "手机已断开" },
+  booting: { en: "Starting…", zh: "启动中…" },
+  rebooting: { en: "Restarting…", zh: "重启中…" },
+  disconnected: { en: "Disconnected from the gateway. Reconnecting…", zh: "和网关断开了，正在重连…" },
+  "gateway-outdated": { en: "Gateway is out of date", zh: "网关版本过旧" },
+  "page-outdated": { en: "Page is out of date: press ⌘⇧R to force reload", zh: "页面版本过旧：按 ⌘⇧R 强制刷新" },
+  "unsupported-browser": { en: "This browser is not supported", zh: "不支持这个浏览器" },
+  "lna-denied": { en: "Can't access this computer", zh: "无法访问本机" },
+  "lna-prompt": { en: "Waiting for permission to access this computer", zh: "等待允许访问本机" },
+  "bad-origin": { en: "Origin not allowed", zh: "来源未被允许" },
+  "no-gateway": { en: "Not connected to the gateway yet", zh: "还没连上网关" },
+  refused: { en: "The gateway refused this browser's connection", zh: "网关没有接受这个浏览器的连接" },
 };
 
 // 连不上时画面上方的说明；带命令的两种（gateway-outdated、no-gateway）命令由 host 在 upgrade 里给
-const PROBLEM: Partial<Record<State, string>> = {
-  "phone-closed": "重新插上手机后会自动恢复。",
-  "gateway-outdated": "网关版本过旧，请运行：",
-  "page-outdated": "页面版本过旧：按 ⌘⇧R 强制刷新。",
-  "unsupported-browser": "请用 Chrome 或 Edge 打开。",
-  "lna-denied": "Chrome 阻止了访问本机：请在 Chrome 的「设置 → 隐私和安全 → 网站设置」里允许本站访问本地网络，然后刷新。",
-  "lna-prompt": "Chrome 正在询问是否允许本站访问本机：请在地址栏旁的权限框里点「允许」。",
+const PROBLEM: Partial<Record<State, Msg>> = {
+  "phone-closed": { en: "Plug the phone back in and it reconnects automatically.", zh: "重新插上手机后会自动恢复。" },
+  "gateway-outdated": { en: "The gateway is out of date. Run:", zh: "网关版本过旧，请运行：" },
+  "page-outdated": { en: "The page is out of date: press ⌘⇧R to force reload.", zh: "页面版本过旧：按 ⌘⇧R 强制刷新。" },
+  "unsupported-browser": { en: "Open this page in Chrome or Edge.", zh: "请用 Chrome 或 Edge 打开。" },
+  "lna-denied": {
+    en: "Chrome blocked access to this computer: in Chrome's Settings → Privacy and security → Site settings, allow this site to access the local network, then reload.",
+    zh: "Chrome 阻止了访问本机：请在 Chrome 的「设置 → 隐私和安全 → 网站设置」里允许本站访问本地网络，然后刷新。",
+  },
+  "lna-prompt": {
+    en: "Chrome is asking whether this site may access this computer: click Allow in the permission prompt next to the address bar.",
+    zh: "Chrome 正在询问是否允许本站访问本机：请在地址栏旁的权限框里点「允许」。",
+  },
   // 网关在升级时就拒绝了，页面问不到它信任哪个来源
-  "bad-origin": "这个页面地址不在网关允许的来源里：请打开你安装网关的那个网站上的 /app/。",
+  "bad-origin": {
+    en: "This page's address is not an origin the gateway allows: open /app/ on the site you installed the gateway from.",
+    zh: "这个页面地址不在网关允许的来源里：请打开你安装网关的那个网站上的 /app/。",
+  },
   // 页面看不出装没装网关；同一条命令没装时先装、装了直接启动
-  "no-gateway": "还没连上网关",
+  "no-gateway": { en: "Not connected to the gateway yet", zh: "还没连上网关" },
   // 网关只收 Chrome / Edge 直接发起的连接（gateway/src/peer.ts）
-  refused: "网关没有接受这个浏览器的连接：请直接用 Chrome 或 Edge 打开，不要经过本机代理。正在重试…",
+  refused: {
+    en: "The gateway refused this browser's connection: open the page in Chrome or Edge directly, not through a local proxy. Retrying…",
+    zh: "网关没有接受这个浏览器的连接：请直接用 Chrome 或 Edge 打开，不要经过本机代理。正在重试…",
+  },
 };
 
 // 旧网关还会报 java、sdk、cmdline-tools，查不到时直接显示 id
-const ENV_NAME: Record<string, string> = {
-  emulator: "模拟器程序（emulator）",
-  "platform-tools": "adb (platform-tools)",
-  "system-image": "系统镜像",
-  avd: "模拟器设备",
+const ENV_NAME: Record<string, Msg> = {
+  emulator: { en: "Emulator program (emulator)", zh: "模拟器程序（emulator）" },
+  "platform-tools": { en: "adb (platform-tools)", zh: "adb (platform-tools)" },
+  "system-image": { en: "System image", zh: "系统镜像" },
+  avd: { en: "Emulator device", zh: "模拟器设备" },
 };
-const envName = (id: string) => ENV_NAME[id] ?? id;
+const envName = (id: string) => (ENV_NAME[id] ? t(ENV_NAME[id]) : id);
 // 手动安装：不用页面时在 Android Studio 里怎么装（Settings → Languages & Frameworks → Android SDK 就是 SDK Manager），以及装到哪里
 const manualHint = (m: Missing, env: Env): string | null => {
-  if (m.id === "emulator") return `在 Android Studio 的 SDK Manager → SDK Tools 里勾选 Android Emulator，点 Apply。装在 ${env.sdkRoot}/emulator`;
-  if (m.id === "platform-tools") return `在 Android Studio 的 SDK Manager → SDK Tools 里勾选 Android SDK Platform-Tools，点 Apply。装在 ${env.sdkRoot}/platform-tools`;
-  if (m.id === "system-image") {
-    const pkg = m.pkg ?? "需要的系统镜像";
-    return `在 Android Studio 的 SDK Manager → SDK Platforms 里勾选 Show Package Details，再勾选 ${pkg}，点 Apply。装在 ${env.sdkRoot}/${m.pkg ? m.pkg.split(";").join("/") : "system-images"}`;
+  if (m.id === "emulator") {
+    return t({
+      en: `In Android Studio's SDK Manager → SDK Tools, check Android Emulator and click Apply. It installs to ${env.sdkRoot}/emulator`,
+      zh: `在 Android Studio 的 SDK Manager → SDK Tools 里勾选 Android Emulator，点 Apply。装在 ${env.sdkRoot}/emulator`,
+    });
   }
-  if (m.id === "avd") return `在 Android Studio 的 Device Manager 里点 +（Create Virtual Device），选一个手机机型和已装的系统镜像。设备放在 ${env.avdHome}`;
+  if (m.id === "platform-tools") {
+    return t({
+      en: `In Android Studio's SDK Manager → SDK Tools, check Android SDK Platform-Tools and click Apply. It installs to ${env.sdkRoot}/platform-tools`,
+      zh: `在 Android Studio 的 SDK Manager → SDK Tools 里勾选 Android SDK Platform-Tools，点 Apply。装在 ${env.sdkRoot}/platform-tools`,
+    });
+  }
+  if (m.id === "system-image") {
+    const pkg = m.pkg ?? t({ en: "the system image you need", zh: "需要的系统镜像" });
+    const dir = `${env.sdkRoot}/${m.pkg ? m.pkg.split(";").join("/") : "system-images"}`;
+    return t({
+      en: `In Android Studio's SDK Manager → SDK Platforms, check Show Package Details, then check ${pkg} and click Apply. It installs to ${dir}`,
+      zh: `在 Android Studio 的 SDK Manager → SDK Platforms 里勾选 Show Package Details，再勾选 ${pkg}，点 Apply。装在 ${dir}`,
+    });
+  }
+  if (m.id === "avd") {
+    return t({
+      en: `In Android Studio's Device Manager, click + (Create Virtual Device) and pick a phone model and an installed system image. Devices are stored in ${env.avdHome}`,
+      zh: `在 Android Studio 的 Device Manager 里点 +（Create Virtual Device），选一个手机机型和已装的系统镜像。设备放在 ${env.avdHome}`,
+    });
+  }
   return null;
 };
-const PHASE: Record<InstallProgress["phase"], string> = {
-  download: "下载中…",
-  unpack: "解压中…",
-  license: "等你同意许可证",
-  install: "安装中…",
-  done: "完成",
-  failed: "失败",
+const PHASE: Record<InstallProgress["phase"], Msg> = {
+  download: { en: "Downloading…", zh: "下载中…" },
+  unpack: { en: "Unpacking…", zh: "解压中…" },
+  license: { en: "Waiting for you to accept the license", zh: "等你同意许可证" },
+  install: { en: "Installing…", zh: "安装中…" },
+  done: { en: "Done", zh: "完成" },
+  failed: { en: "Failed", zh: "失败" },
 };
 const uploadText = (u: Upload) => {
-  if (u.state === "waiting") return "等待中…";
-  if (u.state === "uploading") return `上传 ${u.size ? Math.floor((u.received / u.size) * 100) : 100}%`;
-  if (u.state === "installing") return "安装中…";
-  if (u.state === "pushing") return "放进「下载」文件夹…";
-  if (u.state === "done") return u.kind === "file" ? "已放进「下载」文件夹" : "已安装";
-  return failText("失败", u.error);
+  if (u.state === "waiting") return t({ en: "Waiting…", zh: "等待中…" });
+  if (u.state === "uploading") {
+    const pct = u.size ? Math.floor((u.received / u.size) * 100) : 100;
+    return t({ en: `Uploading ${pct}%`, zh: `上传 ${pct}%` });
+  }
+  if (u.state === "installing") return t({ en: "Installing…", zh: "安装中…" });
+  if (u.state === "pushing") return t({ en: "Moving to the Download folder…", zh: "放进「下载」文件夹…" });
+  if (u.state === "done") return u.kind === "file" ? t({ en: "Saved to the Download folder", zh: "已放进「下载」文件夹" }) : t({ en: "Installed", zh: "已安装" });
+  return failText(t({ en: "Failed", zh: "失败" }), u.error);
 };
 const uploadEnded = (u: Upload) => u.state === "done" || u.state === "failed";
 const isActive = (p: InstallProgress) => p.phase !== "done" && p.phase !== "failed";
-const sizeText = (mb: number) => (mb >= 1024 ? `约 ${(mb / 1024).toFixed(1)} GB` : `约 ${mb} MB`);
+const sizeText = (mb: number) => {
+  const size = mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+  return t({ en: `about ${size}`, zh: `约 ${size}` });
+};
 
 // API 级别对应的 Android 版本号（developer.android.com 的版本表）
 const ANDROID: Record<number, string> = {
@@ -252,7 +290,10 @@ const ROW_X = SPACE.item + 1;
 const ZOOM_MS = 260;
 const TURN_MS = 340;
 const GLIDE_EASE = [0.4, 0, 0.2, 1] as const;
-const H5_EMPTY = "没有可调试的 H5 页面。只有 debug 包或开启了 WebView 调试的 App 才能调试；先在 App 里打开一个 H5 页面。";
+const H5_EMPTY: Msg = {
+  en: "No H5 pages to debug. Only debug builds or apps with WebView debugging turned on can be debugged; open an H5 page in the app first.",
+  zh: "没有可调试的 H5 页面。只有 debug 包或开启了 WebView 调试的 App 才能调试；先在 App 里打开一个 H5 页面。",
+};
 // 下拉框里没有标题的页面，地址大约放得下的字符数
 const URL_CHARS = 28;
 const pageKey = (p: Page) => `${p.socket}/${p.id}`;
@@ -260,6 +301,15 @@ const call = <T,>(name: string, args: object) => host.call(name, args) as Promis
 
 /** 设备在页面上叫什么：有显示名用显示名，没有用 id。 */
 const avdLabel = (a: Avd) => a.displayName ?? a.name;
+const CLOSE: Msg = { en: "Close", zh: "关闭" };
+const CANCEL: Msg = { en: "Cancel", zh: "取消" };
+const H5_DEBUG: Msg = { en: "H5 debugging", zh: "H5 调试" };
+const LOGS: Msg = { en: "Logs", zh: "日志" };
+const MORE: Msg = { en: "More actions", zh: "更多操作" };
+/** 读屏念的一行：名字和状态，中文用逗号隔开。 */
+const listLabel = (...parts: string[]) => parts.join(t({ en: ", ", zh: "，" }));
+/** 没有连着设备时的说法（标题、提示、按钮为什么不能点）。 */
+const NO_DEVICE: Msg = { en: "No device connected", zh: "没有连接设备" };
 const isBooting = (b: Boot | undefined) => !!b && (b.progress === "spawning" || b.progress === "booting");
 
 // ---- ui 层：每种控件只有这一份实现，尺寸和颜色都从上面的尺度和 token 来；页面只组合它们，不再给控件写样式 ----
@@ -312,7 +362,7 @@ function Icon(props: { name: IconName; size: number; tint: string }) {
 
 /** 不能点的控件为什么不能点：悬停提示给这句，读屏的名字后面也带上（nsh 的 Button 不收 accessibilityHint）。 */
 const whyTip = (disabled: boolean | undefined, why: string | undefined) => (disabled && why ? <Tip label={why} /> : undefined);
-const withWhy = (label: string, disabled: boolean | undefined, why: string | undefined) => (disabled && why ? `${label}（${why}）` : label);
+const withWhy = (label: string, disabled: boolean | undefined, why: string | undefined) => (disabled && why ? t({ en: `${label} (${why})`, zh: `${label}（${why}）` }) : label);
 /** 菜单开着时触发器是按下的样子：nsh 的 Button 不收 expandedStyle，用 aria-expanded: 类（颜色是主题 token）。 */
 const EXPANDED = "aria-expanded:bg-accent";
 
@@ -349,9 +399,12 @@ const iconSquare = (size: "sm" | "md" = "md") =>
 function IconButton(props: {
   icon: IconName; label: string; onPress?: () => void; disabled?: boolean; why?: string; tip?: string; variant?: "ghost" | "toolbar"; size?: "sm" | "md";
 }) {
-  const tipLabel = () => (props.disabled && props.why ? `${props.label}：${props.why}` : props.tip ? `${props.label}（${props.tip}）` : props.label);
+  const tipLabel = () =>
+    props.disabled && props.why
+      ? t({ en: `${props.label}: ${props.why}`, zh: `${props.label}：${props.why}` })
+      : props.tip ? t({ en: `${props.label} (${props.tip})`, zh: `${props.label}（${props.tip}）` }) : props.label;
   return (
-    <Button onPress={props.onPress} disabled={props.disabled} accessibilityLabel={withWhy(props.tip ? `${props.label}：${props.tip}` : props.label, props.disabled, props.why)}
+    <Button onPress={props.onPress} disabled={props.disabled} accessibilityLabel={withWhy(props.tip ? t({ en: `${props.label}: ${props.tip}`, zh: `${props.label}：${props.tip}` }) : props.label, props.disabled, props.why)}
       tooltip={<Tip label={tipLabel()} />} class={EXPANDED}
       hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ borderColor: token("ring") }} disabledStyle={{ opacity: DISABLED }} activeStyle={pressed()}
       style={{ ...iconSquare(props.size), ...ease() }}>
@@ -409,7 +462,7 @@ function Item(props: { label: string; onSelect: () => void; disabled?: boolean; 
       style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, height: CONTROL.sm, paddingHorizontal: SPACE.item, borderRadius: token("radius-sm"), ...ease() }}>
       <If when={props.icon}>{(i) => <Icon name={i()} size={ICON.md} tint={token("muted-foreground")} />}</If>
       <Text style={{ ...TYPE.body, flex: 1, color: props.danger ? token("destructive") : token("foreground") }}>{props.label}</Text>
-      <If when={props.trail}>{(t) => <Text style={{ ...TYPE.caption, color: token("muted-foreground") }}>{t()}</Text>}</If>
+      <If when={props.trail}>{(trail) => <Text style={{ ...TYPE.caption, color: token("muted-foreground") }}>{trail()}</Text>}</If>
     </MenuItem>
   );
 }
@@ -420,8 +473,9 @@ function MenuLine() {
 }
 
 /** 菜单的弹层；origin 是离触发它的地方最近的角，弹出时从那里长出来。 */
+// 英文的菜单项比中文长，168 时「Install APK or send files…」会折行
 const menuPopup = (origin: string) => ({
-  minWidth: 168, padding: SPACE.part, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("popover"),
+  minWidth: 220, padding: SPACE.part, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("popover"),
   boxShadow: popupShadow(), transformOrigin: origin, ...ease(),
 });
 
@@ -591,25 +645,45 @@ function GroupLabel(props: { children: string; outsideList?: boolean; open?: boo
 /** 检测网络发现问题时弹框的说明：发生了什么。 */
 function proxyIssueText(issue: ProxyIssue | null): string {
   if (issue === null) return "";
-  if (issue.kind === "dead") return `设备设置了全局 HTTP 代理 ${issue.proxy}，但这个代理连不上，设备里的 App 都上不了网。`;
-  const apps = issue.apps.map((a) => (a === "?" ? "已退出的 App" : a)).join("、");
-  return `设备经代理 ${issue.proxy} 上网。最近 5 分钟 ${apps} 的 HTTPS 请求因为证书不受信任而失败：抓包工具在解密这些请求，设备里却没有它的根证书。`;
+  if (issue.kind === "dead") {
+    return t({
+      en: `The device has a global HTTP proxy ${issue.proxy}, but the proxy can't be reached, so no app on the device can get online.`,
+      zh: `设备设置了全局 HTTP 代理 ${issue.proxy}，但这个代理连不上，设备里的 App 都上不了网。`,
+    });
+  }
+  const apps = issue.apps.map((a) => (a === "?" ? t({ en: "an app that has exited", zh: "已退出的 App" }) : a)).join(t({ en: ", ", zh: "、" }));
+  return t({
+    en: `The device goes online through the proxy ${issue.proxy}. In the last 5 minutes, HTTPS requests from ${apps} failed because the certificate is not trusted: a capture tool is decrypting these requests, but the device doesn't have its root certificate.`,
+    zh: `设备经代理 ${issue.proxy} 上网。最近 5 分钟 ${apps} 的 HTTPS 请求因为证书不受信任而失败：抓包工具在解密这些请求，设备里却没有它的根证书。`,
+  });
 }
 
 /** 同上：常见原因和两条出路。 */
 function proxyIssueHint(issue: ProxyIssue | null): string {
-  if (issue?.kind === "untrusted") return "不抓包：清除代理，再重新打开这些 App。要抓包：取消，在抓包工具里给设备重新安装证书（如 Proxyman 的 Install certificate）；模拟器每次重启后证书会丢，要重装。";
-  return "常见原因是抓包工具（如 Proxyman、Charles）已经关掉，或者电脑换了 IP，设备上的代理设置却没有恢复。清除后设备直接上网，已经打开的 App 要重新打开才生效；还要抓包时，在抓包工具里重新配置一次。";
+  if (issue?.kind === "untrusted") {
+    return t({
+      en: "Not capturing: clear the proxy, then reopen these apps. Capturing: cancel, and reinstall the certificate on the device from the capture tool (such as Proxyman's Install certificate); an emulator loses the certificate on every restart and needs it again.",
+      zh: "不抓包：清除代理，再重新打开这些 App。要抓包：取消，在抓包工具里给设备重新安装证书（如 Proxyman 的 Install certificate）；模拟器每次重启后证书会丢，要重装。",
+    });
+  }
+  return t({
+    en: "Usually the capture tool (such as Proxyman or Charles) has been closed, or the computer's IP changed, but the proxy setting on the device was not restored. After clearing, the device goes online directly; apps already open need to be reopened. To keep capturing, set it up again in the capture tool.",
+    zh: "常见原因是抓包工具（如 Proxyman、Charles）已经关掉，或者电脑换了 IP，设备上的代理设置却没有恢复。清除后设备直接上网，已经打开的 App 要重新打开才生效；还要抓包时，在抓包工具里重新配置一次。",
+  });
 }
 
 /** 重启命令的名字（菜单项、adb 卡住时的按钮、确认框标题都用它）。 */
-const rebootLabel = (phone: boolean) => (phone ? "重启手机" : "重启模拟器");
+/** 快捷键提示：键盘要先点过画面才归它。 */
+const keyTip = (keys: string) => t({ en: `Click the screen, then press ${keys}`, zh: `点过屏幕后按 ${keys}` });
+
+/** 重启命令的名字（菜单项、adb 卡住时的按钮、确认框标题都用它）。 */
+const rebootLabel = (phone: boolean) => (phone ? t({ en: "Restart phone", zh: "重启手机" }) : t({ en: "Restart emulator", zh: "重启模拟器" }));
 
 /** adb 没有响应时的说明和就地的重启按钮（按钮先弹确认框）；手机上说手机。 */
 function AdbStuck(props: { onReboot: () => void; phone?: boolean }) {
   return (
     <View role="alert" style={{ gap: SPACE.item }}>
-      <Text style={{ color: token("destructive"), ...TYPE.caption }}>{props.phone ? "手机里的 adb 没有响应：可以重新插拔手机，或点「重启手机」。" : ADB_UNRESPONSIVE}</Text>
+      <Text style={{ color: token("destructive"), ...TYPE.caption }}>{props.phone ? t({ en: "adb on the phone is not responding: plug the phone in again, or click Restart phone.", zh: "手机里的 adb 没有响应：可以重新插拔手机，或点「重启手机」。" }) : t(ADB_UNRESPONSIVE_MSG)}</Text>
       <View style={{ flexDirection: "row" }}>
         <Btn label={`${rebootLabel(!!props.phone)}…`} onPress={props.onReboot} />
       </View>
@@ -618,7 +692,7 @@ function AdbStuck(props: { onReboot: () => void; phone?: boolean }) {
 }
 
 /** 一行结果或报错；adb 无响应时换成带重启按钮的说明。 */
-function MsgLine(props: { msg: Msg; onReboot: () => void; phone?: boolean }) {
+function MsgLine(props: { msg: StatusMsg; onReboot: () => void; phone?: boolean }) {
   return (
     <If when={!props.msg.adbStuck} else={<AdbStuck onReboot={props.onReboot} phone={props.phone} />}>
       <Text role={props.msg.error ? "alert" : "text"} style={{ color: props.msg.error ? token("destructive") : token("success"), ...TYPE.caption }}>{props.msg.text}</Text>
@@ -633,13 +707,13 @@ function MsgLine(props: { msg: Msg; onReboot: () => void; phone?: boolean }) {
 const SELECT_ITEM = "group rounded-(--radius-sm) focus:bg-accent";
 const SELECT_ITEM_TEXT = "text-foreground group-selected:font-semibold";
 
-const LOG_LEVELS: Array<{ value: LogLevel; title: string }> = [
-  { value: "V", title: "全部级别" },
-  { value: "D", title: "调试及以上" },
-  { value: "I", title: "信息及以上" },
-  { value: "W", title: "警告及以上" },
-  { value: "E", title: "错误及以上" },
-  { value: "F", title: "只看严重" },
+const LOG_LEVELS: Array<{ value: LogLevel; title: Msg }> = [
+  { value: "V", title: { en: "All levels", zh: "全部级别" } },
+  { value: "D", title: { en: "Debug and above", zh: "调试及以上" } },
+  { value: "I", title: { en: "Info and above", zh: "信息及以上" } },
+  { value: "W", title: { en: "Warning and above", zh: "警告及以上" } },
+  { value: "E", title: { en: "Error and above", zh: "错误及以上" } },
+  { value: "F", title: { en: "Fatal only", zh: "只看严重" } },
 ];
 const ALL_APPS = "\u0000all";
 /** 日志级别的颜色角色（ui/log-store.ts 的 levelColor）对应的主题 token。 */
@@ -651,7 +725,7 @@ const LOG_ROW_H = TYPE.code.lineHeight;
 function LogRowView(props: { row: () => LogRow }) {
   return (
     <If when={!("skipped" in props.row())} else={
-      <Text style={{ ...TYPE.code, height: LOG_ROW_H, paddingHorizontal: SPACE.inset, color: token("muted-foreground"), fontStyle: "italic", numberOfLines: 1 }}>{`省略了 ${(props.row() as { skipped: number }).skipped} 行（页面跟不上）`}</Text>
+      <Text style={{ ...TYPE.code, height: LOG_ROW_H, paddingHorizontal: SPACE.inset, color: token("muted-foreground"), fontStyle: "italic", numberOfLines: 1 }}>{(() => { const n = (props.row() as { skipped: number }).skipped; return t({ en: `Skipped ${n} ${n === 1 ? "line" : "lines"} (the page fell behind)`, zh: `省略了 ${n} 行（页面跟不上）` }); })()}</Text>
     }>
       {(() => {
         const l = () => props.row() as LogLine;
@@ -686,7 +760,7 @@ function LogPanel(props: { device: () => string; live: () => boolean; onClose: (
   let list: ListRef | undefined;
   const filter = (): LogFilter => ({ pkg: pkg(), level: level(), text: text() });
   const filtered = () => pkg() !== null || level() !== "V" || text().trim() !== "";
-  const sent = (r: unknown) => sendError.set((r as { ok?: boolean } | null)?.ok === false ? "没有连上网关，日志没有更新。网关重新连上后会自动再打开。" : null);
+  const sent = (r: unknown) => sendError.set((r as { ok?: boolean } | null)?.ok === false ? t({ en: "Not connected to the gateway, so the log didn't update. It reopens once the gateway reconnects.", zh: "没有连上网关，日志没有更新。网关重新连上后会自动再打开。" }) : null);
 
   props.sink((b) => {
     if (paused()) held.set(applyBatch(b.reset ? [] : held(), b));
@@ -729,21 +803,26 @@ function LogPanel(props: { device: () => string; live: () => boolean; onClose: (
   });
 
   const appItems = () => [
-    { value: ALL_APPS, title: "全部 App" },
-    ...[...new Set([...(apps().foreground ? [apps().foreground!] : []), ...apps().apps])].map((a) => ({ value: a, title: a === apps().foreground ? `${a}（前台）` : a })),
+    { value: ALL_APPS, title: t({ en: "All apps", zh: "全部 App" }) },
+    ...[...new Set([...(apps().foreground ? [apps().foreground!] : []), ...apps().apps])].map((a) => ({
+      value: a,
+      title: a === apps().foreground ? t({ en: `${a} (foreground)`, zh: `${a}（前台）` }) : a,
+    })),
   ];
   return (
-    <View role="region" accessibilityLabel="日志" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+    <View role="region" accessibilityLabel={t({ en: "Logs", zh: "日志" })} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
       {/* 过滤条件放不下时在左边折行，右边的按钮一直在第一行 */}
       <View role="toolbar" style={{ ...panelBar(), alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", gap: SPACE.item }}>
-          <AppSelect items={appItems()} value={pkg() ?? ALL_APPS} label={pkg() ?? "全部 App"} accessibilityLabel="按 App 过滤" search="搜包名" empty="没有匹配的 App"
+          <AppSelect items={appItems()} value={pkg() ?? ALL_APPS} label={pkg() ?? t({ en: "All apps", zh: "全部 App" })} accessibilityLabel={t({ en: "Filter by app", zh: "按 App 过滤" })}
+            search={t({ en: "Search package name", zh: "搜包名" })} empty={t({ en: "No matching apps", zh: "没有匹配的 App" })}
             style={{ width: 190, flexShrink: 1, minWidth: 120 }} onOpen={() => void loadApps()}
             onChange={(value) => { pkg.set(value === ALL_APPS ? null : value); refilter(); }} />
-          <AppSelect items={LOG_LEVELS} value={level()} label={LOG_LEVELS.find((l) => l.value === level())!.title} accessibilityLabel="最低级别"
+          <AppSelect items={LOG_LEVELS.map((l) => ({ value: l.value, title: t(l.title) }))} value={level()} label={t(LOG_LEVELS.find((l) => l.value === level())!.title)}
+            accessibilityLabel={t({ en: "Minimum level", zh: "最低级别" })}
             style={{ width: 120 }} onChange={(value) => { level.set(value as LogLevel); refilter(); }} />
           <FieldBox icon="search" style={{ flex: 1, minWidth: 140 }}>
-            <Input value={text()} placeholder="搜 tag 或内容" accessibilityLabel="搜 tag 或内容" autoCapitalize="none" autoCorrect={false}
+            <Input value={text()} placeholder={t({ en: "Search tag or message", zh: "搜 tag 或内容" })} accessibilityLabel={t({ en: "Search tag or message", zh: "搜 tag 或内容" })} autoCapitalize="none" autoCorrect={false}
               onChange={({ value }) => {
                 text.set(value);
                 clearTimeout(textTimer);
@@ -752,24 +831,25 @@ function LogPanel(props: { device: () => string; live: () => boolean; onClose: (
               style={fieldText()} />
           </FieldBox>
         </View>
-        <ToolToggle variant="ghost" icon="pause" label="暂停" tip={paused() ? "暂停中，再点一下继续" : "暂停"} on={paused()} onChange={() => {
+        <ToolToggle variant="ghost" icon="pause" label={t({ en: "Pause", zh: "暂停" })} tip={paused() ? t({ en: "Paused. Click again to resume", zh: "暂停中，再点一下继续" }) : t({ en: "Pause", zh: "暂停" })} on={paused()} onChange={() => {
           if (paused()) {
             rows.set(applyBatch(rows(), { lines: held().filter((r): r is LogLine => !("skipped" in r)), reset: false, dropped: 0 }));
             held.set([]);
           }
           paused.set(!paused());
         }} />
-        <IconButton icon="trash" label="清空" onPress={() => { rows.set([]); held.set([]); }} />
-        <ToolToggle variant="ghost" icon="toEnd" label="跟随最新" tip="跟随最新：新日志来了自动滚到底" on={follow()} onChange={() => {
+        <IconButton icon="trash" label={t({ en: "Clear", zh: "清空" })} onPress={() => { rows.set([]); held.set([]); }} />
+        <ToolToggle variant="ghost" icon="toEnd" label={t({ en: "Follow latest", zh: "跟随最新" })}
+          tip={t({ en: "Follow latest: scroll to the bottom when new logs arrive", zh: "跟随最新：新日志来了自动滚到底" })} on={follow()} onChange={() => {
           follow.set(!follow());
           if (follow()) list?.scrollToEnd({ animated: false });
         }} />
-        <IconButton icon="close" label="关闭日志" onPress={props.onClose} />
+        <IconButton icon="close" label={t({ en: "Close logs", zh: "关闭日志" })} onPress={props.onClose} />
       </View>
       <If when={sendError() || (!props.live() && rows().length > 0)}>
         <View style={panelBar()}>
           <Text role={sendError() ? "alert" : "summary"} style={{ flex: 1, color: sendError() ? token("destructive") : token("muted-foreground"), ...TYPE.caption }}>
-            {sendError() ?? "设备已断开，下面是断开前的日志。"}
+            {sendError() ?? t({ en: "Device disconnected. These are the logs from before it disconnected.", zh: "设备已断开，下面是断开前的日志。" })}
           </Text>
         </View>
       </If>
@@ -784,7 +864,7 @@ function LogPanel(props: { device: () => string; live: () => boolean; onClose: (
           <View style={{ padding: SPACE.inset, gap: SPACE.item, alignItems: "flex-start" }}>
             <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{logEmptyText({ live: props.live(), paused: paused(), filtered: filtered() })}</Text>
             <If when={props.live() && !paused() && filtered()}>
-              <Btn label="清除过滤" onPress={clearFilter} />
+              <Btn label={t({ en: "Clear filters", zh: "清除过滤" })} onPress={clearFilter} />
             </If>
           </View>
         }>
@@ -798,7 +878,7 @@ function LogPanel(props: { device: () => string; live: () => boolean; onClose: (
  * 只看前台页面所在的 App；还没在审查时自动审查它的前台页面，下拉框切到同一 App 的其他页面。
  * onInspect：控制台已在页面里打开。 */
 function H5Console(props: {
-  pages: () => Page[] | null; listError: () => Msg | null; refresh: () => void; inspected: () => Inspected | null; onReboot: () => void;
+  pages: () => Page[] | null; listError: () => StatusMsg | null; refresh: () => void; inspected: () => Inspected | null; onReboot: () => void;
   onInspect: (key: string, title: string) => void; onClose: () => void; onCopy: (url: string) => void;
   /** DevTools 的选择元素模式开着，画面上的鼠标在 WebView 里高亮、选中。 */
   picking: () => boolean;
@@ -814,8 +894,8 @@ function H5Console(props: {
   const draft = signal<AddressDraft>(null);
   const navigating = signal(false);
   const inspecting = signal(false);
-  const result = signal<Msg | null>(null);
-  const inspectMsg = signal<Msg | null>(null);
+  const result = signal<StatusMsg | null>(null);
+  const inspectMsg = signal<StatusMsg | null>(null);
   effect(() => {
     const list = pages();
     if (list && selected() && !list.some((p) => pageKey(p) === selected())) selected.set(null);
@@ -871,8 +951,13 @@ function H5Console(props: {
       (r: NavigateResult) => {
         if (r.ok) draft.set(null);
         result.set(r.ok
-          ? { text: `已打开 ${r.title || "页面"} · ${r.bridge ? "JSBridge 可用" : "没有 JSBridge"}` }
-          : { text: r.error ?? "跳转失败", error: true, adbStuck: r.adbStuck });
+          ? {
+            text: t({
+              en: `Opened ${r.title || "page"} · ${r.bridge ? "JSBridge available" : "no JSBridge"}`,
+              zh: `已打开 ${r.title || "页面"} · ${r.bridge ? "JSBridge 可用" : "没有 JSBridge"}`,
+            }),
+          }
+          : { text: r.error ?? t({ en: "Navigation failed", zh: "跳转失败" }), error: true, adbStuck: r.adbStuck });
       },
       (e: Error) => result.set({ text: e.message, error: true }),
     ).finally(() => {
@@ -889,7 +974,7 @@ function H5Console(props: {
   });
 
   // 标题只有空白（网页的 <title> 里常带换行）时也用地址
-  const pageTitle = (p: Page) => `${visibleTitle(p.title) || middleEllipsis(p.url, URL_CHARS)}${p.visible ? "" : "（后台）"}`;
+  const pageTitle = (p: Page) => `${visibleTitle(p.title) || middleEllipsis(p.url, URL_CHARS)}${p.visible ? "" : t({ en: " (background)", zh: "（后台）" })}`;
   const items = () => appPages().map((p) => ({ value: pageKey(p), title: pageTitle(p) }));
   // 下拉框里悬停到哪个页面，就让网关在设备画面上把它整个高亮（像 Safari「开发」菜单）；移开时关掉上一个
   let lit: { key: string; socket: string; id: string } | null = null;
@@ -904,38 +989,40 @@ function H5Console(props: {
   cleanup(() => indicate(null));
   // DevTools 还没打开时盖在占位区上的说明；打开被取消、失败了（原因在上面的提示条里）时给下一步
   const placeholder = () => {
-    if (pages() === null) return "正在读取 H5 页面…";
-    if (appPages().length === 0) return H5_EMPTY;
-    return inspecting() ? "正在打开 DevTools…" : "从上面的下拉框选一个页面开始调试。";
+    if (pages() === null) return t({ en: "Reading H5 pages…", zh: "正在读取 H5 页面…" });
+    if (appPages().length === 0) return t(H5_EMPTY);
+    return inspecting() ? t({ en: "Opening DevTools…", zh: "正在打开 DevTools…" }) : t({ en: "Pick a page from the menu above to start debugging.", zh: "从上面的下拉框选一个页面开始调试。" });
   };
 
   return (
-    <View role="region" accessibilityLabel="H5 调试" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+    <View role="region" accessibilityLabel={t({ en: "H5 debugging", zh: "H5 调试" })} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
       {/* 不折行：窄的时候下拉框和地址栏先缩，两个按钮一直在同一行 */}
       <View role="toolbar" style={panelBar()}>
-        <AppSelect items={items()} value={activeKey() ?? undefined} label={activePage() ? pageTitle(activePage()!) : "没有页面"} muted={!activePage()}
-          accessibilityLabel="调试页面" disabled={items().length === 0} style={{ width: 160, flexShrink: 1, minWidth: 96 }}
+        <AppSelect items={items()} value={activeKey() ?? undefined} label={activePage() ? pageTitle(activePage()!) : t({ en: "No page", zh: "没有页面" })} muted={!activePage()}
+          accessibilityLabel={t({ en: "Page to debug", zh: "调试页面" })} disabled={items().length === 0} style={{ width: 160, flexShrink: 1, minWidth: 96 }}
           onChange={(value) => {
             const p = appPages().find((x) => pageKey(x) === value);
             if (p) inspect(p);
           }}
           onHover={indicate} />
         {/* 当前页面的地址：改了按回车跳转（localhost 自动 adb reverse），Escape 放弃修改 */}
-        <FieldBox icon="link" label="页面地址" focused={addressFocused()} style={{ flex: 1, minWidth: 96, opacity: navigating() ? 0.6 : 1 }}
-          trailing={<IconButton icon="copy" label="复制地址" size="sm" disabled={!currentUrl()} why="还没有页面地址" onPress={() => props.onCopy(currentUrl()!)} />}>
+        <FieldBox icon="link" label={t({ en: "Page address", zh: "页面地址" })} focused={addressFocused()} style={{ flex: 1, minWidth: 96, opacity: navigating() ? 0.6 : 1 }}
+          trailing={<IconButton icon="copy" label={t({ en: "Copy address", zh: "复制地址" })} size="sm" disabled={!currentUrl()} why={t({ en: "No page address yet", zh: "还没有页面地址" })} onPress={() => props.onCopy(currentUrl()!)} />}>
           <Input value={addressShown(draft(), currentUrl())} onChange={({ value }) => draft.set(addressEdit(currentUrl(), value))} onSubmit={navigate}
             submitBehavior="submit" readonly={!activePage() || navigating() || !props.canNavigate()}
             onFocus={() => addressFocused.set(true)} onBlur={() => addressFocused.set(false)}
-            placeholder="localhost:5173/path" accessibilityLabel="页面地址，改了按回车跳转" autoCapitalize="none" autoCorrect={false}
+            placeholder="localhost:5173/path" accessibilityLabel={t({ en: "Page address. Edit and press Return to go", zh: "页面地址，改了按回车跳转" })} autoCapitalize="none" autoCorrect={false}
             style={fieldText(true)} />
         </FieldBox>
-        <IconButton icon="rotate" label="重新加载 DevTools" disabled={!props.inspected()} why="还没有打开 DevTools" onPress={() => host.call("emu.devtoolsReload", {})} />
-        <IconButton icon="close" label="关闭 H5 调试" onPress={props.onClose} />
+        <IconButton icon="rotate" label={t({ en: "Reload DevTools", zh: "重新加载 DevTools" })} disabled={!props.inspected()} why={t({ en: "DevTools isn't open yet", zh: "还没有打开 DevTools" })} onPress={() => host.call("emu.devtoolsReload", {})} />
+        <IconButton icon="close" label={t({ en: "Close H5 debugging", zh: "关闭 H5 调试" })} onPress={props.onClose} />
       </View>
       <If when={inspectMsg() || listError() || result() || props.picking()}>
         <View style={{ ...panelBar(), flexDirection: "column", alignItems: "stretch", gap: SPACE.part }}>
           <If when={props.picking()}>
-            <Text role="summary" style={{ color: token("foreground"), ...TYPE.caption }}>选择元素：在画面上移动鼠标高亮，点一下选中；点在网页以外的地方不起作用</Text>
+            <Text role="summary" style={{ color: token("foreground"), ...TYPE.caption }}>
+              {t({ en: "Select element: move the mouse over the screen to highlight, click to select; clicks outside the web page do nothing", zh: "选择元素：在画面上移动鼠标高亮，点一下选中；点在网页以外的地方不起作用" })}
+            </Text>
           </If>
           <If when={inspectMsg()}>
             {(m) => (
@@ -964,23 +1051,25 @@ function H5Console(props: {
 function ZoomControl(props: { zoom: number; onZoom: (z: number) => void }) {
   const percent = () => `${Math.round(props.zoom * 100)}%`;
   return (
-    <ToolGroup label="画面缩放">
-      <IconButton icon="minus" label="缩小" variant="toolbar" disabled={props.zoom === ZOOM_STEPS[0]} why="已经是最小" onPress={() => props.onZoom(stepZoom(props.zoom, -1))} />
+    <ToolGroup label={t({ en: "Zoom", zh: "画面缩放" })}>
+      <IconButton icon="minus" label={t({ en: "Zoom out", zh: "缩小" })} variant="toolbar" disabled={props.zoom === ZOOM_STEPS[0]} why={t({ en: "Already at the smallest", zh: "已经是最小" })} onPress={() => props.onZoom(stepZoom(props.zoom, -1))} />
       {/* 46 放得下最宽的“200%”，比例变了组的宽度不跳 */}
-      <Button onPress={() => props.onZoom(1)} accessibilityLabel={`缩放 ${percent()}，适应窗口`} tooltip={<Tip label="适应窗口" />}
+      <Button onPress={() => props.onZoom(1)} accessibilityLabel={t({ en: `Zoom ${percent()}, fit to window`, zh: `缩放 ${percent()}，适应窗口` })} tooltip={<Tip label={t({ en: "Fit to window", zh: "适应窗口" })} />}
         hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ borderColor: token("ring") }} activeStyle={pressed()} style={{ ...iconSquare(), minWidth: 46, paddingHorizontal: SPACE.part, ...ease() }}>
         <Text style={{ color: token("toolbar-foreground"), ...TYPE.caption }}>{percent()}</Text>
       </Button>
-      <IconButton icon="plus" label="放大" variant="toolbar" disabled={props.zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]} why="已经是最大" onPress={() => props.onZoom(stepZoom(props.zoom, 1))} />
+      <IconButton icon="plus" label={t({ en: "Zoom in", zh: "放大" })} variant="toolbar" disabled={props.zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]} why={t({ en: "Already at the largest", zh: "已经是最大" })} onPress={() => props.onZoom(stepZoom(props.zoom, 1))} />
     </ToolGroup>
   );
 }
 
-const THEME_OPTIONS: { theme: Theme; icon: IconName; label: string }[] = [
-  { theme: "system", icon: "monitor", label: "跟随系统" },
-  { theme: "light", icon: "sun", label: "浅色" },
-  { theme: "dark", icon: "moon", label: "深色" },
+const THEME_OPTIONS: { theme: Theme; icon: IconName; label: Msg }[] = [
+  { theme: "system", icon: "monitor", label: { en: "System", zh: "跟随系统" } },
+  { theme: "light", icon: "sun", label: { en: "Light", zh: "浅色" } },
+  { theme: "dark", icon: "moon", label: { en: "Dark", zh: "深色" } },
 ];
+/** 语言选项：每种语言用它自己的写法，切错了也认得回来。 */
+const LANG_LABEL: Record<Lang, string> = { en: "English", zh: "中文" };
 
 /**
  * 页面外观三选一（跟随系统、浅色、深色）的分段控件，放在菜单里：每格是 menuitemradio，
@@ -988,13 +1077,28 @@ const THEME_OPTIONS: { theme: Theme; icon: IconName; label: string }[] = [
  */
 function ThemePicker(props: { value: Theme; onPick: (t: Theme) => void }) {
   return (
-    <View role="group" accessibilityLabel="外观" style={{ flexDirection: "row", gap: SPACE.hair, padding: SPACE.hair, borderRadius: token("radius"), backgroundColor: token("muted") }}>
+    <View role="group" accessibilityLabel={t({ en: "Appearance", zh: "外观" })} style={{ flexDirection: "row", gap: SPACE.hair, padding: SPACE.hair, borderRadius: token("radius"), backgroundColor: token("muted") }}>
       <Each of={THEME_OPTIONS} key={(o) => o.theme}>{(o) => (
         <MenuItem role="menuitemradio" checked={props.value === o().theme} closeOnSelect={false} onSelect={() => props.onPick(o().theme)}
-          accessibilityLabel={`外观：${o().label}`}
+          accessibilityLabel={t({ en: `Appearance: ${o().label.en}`, zh: `外观：${o().label.zh}` })}
           style={{ width: CONTROL.sm, height: CONTROL.sm - 2 * SPACE.hair, alignItems: "center", justifyContent: "center", borderRadius: token("radius-sm"), borderWidth: 1, borderColor: "transparent", ...ease() }}
           checkedStyle={{ backgroundColor: token("background"), borderColor: token("border") }} focusStyle={{ borderColor: token("ring") }}>
           <Icon name={o().icon} size={ICON.sm} tint={props.value === o().theme ? token("foreground") : token("muted-foreground")} />
+        </MenuItem>
+      )}</Each>
+    </View>
+  );
+}
+
+/** 菜单里的语言选择，样子和外观的一样，选项是文字。 */
+function LangPicker(props: { value: Lang; onPick: (l: Lang) => void }) {
+  return (
+    <View role="group" accessibilityLabel={t({ en: "Language", zh: "语言" })} style={{ flexDirection: "row", gap: SPACE.hair, padding: SPACE.hair, borderRadius: token("radius"), backgroundColor: token("muted") }}>
+      <Each of={[...LANGS]} key={(l) => l}>{(l) => (
+        <MenuItem role="menuitemradio" checked={props.value === l()} closeOnSelect={false} onSelect={() => props.onPick(l())} accessibilityLabel={LANG_LABEL[l()]}
+          style={{ height: CONTROL.sm - 2 * SPACE.hair, paddingHorizontal: SPACE.item, alignItems: "center", justifyContent: "center", borderRadius: token("radius-sm"), borderWidth: 1, borderColor: "transparent", ...ease() }}
+          checkedStyle={{ backgroundColor: token("background"), borderColor: token("border") }} focusStyle={{ borderColor: token("ring") }}>
+          <Text style={{ ...TYPE.caption, color: props.value === l() ? token("foreground") : token("muted-foreground") }}>{LANG_LABEL[l()]}</Text>
         </MenuItem>
       )}</Each>
     </View>
@@ -1024,11 +1128,11 @@ const releaseOnOpen = (e: { open: boolean }) => {
  * 侧栏底部的按钮：点开向上的菜单，里面是官网、文档和外观。
  * setup：环境还缺东西、环境检查卡片被关掉了时，菜单里给一项把它重新打开（文字是项的名字）。
  */
-function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => void; setup: string | null; onSetup: () => void }) {
+function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => void; lang: Lang; onLang: (l: Lang) => void; setup: string | null; onSetup: () => void }) {
   return (
     <Menu placement="top" offset={SPACE.item} popupStyle={{ ...menuPopup("bottom left"), minWidth: 248 }} popupStartingStyle={popOut("below")} popupEndingStyle={popOut("below")}
       onOpenChange={releaseOnOpen} trigger={
-      <Button accessibilityLabel="Droidpier 菜单" class={EXPANDED} hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ borderColor: token("ring") }}
+      <Button accessibilityLabel={t({ en: "Droidpier menu", zh: "Droidpier 菜单" })} class={EXPANDED} hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ borderColor: token("ring") }}
         style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingHorizontal: SPACE.item, borderRadius: token("radius"), borderWidth: 1, borderColor: "transparent", ...ease() }}>
         <Mark size={28} />
         <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body, fontWeight: WEIGHT.strong }}>Droidpier</Text>
@@ -1044,13 +1148,18 @@ function AppMenu(props: { site: string; theme: Theme; onTheme: (t: Theme) => voi
         </View>
       </View>
       <MenuLine />
-      <Item icon="globe" label="官网" trail="↗" onSelect={() => void openUrl(`${props.site}/`)} />
-      <Item icon="book" label="使用文档" trail="↗" onSelect={() => void openUrl(props.site + DOCS_PATH)} />
+      <Item icon="globe" label={t({ en: "Website", zh: "官网" })} trail="↗" onSelect={() => void openUrl(`${props.site}/`)} />
+      <Item icon="book" label={t({ en: "Documentation", zh: "使用文档" })} trail="↗" onSelect={() => void openUrl(props.site + DOCS_PATH)} />
       <If when={props.setup}>{(label) => <Item icon="monitor" label={label()} onSelect={props.onSetup} />}</If>
       <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingLeft: SPACE.item, paddingRight: SPACE.part }}>
         <Icon name="sun" size={ICON.md} tint={token("muted-foreground")} />
-        <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>外观</Text>
+        <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>{t({ en: "Appearance", zh: "外观" })}</Text>
         <ThemePicker value={props.theme} onPick={props.onTheme} />
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingLeft: SPACE.item, paddingRight: SPACE.part }}>
+        <Icon name="globe" size={ICON.md} tint={token("muted-foreground")} />
+        <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>{t({ en: "Language", zh: "语言" })}</Text>
+        <LangPicker value={props.lang} onPick={props.onLang} />
       </View>
     </Menu>
   );
@@ -1071,13 +1180,15 @@ function CopyCmd(props: { cmd: string }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item, flexWrap: "wrap" }}>
       <Text style={{ flexShrink: 1, color: token("foreground"), ...TYPE.caption, fontFamily: "monospace", userSelect: "text" }}>{props.cmd}</Text>
-      <Btn label="复制命令" onPress={copy} />
+      <Btn label={t({ en: "Copy command", zh: "复制命令" })} onPress={copy} />
       <If when={result() !== null}>
-        <Text style={{ color: result() === "ok" ? token("success") : token("destructive"), ...TYPE.caption }}>{result() === "ok" ? "已复制" : "复制失败，请手动选中复制"}</Text>
+        <Text style={{ color: result() === "ok" ? token("success") : token("destructive"), ...TYPE.caption }}>{result() === "ok" ? t({ en: "Copied", zh: "已复制" }) : t({ en: "Copy failed. Select the text and copy it yourself", zh: "复制失败，请手动选中复制" })}</Text>
       </If>
     </View>
   );
 }
+
+const BUSY_WHY = () => t({ en: "Installing. Try again when it finishes", zh: "正在安装，装完再点" });
 
 /** 画面上方的环境检查卡片：缺什么、多大、手动命令，以及安装进度。安装只在确认框里确认后才开始。 */
 function SetupCard(props: { env: Env; installs: InstallProgress[]; onInstall: (c: Confirm) => void; onCreate: () => void; onDismiss: () => void; sidebarShown: boolean }) {
@@ -1091,26 +1202,29 @@ function SetupCard(props: { env: Env; installs: InstallProgress[]; onInstall: (c
   // 一张卡片：缺的每一项和安装进度是卡片里 muted 底色的一段，不再套边框
   const section = () => ({ gap: SPACE.part, padding: SPACE.inset, borderRadius: token("radius"), backgroundColor: token("muted") }) as const;
   return (
-    <View role="region" accessibilityLabel="环境检查"
+    <View role="region" accessibilityLabel={t({ en: "Environment check", zh: "环境检查" })}
       style={{ width: 560, maxWidth: "100%", gap: SPACE.inset, backgroundColor: token("overlay"), borderRadius: token("radius-lg"), padding: SPACE.inset, borderWidth: 1, borderColor: token("warning") }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACE.item }}>
-        <Text role="header" style={{ color: token("foreground"), ...TYPE.title }}>环境检查</Text>
+        <Text role="header" style={{ color: token("foreground"), ...TYPE.title }}>{t({ en: "Environment check", zh: "环境检查" })}</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item }}>
           <If when={installable().length > 1}>
-            <Btn label={`全部安装（${sizeText(total())}）…`} disabled={busy()} why="正在安装，装完再点" onPress={() => props.onInstall({ ids: installable().map((m) => m.id), kind: "install" })} />
+            <Btn label={t({ en: `Install all (${sizeText(total())})…`, zh: `全部安装（${sizeText(total())}）…` })} disabled={busy()} why={BUSY_WHY()} onPress={() => props.onInstall({ ids: installable().map((m) => m.id), kind: "install" })} />
           </If>
           <If when={!busy()}>
-            <Btn label="关闭" onPress={props.onDismiss} />
+            <Btn label={t({ en: "Close", zh: "关闭" })} onPress={props.onDismiss} />
           </If>
         </View>
       </View>
       <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>
         {props.env.missing.length > 0
-          ? `还不能启动设备，缺 ${props.env.missing.length} 项。点「安装…」会先让你确认要下载什么、装到哪里。${props.sidebarShown ? "关掉后可以从左下角的 Droidpier 菜单重新打开。" : "关掉后可以展开侧栏，从左下角的 Droidpier 菜单重新打开。"}`
-          : props.env.error ? "" : "环境已经齐全。"}
+          ? t({
+            en: `Devices can't start yet: ${props.env.missing.length} missing. Install… first asks you to confirm what to download and where it goes. ${props.sidebarShown ? "After closing, reopen it from the Droidpier menu at the bottom left." : "After closing, show the sidebar and reopen it from the Droidpier menu at the bottom left."}`,
+            zh: `还不能启动设备，缺 ${props.env.missing.length} 项。点「安装…」会先让你确认要下载什么、装到哪里。${props.sidebarShown ? "关掉后可以从左下角的 Droidpier 菜单重新打开。" : "关掉后可以展开侧栏，从左下角的 Droidpier 菜单重新打开。"}`,
+          })
+          : props.env.error ? "" : t({ en: "Everything is installed.", zh: "环境已经齐全。" })}
       </Text>
       <If when={props.env.error}>
-        {(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.body }}>{`${e()}。请重新运行网关后再打开页面。`}</Text>}
+        {(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.body }}>{t({ en: `${e()}. Run the gateway again, then reopen the page.`, zh: `${e()}。请重新运行网关后再打开页面。` })}</Text>}
       </If>
       <Scroll style={{ maxHeight: 460 }} contentStyle={{ gap: SPACE.item }}>
         <Each of={props.env.missing} key={(m) => m.id}>
@@ -1122,9 +1236,9 @@ function SetupCard(props: { env: Env; installs: InstallProgress[]; onInstall: (c
                 </Text>
                 <If when={m().auto}>
                   <If when={m().id === "avd"} else={
-                    <Btn label="安装…" disabled={busy()} why="正在安装，装完再点" onPress={() => props.onInstall({ ids: [m().id], kind: "install" })} />
+                    <Btn label={t({ en: "Install…", zh: "安装…" })} disabled={busy()} why={BUSY_WHY()} onPress={() => props.onInstall({ ids: [m().id], kind: "install" })} />
                   }>
-                    <Btn label="创建设备…" disabled={busy()} why="正在安装，装完再点" onPress={props.onCreate} />
+                    <Btn label={t({ en: "Create device…", zh: "创建设备…" })} disabled={busy()} why={BUSY_WHY()} onPress={props.onCreate} />
                   </If>
                 </If>
               </View>
@@ -1138,13 +1252,13 @@ function SetupCard(props: { env: Env; installs: InstallProgress[]; onInstall: (c
                   </View>
                 }>
                   {/* 触发器按 nsh 文档（elements/collapsible.md）用 role="button" 的 View：Button 不收 accessibilityState，读屏要听到展开没有 */}
-                  <View onPress={() => toggleManual(m().id)} role="button" accessibilityLabel="手动安装" accessibilityState={{ expanded: manualOpen().includes(m().id) }}
+                  <View onPress={() => toggleManual(m().id)} role="button" accessibilityLabel={t({ en: "Install manually", zh: "手动安装" })} accessibilityState={{ expanded: manualOpen().includes(m().id) }}
                     hoverStyle={{ opacity: 0.8 }} focusStyle={{ backgroundColor: token("accent") }}
                     style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: SPACE.part, borderRadius: token("radius-sm"), ...ease() }}>
                     <View style={{ transform: [{ rotate: manualOpen().includes(m().id) ? "0deg" : "-90deg" }], ...ease() }}>
                       <Icon name="chevron" size={ICON.sm} tint={token("muted-foreground")} />
                     </View>
-                    <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>手动安装</Text>
+                    <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{t({ en: "Install manually", zh: "手动安装" })}</Text>
                   </View>
                 </Collapsible>
               </If>
@@ -1152,15 +1266,15 @@ function SetupCard(props: { env: Env; installs: InstallProgress[]; onInstall: (c
           )}
         </Each>
         <If when={props.installs.length > 0}>
-          <View role="list" accessibilityLabel="安装进度" style={{ ...section(), gap: SPACE.item }}>
-            <Text style={{ color: token("muted-foreground"), ...TYPE.caption, fontWeight: WEIGHT.strong }}>安装进度</Text>
+          <View role="list" accessibilityLabel={t({ en: "Install progress", zh: "安装进度" })} style={{ ...section(), gap: SPACE.item }}>
+            <Text style={{ color: token("muted-foreground"), ...TYPE.caption, fontWeight: WEIGHT.strong }}>{t({ en: "Install progress", zh: "安装进度" })}</Text>
             <Each of={props.installs} key={(p) => p.id}>
               {(p) => (
                 <View style={{ gap: SPACE.hair }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item }}>
                     <Text style={{ flex: 1, color: token("foreground"), ...TYPE.body }}>{envName(p().id)}</Text>
                     <Text style={{ color: p().phase === "failed" ? token("destructive") : p().phase === "done" ? token("success") : token("warning"), ...TYPE.caption }}>
-                      {`${PHASE[p().phase]}${p().pct !== undefined && p().phase === "download" ? ` ${p().pct}%` : ""}`}
+                      {`${t(PHASE[p().phase])}${p().pct !== undefined && p().phase === "download" ? ` ${p().pct}%` : ""}`}
                     </Text>
                   </View>
                   <If when={p().logTail}>
@@ -1182,7 +1296,7 @@ type Scroller = Exclude<NonNullable<Parameters<typeof Scroll>[0]["ref"]>, (node:
 /** 一行单选项（nsh 的 Radio：方向键在组内移动、Space 选中）：左边名字，右边说明；选中时底色变亮。 */
 function Choice(props: { label: string; detail: string; detailColor?: string; checked: boolean; onPress: () => void; ref: (r: ViewRef) => void }) {
   return (
-    <Radio checked={props.checked} onChange={props.onPress} accessibilityLabel={`${props.label}，${props.detail}`} ref={props.ref}
+    <Radio checked={props.checked} onChange={props.onPress} accessibilityLabel={t({ en: `${props.label}, ${props.detail}`, zh: `${props.label}，${props.detail}` })} ref={props.ref}
       style={{
         flexDirection: "row", alignItems: "center", gap: SPACE.item, paddingVertical: SPACE.part, paddingHorizontal: SPACE.item, borderRadius: token("radius-sm"), borderWidth: 1,
         borderColor: "transparent", backgroundColor: "transparent", ...ease(),
@@ -1203,8 +1317,11 @@ const reveal = async (scroller: Scroller | undefined, item: ViewRef | undefined,
   if (focus) item.focus();
 };
 
-const ID_RULE = "只能用英文字母、数字、点、下划线和短横线，创建后不能改；列表里显示的名称以后可以用「重命名…」改。";
-const imageLabel = (i: SystemImage) => `${i.version ?? "Android"}（API ${i.api}）`;
+const ID_RULE: Msg = {
+  en: "Letters, digits, dots, underscores and hyphens only; it can't be changed after creation. The name shown in the list can be changed later with Rename….",
+  zh: "只能用英文字母、数字、点、下划线和短横线，创建后不能改；列表里显示的名称以后可以用「重命名…」改。",
+};
+const imageLabel = (i: SystemImage) => t({ en: `${i.version ?? "Android"} (API ${i.api})`, zh: `${i.version ?? "Android"}（API ${i.api}）` });
 
 /** 创建设备对话框的内容：目录由 App 在打开时向网关要，选好后点「下一步」交给确认框。 */
 function CreateAvd(props: { top?: JSX.Element; catalog: Catalog | null; loadError: string | null; onCancel: () => void; onNext: (a: NewAvd) => void }) {
@@ -1246,7 +1363,10 @@ function CreateAvd(props: { top?: JSX.Element; catalog: Catalog | null; loadErro
       reveal(deviceScroll, d ? deviceRefs.get(d.id) : undefined, true);
     }, 0);
   });
-  const nameError = () => avdNameError(name(), catalog()?.existing ?? []);
+  const nameError = () => {
+    const m = avdNameErrorMsg(name(), catalog()?.existing ?? []);
+    return m ? t(m) : null;
+  };
   const canNext = () => !!pickedDevice() && !!pickedImage() && nameError() === null;
   const next = () => {
     const d = pickedDevice();
@@ -1255,18 +1375,18 @@ function CreateAvd(props: { top?: JSX.Element; catalog: Catalog | null; loadErro
   };
 
   return (
-    <DialogContent title="创建设备" footer={<>
-      <Btn label="取消" onPress={props.onCancel} />
-      <Btn label="下一步" kind="primary" disabled={!canNext()} onPress={next} />
+    <DialogContent title={t({ en: "Create device", zh: "创建设备" })} footer={<>
+      <Btn label={t({ en: "Cancel", zh: "取消" })} onPress={props.onCancel} />
+      <Btn label={t({ en: "Next", zh: "下一步" })} kind="primary" disabled={!canNext()} onPress={next} />
     </>}>
       {props.top}
       <If when={props.loadError}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.body }}>{e()}</Text>}</If>
-      <If when={catalog()} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body }}>正在读取机型和系统版本…</Text>}>
+      <If when={catalog()} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body }}>{t({ en: "Reading device models and system versions…", zh: "正在读取机型和系统版本…" })}</Text>}>
         {(c) => (
           <View style={{ gap: SPACE.group }}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE.group }}>
               <View style={{ flex: 1, minWidth: 240, gap: SPACE.item }}>
-                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedDevice() ? `机型：${pickedDevice()!.name}` : "机型"}</Text>
+                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedDevice() ? t({ en: `Model: ${pickedDevice()!.name}`, zh: `机型：${pickedDevice()!.name}` }) : t({ en: "Model", zh: "机型" })}</Text>
                 <Scroll ref={(r) => (deviceScroll = r)} style={{ height: 248, padding: SPACE.part, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("background") }}>
                   <RadioGroup style={{ gap: SPACE.hair }}>
                     <Each of={c().devices} key={(d) => d.id}>
@@ -1279,14 +1399,16 @@ function CreateAvd(props: { top?: JSX.Element; catalog: Catalog | null; loadErro
                 </Scroll>
               </View>
               <View style={{ flex: 1, minWidth: 240, gap: SPACE.item }}>
-                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedImage() ? `系统版本：${imageLabel(pickedImage()!)}` : "系统版本"}</Text>
-                <If when={c().imagesError}>{(e) => <Text role="alert" style={{ color: token("warning"), ...TYPE.caption }}>{`${e()}，只列出已安装的`}</Text>}</If>
+                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedImage() ? t({ en: `System version: ${imageLabel(pickedImage()!)}`, zh: `系统版本：${imageLabel(pickedImage()!)}` }) : t({ en: "System version", zh: "系统版本" })}</Text>
+                <If when={c().imagesError}>{(e) => <Text role="alert" style={{ color: token("warning"), ...TYPE.caption }}>{t({ en: `${e()}. Showing installed ones only`, zh: `${e()}，只列出已安装的` })}</Text>}</If>
                 <Scroll ref={(r) => (imageScroll = r)} style={{ height: 248, padding: SPACE.part, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("background") }}>
                   <RadioGroup style={{ gap: SPACE.hair }}>
                     <Each of={c().images} key={(i) => i.pkg}>
                       {(i) => (
                         <Choice label={imageLabel(i())} checked={pickedImage()?.pkg === i().pkg} onPress={() => image.set(i().pkg)}
-                          detail={i().installed ? (i().tag === "google_apis" ? "已安装" : `已安装 · ${i().tag}`) : `下载${sizeText(i().sizeMb ?? 0)}`}
+                          detail={i().installed
+                            ? (i().tag === "google_apis" ? t({ en: "Installed", zh: "已安装" }) : t({ en: `Installed · ${i().tag}`, zh: `已安装 · ${i().tag}` }))
+                            : t({ en: `Download ${sizeText(i().sizeMb ?? 0)}`, zh: `下载${sizeText(i().sizeMb ?? 0)}` })}
                           detailColor={i().installed ? token("success") : token("muted-foreground")} ref={(r) => imageRefs.set(i().pkg, r)} />
                       )}
                     </Each>
@@ -1296,12 +1418,12 @@ function CreateAvd(props: { top?: JSX.Element; catalog: Catalog | null; loadErro
             </View>
             <View style={{ gap: SPACE.item }}>
               {/* 这一栏是 AVD 的 id（文件夹名），和重命名对话框里的「显示名称」不是一回事 */}
-              <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>设备 ID</Text>
+              <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{t({ en: "Device ID", zh: "设备 ID" })}</Text>
               <FieldBox error={!!nameError() && name() !== ""}>
                 <Input value={name()} onChange={({ value }) => customName.set(value)} onSubmit={next}
-                  accessibilityLabel="设备 ID" autoCapitalize="none" autoCorrect={false} style={fieldText(true)} />
+                  accessibilityLabel={t({ en: "Device ID", zh: "设备 ID" })} autoCapitalize="none" autoCorrect={false} style={fieldText(true)} />
               </FieldBox>
-              <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{ID_RULE}</Text>
+              <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{t(ID_RULE)}</Text>
               <If when={pickedDevice() ? nameError() : null}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption }}>{e()}</Text>}</If>
             </View>
           </View>
@@ -1318,11 +1440,11 @@ function PlatformTabs(props: { value: Platform; onChange: (p: Platform) => void 
   return (
     <Tabs style={{ flexDirection: "row", gap: SPACE.part, borderBottomWidth: 1, borderColor: token("border-subtle") }}
       indicatorStyle={{ bottom: 0, height: 2, backgroundColor: token("foreground") }}>
-      {(["android", "ios"] as const).map((t) => (
-        <Tab selected={props.value === t} onPress={() => props.onChange(t)} accessibilityLabel={t === "android" ? "Android 模拟器" : "iOS 模拟器"}
+      {(["android", "ios"] as const).map((p) => (
+        <Tab selected={props.value === p} onPress={() => props.onChange(p)} accessibilityLabel={p === "android" ? t({ en: "Android emulator", zh: "Android 模拟器" }) : t({ en: "iOS Simulator", zh: "iOS 模拟器" })}
           hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ backgroundColor: token("accent") }}
           style={{ height: CONTROL.sm, justifyContent: "center", paddingHorizontal: SPACE.inset, borderTopLeftRadius: token("radius-sm"), borderTopRightRadius: token("radius-sm"), ...ease() }}>
-          <Text style={{ color: props.value === t ? token("foreground") : token("muted-foreground"), ...TYPE.body, fontWeight: WEIGHT.medium }}>{t === "android" ? "Android" : "iOS"}</Text>
+          <Text style={{ color: props.value === p ? token("foreground") : token("muted-foreground"), ...TYPE.body, fontWeight: WEIGHT.medium }}>{p === "android" ? "Android" : "iOS"}</Text>
         </Tab>
       ))}
     </Tabs>
@@ -1339,8 +1461,8 @@ function CreateIosSim(props: { top?: JSX.Element; onCancel: () => void; onCreate
   const busy = signal(false);
   const error = signal<string | null>(null);
   call<{ catalog: IosCatalog | null; error: string | null }>("emu.iosCatalog", {}).then(
-    (r) => (r.catalog ? catalog.set(r.catalog) : loadError.set(r.error ?? "读不到 iOS 系统版本")),
-    (e: Error) => loadError.set(`读不到 iOS 系统版本：${e.message}`),
+    (r) => (r.catalog ? catalog.set(r.catalog) : loadError.set(r.error ?? t({ en: "Can't read iOS system versions", zh: "读不到 iOS 系统版本" }))),
+    (e: Error) => loadError.set(t({ en: `Can't read iOS system versions: ${e.message}`, zh: `读不到 iOS 系统版本：${e.message}` })),
   );
   // 默认选机型齐全的最新版本：Xcode 带的测试版系统可能只支持一两款特殊机型（2026-11-22 这台的 iOS 27.1 只有 iPhone Duo）
   const pickedRuntime = () => {
@@ -1355,7 +1477,11 @@ function CreateIosSim(props: { top?: JSX.Element; onCancel: () => void; onCreate
   };
   // 默认就叫机型名：侧栏行尾已经有系统版本
   const name = () => customName() ?? pickedDevice()?.name ?? "";
-  const nameError = () => (!name().trim() ? "名字不能为空" : name().length > 64 ? "名字最多 64 个字" : name().trim().startsWith("-") ? "名字不能以 - 开头" : null);
+  const nameError = () =>
+    !name().trim() ? t({ en: "Name can't be empty", zh: "名字不能为空" })
+      : name().length > 64 ? t({ en: "Name can be at most 64 characters", zh: "名字最多 64 个字" })
+      : name().trim().startsWith("-") ? t({ en: "Name can't start with -", zh: "名字不能以 - 开头" })
+      : null;
   const canCreate = () => !busy() && !!pickedRuntime() && !!pickedDevice() && nameError() === null;
   const create = () => {
     const r = pickedRuntime();
@@ -1364,25 +1490,25 @@ function CreateIosSim(props: { top?: JSX.Element; onCancel: () => void; onCreate
     busy.set(true);
     error.set(null);
     call<{ udid: string | null; error: string | null }>("emu.createIosSim", { name: name().trim(), deviceType: d.id, runtime: r.id }).then(
-      (res) => (res.udid ? props.onCreated(res.udid) : error.set(res.error ?? "创建失败")),
-      (e: Error) => error.set(`创建失败：${e.message}`),
+      (res) => (res.udid ? props.onCreated(res.udid) : error.set(res.error ?? t({ en: "Create failed", zh: "创建失败" }))),
+      (e: Error) => error.set(t({ en: `Create failed: ${e.message}`, zh: `创建失败：${e.message}` })),
     ).finally(() => busy.set(false));
   };
   const listBox = { height: 248, padding: SPACE.part, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("background") };
   return (
-    <DialogContent title="创建设备" footer={<>
-      <Btn label="取消" onPress={props.onCancel} />
-      <Btn label={busy() ? "正在创建…" : "创建并启动"} kind="primary" disabled={!canCreate()} onPress={create} />
+    <DialogContent title={t({ en: "Create device", zh: "创建设备" })} footer={<>
+      <Btn label={t({ en: "Cancel", zh: "取消" })} onPress={props.onCancel} />
+      <Btn label={busy() ? t({ en: "Creating…", zh: "正在创建…" }) : t({ en: "Create and start", zh: "创建并启动" })} kind="primary" disabled={!canCreate()} onPress={create} />
     </>}>
       {props.top}
       <If when={loadError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.body }}>{e()}</Text>}</If>
-      <If when={catalog()} else={loadError() ? null : <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>正在读取 iOS 系统版本和机型…</Text>}>
+      <If when={catalog()} else={loadError() ? null : <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>{t({ en: "Reading iOS system versions and models…", zh: "正在读取 iOS 系统版本和机型…" })}</Text>}>
         {(c) => (
-          <If when={c().runtimes.length > 0} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body }}>这台电脑没有装 iOS 模拟器的系统。在 Xcode 的 设置 → Components 里下载一个 iOS 版本后再来创建。</Text>}>
+          <If when={c().runtimes.length > 0} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body }}>{t({ en: "This Mac has no iOS Simulator runtime. Download an iOS version in Xcode's Settings → Components, then come back to create one.", zh: "这台电脑没有装 iOS 模拟器的系统。在 Xcode 的 设置 → Components 里下载一个 iOS 版本后再来创建。" })}</Text>}>
             <View style={{ gap: SPACE.group }}>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACE.group }}>
                 <View style={{ flex: 1, minWidth: 240, gap: SPACE.item }}>
-                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedDevice() ? `机型：${pickedDevice()!.name}` : "机型"}</Text>
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedDevice() ? t({ en: `Model: ${pickedDevice()!.name}`, zh: `机型：${pickedDevice()!.name}` }) : t({ en: "Model", zh: "机型" })}</Text>
                   <Scroll style={listBox}>
                     <RadioGroup style={{ gap: SPACE.hair }}>
                       <Each of={pickedRuntime()?.devices ?? []} key={(d) => d.id}>
@@ -1392,21 +1518,21 @@ function CreateIosSim(props: { top?: JSX.Element; onCancel: () => void; onCreate
                   </Scroll>
                 </View>
                 <View style={{ flex: 1, minWidth: 240, gap: SPACE.item }}>
-                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedRuntime() ? `系统版本：${pickedRuntime()!.name}` : "系统版本"}</Text>
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{pickedRuntime() ? t({ en: `System version: ${pickedRuntime()!.name}`, zh: `系统版本：${pickedRuntime()!.name}` }) : t({ en: "System version", zh: "系统版本" })}</Text>
                   <Scroll style={listBox}>
                     <RadioGroup style={{ gap: SPACE.hair }}>
                       <Each of={c().runtimes} key={(r) => r.id}>
-                        {(r) => <Choice label={r().name} detail="已安装" detailColor={token("success")} checked={pickedRuntime()?.id === r().id} onPress={() => runtime.set(r().id)} ref={() => {}} />}
+                        {(r) => <Choice label={r().name} detail={t({ en: "Installed", zh: "已安装" })} detailColor={token("success")} checked={pickedRuntime()?.id === r().id} onPress={() => runtime.set(r().id)} ref={() => {}} />}
                       </Each>
                     </RadioGroup>
                   </Scroll>
                 </View>
               </View>
               <View style={{ gap: SPACE.item }}>
-                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>名字</Text>
+                <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{t({ en: "Name", zh: "名字" })}</Text>
                 <FieldBox error={!!nameError() && name() !== ""}>
                   <Input value={name()} onChange={({ value }) => customName.set(value)} onSubmit={create}
-                    accessibilityLabel="名字" autoCapitalize="none" autoCorrect={false} style={fieldText(true)} />
+                    accessibilityLabel={t({ en: "Name", zh: "名字" })} autoCapitalize="none" autoCorrect={false} style={fieldText(true)} />
                 </FieldBox>
                 <If when={nameError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption }}>{e()}</Text>}</If>
                 <If when={error()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption }}>{e()}</Text>}</If>
@@ -1434,6 +1560,18 @@ function App() {
     if (picked) return;
     theme.set(parseTheme(t));
     setColorScheme(theme());
+  });
+  // 界面语言：默认英文，读到这台浏览器存的选择后换过去（host 的 emu.lang）；界面里的 t() 都读它
+  const lang = signal<Lang>("en");
+  setLangSource(() => lang());
+  let langPicked = false;
+  const pickLang = (l: Lang) => {
+    langPicked = true;
+    lang.set(l);
+    host.call("emu.setLang", { lang: l });
+  };
+  host.call("emu.lang", {}).then((l: unknown) => {
+    if (!langPicked) lang.set(parseLang(l));
   });
   const site = signal(OFFICIAL_ORIGIN);
   host.call("emu.site", {}).then((o: unknown) => {
@@ -1527,7 +1665,7 @@ function App() {
   };
   host.on("emu.catalog", (p: { catalog: Catalog; rev: number }) => applyCatalog(p.catalog, p.rev));
   const loadCatalog = () => (host.call("emu.catalog", {}) as Promise<{ ok: boolean; catalog: Catalog | null; rev: number }>).then((r) => {
-    catalogError.set(r.ok ? null : "没有连上网关，读不到机型和系统版本。网关重新连上后会自动再读。");
+    catalogError.set(r.ok ? null : t({ en: "Not connected to the gateway, so models and system versions can't be read. They load again once the gateway reconnects.", zh: "没有连上网关，读不到机型和系统版本。网关重新连上后会自动再读。" }));
     applyCatalog(r.catalog, r.rev);
   });
   const openCreate = () => createOpen.set(true);
@@ -1573,7 +1711,7 @@ function App() {
     if (!shouldCloseConsole(inspected(), ev)) return;
     closeDevtools();
     h5Open.set(false);
-    showNotice({ text: "H5 页面已关闭，H5 调试已收起" });
+    showNotice({ text: t({ en: "The H5 page closed, so H5 debugging was closed", zh: "H5 页面已关闭，H5 调试已收起" }) });
   };
   // 重启：确认框；adb 无响应的提示条（输入或读 H5 列表时发现的）
   const rebootAsk = signal(false);
@@ -1588,28 +1726,28 @@ function App() {
   // 检测网络：设备的全局 HTTP 代理还能不能用（gateway/src/proxy-check.ts）；有问题时弹框，用户点了才清掉
   const proxyBusy = signal(false);
   const proxyIssue = signal<ProxyIssue | null>(null);
-  const proxyFailed = (r: ProxyResult) => (r.adbStuck ? adbStuck.set(true) : showNotice({ text: r.error ?? "操作失败", error: true }));
+  const proxyFailed = (r: ProxyResult) => (r.adbStuck ? adbStuck.set(true) : showNotice({ text: r.error ?? t({ en: "Operation failed", zh: "操作失败" }), error: true }));
   const checkNetwork = () => {
     proxyBusy.set(true);
-    showNotice({ text: "正在检测网络，需要几秒…" });
+    showNotice({ text: t({ en: "Checking the network. This takes a few seconds…", zh: "正在检测网络，需要几秒…" }) });
     call<ProxyResult>("emu.proxyCheck", {}).then((r) => {
       if (r.error) proxyFailed(r);
-      else if (r.proxy === null) showNotice({ text: "网络设置正常：没有设置代理" });
+      else if (r.proxy === null) showNotice({ text: t({ en: "Network settings OK: no proxy set", zh: "网络设置正常：没有设置代理" }) });
       else if (!r.ok) proxyIssue.set({ proxy: r.proxy, kind: "dead" });
       else if (r.untrusted?.length) proxyIssue.set({ proxy: r.proxy, kind: "untrusted", apps: r.untrusted });
-      else showNotice({ text: `网络设置正常：设备经代理 ${r.proxy} 上网，代理能连通，最近没有证书错误` });
+      else showNotice({ text: t({ en: `Network settings OK: the device goes online through the proxy ${r.proxy}, the proxy is reachable, and there were no recent certificate errors`, zh: `网络设置正常：设备经代理 ${r.proxy} 上网，代理能连通，最近没有证书错误` }) });
     }).finally(() => proxyBusy.set(false));
   };
   const clearProxyIssue = () => {
     const issue = proxyIssue();
     proxyIssue.set(null);
     if (issue === null) return;
-    call<ProxyResult>("emu.proxyClear", { proxy: issue.proxy }).then((r) => (r.error ? proxyFailed(r) : showNotice({ text: "已清除代理，设备改为直接上网。已经打开的 App 可能还在用旧代理，重新打开后恢复", sticky: true })));
+    call<ProxyResult>("emu.proxyClear", { proxy: issue.proxy }).then((r) => (r.error ? proxyFailed(r) : showNotice({ text: t({ en: "Proxy cleared; the device now goes online directly. Apps already open may still use the old proxy until they are reopened", zh: "已清除代理，设备改为直接上网。已经打开的 App 可能还在用旧代理，重新打开后恢复" }), sticky: true })));
   };
 
   // H5 页面列表：连着设备时一直轮询（3 秒一次，连续成功后放宽到 5 秒；标签页隐藏时跳过，回到前台立即刷一次），左侧 H5 键和控制台都用它
   const pages = signal<Page[] | null>(null);
-  const listError = signal<Msg | null>(null);
+  const listError = signal<StatusMsg | null>(null);
   const listAdbStuck = signal(false);
   const device = () => (state() === "connected" ? deviceId() : "");
   let listDevice = "";
@@ -1619,7 +1757,7 @@ function App() {
     const dev = device();
     if (loading || !dev) return;
     loading = true;
-    const failed = (msg: Msg) => {
+    const failed = (msg: StatusMsg) => {
       okStreak = 0;
       listError.set(msg);
       // 刚发现 adb 卡住时在画面上提示一次（和输入时发现的同一条提示），点了忽略之后一直卡着也不再弹；
@@ -1632,7 +1770,7 @@ function App() {
       (r: WebViewsResult) => {
         // 读的过程中设备换了：这份列表是旧设备的
         if (dev !== device()) return;
-        if (r.error) return failed(r.adbStuck ? { text: r.error, error: true, adbStuck: true } : { text: `读取 H5 列表失败：${r.error}`, error: true });
+        if (r.error) return failed(r.adbStuck ? { text: r.error, error: true, adbStuck: true } : { text: t({ en: `Couldn't read the H5 list: ${r.error}`, zh: `读取 H5 列表失败：${r.error}` }), error: true });
         okStreak++;
         // 先收起已经没了的页面的控制台，再换列表：新列表里的前台页面才能把控制台自动打开（转屏后 Activity 重建、页面 id 换了时就是这样）
         closeIfGone({ kind: "list", keys: r.list.map(pageKey) });
@@ -1643,7 +1781,7 @@ function App() {
         listAdbStuck.set(false);
       },
       (e: Error) => {
-        if (dev === device()) failed({ text: `读取 H5 列表失败：${e.message}`, error: true });
+        if (dev === device()) failed({ text: t({ en: `Couldn't read the H5 list: ${e.message}`, zh: `读取 H5 列表失败：${e.message}` }), error: true });
       },
     ).finally(() => (loading = false));
   };
@@ -1683,7 +1821,7 @@ function App() {
     if (h5Open() && !device()) {
       closeDevtools();
       h5Open.set(false);
-      showNotice({ text: "设备已断开，H5 调试已收起" });
+      showNotice({ text: t({ en: "The device disconnected, so H5 debugging was closed", zh: "设备已断开，H5 调试已收起" }) });
     }
   });
 
@@ -1724,7 +1862,8 @@ function App() {
     pendingEvent({ kind: "boot", name: b.name });
     if (b.progress === "failed") {
       const a = (avds() ?? []).find((x) => x.name === b.name);
-      showNotice({ text: `${a ? avdLabel(a) : b.name} 启动失败${b.error ? `：${b.error}` : ""}`, error: true, sticky: true });
+      const label = a ? avdLabel(a) : b.name;
+      showNotice({ text: t({ en: `${label} failed to start${b.error ? `: ${b.error}` : ""}`, zh: `${label} 启动失败${b.error ? `：${b.error}` : ""}` }), error: true, sticky: true });
     }
   });
   host.on("emu.notice", (n: Notice & { gateway?: boolean }) => {
@@ -1774,12 +1913,12 @@ function App() {
 
   // 设备上的按钮（按键、旋转、截图、重启）在没连上设备时返回 ok:false，给个提示，不假装成功
   const act = (p: Promise<{ ok: boolean }>) =>
-    p.then((r) => { if (!r.ok) showNotice({ text: "还没有连接设备，操作没有发出。等设备连上后再试。", error: true }); });
+    p.then((r) => { if (!r.ok) showNotice({ text: t({ en: "No device connected yet, so nothing was sent. Try again once the device connects.", zh: "还没有连接设备，操作没有发出。等设备连上后再试。" }), error: true }); });
   const key = (k: string) => act(host.call("emu.key", { key: k }));
   // 只要求连着网关的（启动、切换、安装、许可证）：ok:false 是没连上网关
-  const GW_DOWN = "没有连上网关，操作没有发出。等网关重新连上后再试。";
+  const GW_DOWN = () => t({ en: "Not connected to the gateway, so nothing was sent. Try again once the gateway reconnects.", zh: "没有连上网关，操作没有发出。等网关重新连上后再试。" });
   const gw = (p: Promise<{ ok: boolean }>) =>
-    p.then((r) => { if (!r.ok) showNotice({ text: GW_DOWN, error: true }); });
+    p.then((r) => { if (!r.ok) showNotice({ text: GW_DOWN(), error: true }); });
   // 点了「启动」「切换到这台」、结果还没到：按钮换成进行中的字并禁用（什么时候放开见 ui/start-pending.ts）
   const pending = signal<Pending>(null);
   let pendingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1797,7 +1936,7 @@ function App() {
     (host.call(what === "start" ? "emu.start" : "emu.use", { name }) as Promise<{ ok: boolean }>).then((r) => {
       if (r.ok) return;
       pendingEvent({ kind: "not-sent" });
-      showNotice({ text: GW_DOWN, error: true });
+      showNotice({ text: GW_DOWN(), error: true });
     });
   };
 
@@ -1941,7 +2080,7 @@ function App() {
   const switchTo = (a: Avd) => begin(a.name, "use");
   // 切换到的那台到了画面上、和网关断开了：不再等
   effect(() => pendingEvent({ kind: "status", down: gatewayDown(state()), onScreen: state() === "connected" ? currentAvd()?.name ?? null : null }));
-  const pendingText = (a: Avd, what: "start" | "use") => (pending()?.name === a.name && pending()!.what === what ? (what === "start" ? "启动中…" : "切换中…") : null);
+  const pendingText = (a: Avd, what: "start" | "use") => (pending()?.name === a.name && pending()!.what === what ? (what === "start" ? t({ en: "Starting…", zh: "启动中…" }) : t({ en: "Switching…", zh: "切换中…" })) : null);
   const isCurrentPhone = (p: PhoneInfo) => kind() === "phone" && p.id === deviceId() && (state() === "connected" || state() === "rebooting");
   const pickPhone = (p: PhoneInfo) => {
     if (!canPick(p)) return;
@@ -1952,8 +2091,8 @@ function App() {
   };
   const copyHref = (url: string) =>
     host.call("emu.copy", { text: url }).then(
-      () => showNotice({ text: "已复制 H5 页面地址" }),
-      () => showNotice({ text: "复制失败，请手动选中地址复制", error: true }),
+      () => showNotice({ text: t({ en: "Copied the H5 page address", zh: "已复制 H5 页面地址" }) }),
+      () => showNotice({ text: t({ en: "Copy failed. Select the address and copy it yourself", zh: "复制失败，请手动选中地址复制" }), error: true }),
     );
   const pickDevice = (a: Avd) => {
     if (a.name !== selected()) animateNext();
@@ -1962,11 +2101,14 @@ function App() {
     if (!gatewayDown(state()) && a.running === "grpc" && !isCurrent(a) && a.serial !== serial()) switchTo(a);
   };
   const avdStatus = (a: Avd) => {
-    if (gatewayDown(state())) return "状态未知";
-    if (a.running === "grpc") return isCurrent(a) ? "运行中 · 当前画面" : "运行中";
-    if (a.running === "no-grpc") return "运行中但无法接管";
+    if (gatewayDown(state())) return t({ en: "Status unknown", zh: "状态未知" });
+    if (a.running === "grpc") return isCurrent(a) ? t({ en: "Running · On screen", zh: "运行中 · 当前画面" }) : t({ en: "Running", zh: "运行中" });
+    if (a.running === "no-grpc") return t({ en: "Running, but can't be taken over", zh: "运行中但无法接管" });
+    return bootText(a);
+  };
+  const bootText = (a: Avd) => {
     const b = boots()[a.name];
-    return isBooting(b) ? `启动中 ${b!.seconds} 秒` : "未运行";
+    return isBooting(b) ? t({ en: `Starting ${b!.seconds}s`, zh: `启动中 ${b!.seconds} 秒` }) : t({ en: "Not running", zh: "未运行" });
   };
   const avdTint = (a: Avd) => (gatewayDown(state()) ? token("muted-foreground") : a.running === "grpc" ? token("success") : a.running === "no-grpc" || isBooting(boots()[a.name]) ? token("warning") : token("muted-foreground"));
   const avdSpec = (a: Avd) => {
@@ -1985,15 +2127,25 @@ function App() {
   const emptyText = () => {
     const a = shown();
     // 没连着网关：列表是旧的或还没有，不说「没有设备」「运行中」这种可能不对的话；连不上的原因在上面的提示里
-    if (gatewayDown(state())) return a ? "连上网关后才知道这台设备现在的状态。" : "连上网关后这里会显示设备。";
-    if (!a) {
-      if (avds() === null) return "正在读取设备列表…";
-      return avds()!.length > 0 ? "在左侧选一台设备。" : "插上手机并打开 USB 调试，或创建一台模拟器设备。";
+    if (gatewayDown(state())) {
+      return a
+        ? t({ en: "This device's current status is known once the gateway connects.", zh: "连上网关后才知道这台设备现在的状态。" })
+        : t({ en: "Devices show up here once the gateway connects.", zh: "连上网关后这里会显示设备。" });
     }
-    if (a.running === "grpc") return "运行中，画面上现在是别的设备。";
-    if (a.running === "no-grpc") return "这台设备已在运行，但启动时没有开启 gRPC，网关接管不了。先在 Android Studio 里停止它，再在这里重新启动。";
-    const b = boots()[a.name];
-    return isBooting(b) ? `启动中 ${b!.seconds} 秒` : "未运行";
+    if (!a) {
+      if (avds() === null) return t({ en: "Reading the device list…", zh: "正在读取设备列表…" });
+      return avds()!.length > 0
+        ? t({ en: "Pick a device on the left.", zh: "在左侧选一台设备。" })
+        : t({ en: "Plug in a phone and turn on USB debugging, or create an emulator device.", zh: "插上手机并打开 USB 调试，或创建一台模拟器设备。" });
+    }
+    if (a.running === "grpc") return t({ en: "Running. Another device is on screen now.", zh: "运行中，画面上现在是别的设备。" });
+    if (a.running === "no-grpc") {
+      return t({
+        en: "This device is already running, but it was started without gRPC, so the gateway can't take it over. Stop it in Android Studio first, then start it again here.",
+        zh: "这台设备已在运行，但启动时没有开启 gRPC，网关接管不了。先在 Android Studio 里停止它，再在这里重新启动。",
+      });
+    }
+    return bootText(a);
   };
   const toggleH5 = () => {
     if (h5Open()) {
@@ -2016,29 +2168,36 @@ function App() {
   const statusText = () => {
     const s = state();
     // 真机帧没有时间戳（手机时钟和电脑不同），只显示帧率
-    if (s === "connected") return kind() === "phone" ? `已连接 · ${fps()} 帧/秒` : `已连接 · ${fps()} 帧/秒 · 延迟 ${latency()} 毫秒`;
+    if (s === "connected") {
+      return kind() === "phone"
+        ? t({ en: `Connected · ${fps()} fps`, zh: `已连接 · ${fps()} 帧/秒` })
+        : t({ en: `Connected · ${fps()} fps · ${latency()} ms latency`, zh: `已连接 · ${fps()} 帧/秒 · 延迟 ${latency()} 毫秒` });
+    }
     const b = bootingName();
-    if (s === "booting" || b) return b ? `启动中 ${b.seconds} 秒` : LABEL.booting;
-    return LABEL[s];
+    if (s === "booting" || b) return b ? t({ en: `Starting ${b.seconds}s`, zh: `启动中 ${b.seconds} 秒` }) : t(LABEL.booting);
+    return t(LABEL[s]);
   };
 
   const setupBusy = () => installs().some(isActive);
   // 不能点的控件为什么不能点（悬停提示和读屏说这句）
-  const createWhy = () => (setupBusy() ? "正在安装 SDK 组件，装完再创建" : !env() ? "还没连上网关" : undefined);
+  const createWhy = () =>
+    setupBusy() ? t({ en: "Installing SDK components. Create one when it finishes", zh: "正在安装 SDK 组件，装完再创建" })
+      : !env() ? t(LABEL["no-gateway"])
+      : undefined;
   const liveWhy = () => {
     if (shownIsLive()) return undefined;
-    if (gatewayDown(state())) return "还没连上网关";
-    return state() === "connected" && shown() ? "画面上不是这台设备，先切换到它" : "没有连接设备";
+    if (gatewayDown(state())) return t(LABEL["no-gateway"]);
+    return state() === "connected" && shown() ? t({ en: "This device isn't on screen. Switch to it first", zh: "画面上不是这台设备，先切换到它" }) : t(NO_DEVICE);
   };
-  const inputWhy = () => liveWhy() ?? (caps()?.input === false ? "这台设备不支持" : undefined);
+  const inputWhy = () => liveWhy() ?? (caps()?.input === false ? t({ en: "Not supported on this device", zh: "这台设备不支持" }) : undefined);
   // 环境还缺东西、卡片又没显示时，Droidpier 菜单里给一项重新打开它
   const setupMenuLabel = () => {
     const e = env();
-    return e && !e.ok && !showSetup() ? (e.missing.length > 0 ? `环境检查（缺 ${e.missing.length} 项）` : "环境检查") : null;
+    return e && !e.ok && !showSetup() ? (e.missing.length > 0 ? t({ en: `Environment check (${e.missing.length} missing)`, zh: `环境检查（缺 ${e.missing.length} 项）` }) : t({ en: "Environment check", zh: "环境检查" })) : null;
   };
   const pickFiles = () =>
     (host.call("emu.pickFiles", {}) as Promise<{ ok: boolean; error?: string }>).then((r) => {
-      if (!r.ok) showNotice({ text: r.error ?? "没有连接设备", error: true });
+      if (!r.ok) showNotice({ text: r.error ?? t(NO_DEVICE), error: true });
     });
   // 画面上方现在显示哪条提示（ui/banners.ts）
   const banner = () => pickBanner(activeBanners({ adbStuck: adbStuck(), state: state(), notices: notices(), gateway: !!gatewayShown(), clip: clip() !== null }));
@@ -2112,8 +2271,8 @@ function App() {
   const saveRename = () => {
     const a = renameTarget();
     if (!a || renaming()) return;
-    const error = displayNameError(renameDraft());
-    if (error) return renameError.set(error);
+    const error = displayNameErrorMsg(renameDraft());
+    if (error) return renameError.set(t(error));
     if (renameDraft().trim() === avdLabel(a)) return renameTarget.set(null);
     renaming.set(true);
     // 回来时对话框可能已经关了或换成了别的设备：只把结果给发出请求的那一个
@@ -2122,9 +2281,9 @@ function App() {
       (r) => {
         if (!still()) return;
         if (r.ok) renameTarget.set(null);
-        else renameError.set(failText("没有改成", r.error));
+        else renameError.set(failText(t({ en: "Not renamed", zh: "没有改成" }), r.error));
       },
-      (e: Error) => { if (still()) renameError.set(failText("没有改成", e.message)); },
+      (e: Error) => { if (still()) renameError.set(failText(t({ en: "Not renamed", zh: "没有改成" }), e.message)); },
     ).finally(() => renaming.set(false));
   };
 
@@ -2146,10 +2305,10 @@ function App() {
       (r) => {
         if (r.ok) {
           if (still()) deleteTarget.set(null);
-          showNotice({ text: `已删除 ${avdLabel(a)}` });
-        } else if (still()) deleteError.set(failText("没有删除", r.error));
+          showNotice({ text: t({ en: `Deleted ${avdLabel(a)}`, zh: `已删除 ${avdLabel(a)}` }) });
+        } else if (still()) deleteError.set(failText(t({ en: "Not deleted", zh: "没有删除" }), r.error));
       },
-      (e: Error) => { if (still()) deleteError.set(failText("没有删除", e.message)); },
+      (e: Error) => { if (still()) deleteError.set(failText(t({ en: "Not deleted", zh: "没有删除" }), e.message)); },
     ).finally(() => deleting.set(false));
   };
   // 停止设备：顶栏「更多操作」（画面上这台）、侧栏行的右键菜单、主区的按钮都走这里，先确认（正在运行的 App 会被关掉），
@@ -2163,8 +2322,8 @@ function App() {
     const name = r.send;
     if (!name) return;
     (host.call("emu.stopAvd", { name }) as Promise<{ ok: boolean; error?: string }>).then(
-      (res) => stopEvent(res.ok ? { kind: "done", name } : { kind: "failed", name, text: failText("没有停止", res.error) }),
-      (err: Error) => stopEvent({ kind: "failed", name, text: failText("没有停止", err.message) }),
+      (res) => stopEvent(res.ok ? { kind: "done", name } : { kind: "failed", name, text: failText(t({ en: "Not stopped", zh: "没有停止" }), res.error) }),
+      (err: Error) => stopEvent({ kind: "failed", name, text: failText(t({ en: "Not stopped", zh: "没有停止" }), err.message) }),
     );
   };
   const openStop = (a: Avd) => stopEvent({ kind: "open", target: { name: a.name, label: avdLabel(a) } });
@@ -2191,7 +2350,7 @@ function App() {
     const list = avds();
     if (!a || !list || list.some((x) => x.name === a.name)) return;
     deleteTarget.set(null);
-    showNotice({ text: `已删除 ${avdLabel(a)}` });
+    showNotice({ text: t({ en: `Deleted ${avdLabel(a)}`, zh: `已删除 ${avdLabel(a)}` }) });
   });
 
   // 侧栏里设备和真机的一行：同一套几何，圆角 radius 加侧栏的内边距 SPACE.item 正好是侧栏的 radius-xl
@@ -2215,7 +2374,7 @@ function App() {
       <View style={{ flex: 1, minWidth: 0 }}>
       <ContextMenu offset={SPACE.part} popupStyle={menuPopup("top left")} popupStartingStyle={popOut("above")} popupEndingStyle={popOut("above")}
         onOpenChange={releaseOnOpen} trigger={
-        <Button onPress={() => pickDevice(a())} selected={shown()?.name === a().name} accessibilityLabel={`${avdLabel(a())}，${avdStatus(a())}`}
+        <Button onPress={() => pickDevice(a())} selected={shown()?.name === a().name} accessibilityLabel={listLabel(avdLabel(a()), avdStatus(a()))}
           {...rowStates()}
           style={rowStyle()}>
           <View style={avatarStyle()}>
@@ -2233,15 +2392,15 @@ function App() {
           </If>
         </Button>
       }>
-        <Item label={pendingText(a(), "start") ?? "启动"} disabled={!startable() || !!pending()} onSelect={start} />
-        <Item label="重命名…" disabled={beingDeleted(a())} onSelect={() => openRename(a())} />
-        <Item label={beingStopped(a()) ? "停止中…" : "停止设备…"} disabled={!stoppable(a())} onSelect={() => openStop(a())} />
+        <Item label={pendingText(a(), "start") ?? t({ en: "Start", zh: "启动" })} disabled={!startable() || !!pending()} onSelect={start} />
+        <Item label={t({ en: "Rename…", zh: "重命名…" })} disabled={beingDeleted(a())} onSelect={() => openRename(a())} />
+        <Item label={beingStopped(a()) ? t({ en: "Stopping…", zh: "停止中…" }) : t({ en: "Stop device…", zh: "停止设备…" })} disabled={!stoppable(a())} onSelect={() => openStop(a())} />
         <MenuLine />
-        <Item label="删除…" danger disabled={beingDeleted(a())} onSelect={() => openDelete(a())} />
+        <Item label={t({ en: "Delete…", zh: "删除…" })} danger disabled={beingDeleted(a())} onSelect={() => openDelete(a())} />
       </ContextMenu>
       </View>
       <If when={startable()}>
-        <Btn label={pendingText(a(), "start") ?? "启动"} a11y={`${pendingText(a(), "start") ?? "启动"} ${avdLabel(a())}`} disabled={!!pending()} onPress={start} />
+        <Btn label={pendingText(a(), "start") ?? t({ en: "Start", zh: "启动" })} a11y={`${pendingText(a(), "start") ?? t({ en: "Start", zh: "启动" })} ${avdLabel(a())}`} disabled={!!pending()} onPress={start} />
       </If>
       </View>
     );
@@ -2252,7 +2411,7 @@ function App() {
   const PhoneRow = (props: { phone: () => PhoneInfo }) => {
     const p = props.phone;
     return (
-      <Button onPress={() => pickPhone(p())} selected={selected() === p().id} accessibilityLabel={`${phoneLabel(p())}，${phoneStatus(p(), isCurrentPhone(p()))}`}
+      <Button onPress={() => pickPhone(p())} selected={selected() === p().id} accessibilityLabel={listLabel(phoneLabel(p()), phoneStatus(p(), isCurrentPhone(p())))}
         {...rowStates()} hoverStyle={canPick(p()) ? { backgroundColor: token("accent") } : undefined} activeStyle={canPick(p()) ? pressed() : undefined}
         style={rowStyle()}>
         <View style={avatarStyle()}>
@@ -2293,7 +2452,7 @@ function App() {
       <ContextMenu offset={SPACE.part} popupStyle={menuPopup("top left")} popupStartingStyle={popOut("above")} popupEndingStyle={popOut("above")}
         onOpenChange={releaseOnOpen} trigger={
           <Button onPress={() => { const ph = r().phone; if (ph) pickPhone(ph); }} selected={!!r().phone && selected() === r().phone!.id}
-            accessibilityLabel={`${mumuRowTitle(r())}，${mumuRowStatus(r(), current())}`}
+            accessibilityLabel={listLabel(mumuRowTitle(r()), mumuRowStatus(r(), current()))}
             {...rowStates()} hoverStyle={pickable() ? { backgroundColor: token("accent") } : undefined} activeStyle={pickable() ? pressed() : undefined}
             style={rowStyle()}>
             <View style={avatarStyle()}>
@@ -2308,11 +2467,11 @@ function App() {
             </If>
           </Button>
       }>
-        <Item label="关机…" disabled={r().mumu?.state !== "running" || gatewayDown(state())} onSelect={() => { const m = r().mumu; if (m) mumuCloseAsk.set(m); }} />
+        <Item label={t({ en: "Shut down…", zh: "关机…" })} disabled={r().mumu?.state !== "running" || gatewayDown(state())} onSelect={() => { const m = r().mumu; if (m) mumuCloseAsk.set(m); }} />
       </ContextMenu>
       </View>
       <If when={r().mumu?.state === "stopped" && !gatewayDown(state())}>
-        <Btn label={starting() ? "启动中…" : "启动"} a11y={`${starting() ? "启动中…" : "启动"} ${mumuRowTitle(r())}`} disabled={starting()} onPress={startMumu} />
+        <Btn label={starting() ? t({ en: "Starting…", zh: "启动中…" }) : t({ en: "Start", zh: "启动" })} a11y={`${starting() ? t({ en: "Starting…", zh: "启动中…" }) : t({ en: "Start", zh: "启动" })} ${mumuRowTitle(r())}`} disabled={starting()} onPress={startMumu} />
       </If>
       </View>
     );
@@ -2365,7 +2524,7 @@ function App() {
       <View style={{ flex: 1, minWidth: 0 }}>
       <ContextMenu offset={SPACE.part} popupStyle={menuPopup("top left")} popupStartingStyle={popOut("above")} popupEndingStyle={popOut("above")}
         onOpenChange={releaseOnOpen} trigger={
-          <Button onPress={() => pickIos(s())} selected={selected() === s().udid} accessibilityLabel={`${s().name}，${s().runtime}，${iosSimStatus(s(), isCurrentIos(s()))}`}
+          <Button onPress={() => pickIos(s())} selected={selected() === s().udid} accessibilityLabel={listLabel(s().name, s().runtime, iosSimStatus(s(), isCurrentIos(s())))}
             {...rowStates()} hoverStyle={on() ? { backgroundColor: token("accent") } : undefined} activeStyle={on() ? pressed() : undefined}
             style={rowStyle()}>
             <View style={avatarStyle()}>
@@ -2381,11 +2540,11 @@ function App() {
             </If>
           </Button>
       }>
-        <Item label="关机…" disabled={!on() || gatewayDown(state())} onSelect={() => iosSimCloseAsk.set(s())} />
+        <Item label={t({ en: "Shut down…", zh: "关机…" })} disabled={!on() || gatewayDown(state())} onSelect={() => iosSimCloseAsk.set(s())} />
       </ContextMenu>
       </View>
       <If when={s().state === "shutdown" && !gatewayDown(state())}>
-        <Btn label={starting() ? "启动中…" : "启动"} disabled={starting()} onPress={start} />
+        <Btn label={starting() ? t({ en: "Starting…", zh: "启动中…" }) : t({ en: "Start", zh: "启动" })} disabled={starting()} onPress={start} />
       </If>
       </View>
     );
@@ -2398,58 +2557,62 @@ function App() {
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: token("background"), ...ease("normal") }}>
       <If when={sidebarShown()}>
-        <View role="navigation" accessibilityLabel="设备列表"
+        <View role="navigation" accessibilityLabel={t({ en: "Device list", zh: "设备列表" })}
           style={{ width: SIDEBAR_W, margin: SPACE.item, marginRight: 0, padding: SPACE.item, gap: SPACE.part, borderRadius: token("radius-xl"), borderWidth: 1, borderColor: token("border-subtle"), backgroundColor: token("sidebar"), ...ease("normal") }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: SPACE.hair }}>
-            <IconButton icon="plus" label="创建设备…" disabled={!!createWhy()} why={createWhy()} onPress={openCreate} />
-            <IconButton icon="panelLeft" label="收起侧栏" onPress={() => showSidebar(false)} />
+            <IconButton icon="plus" label={t({ en: "Create device…", zh: "创建设备…" })} disabled={!!createWhy()} why={createWhy()} onPress={openCreate} />
+            <IconButton icon="panelLeft" label={t({ en: "Hide sidebar", zh: "收起侧栏" })} onPress={() => showSidebar(false)} />
           </View>
           <FieldBox icon="search">
-            <Input value={query()} onChange={({ value }) => query.set(value)} placeholder="搜索设备" accessibilityLabel="搜索设备" autoCapitalize="none" autoCorrect={false}
+            <Input value={query()} onChange={({ value }) => query.set(value)} placeholder={t({ en: "Search devices", zh: "搜索设备" })} accessibilityLabel={t({ en: "Search devices", zh: "搜索设备" })} autoCapitalize="none" autoCorrect={false}
               style={fieldText()} />
           </FieldBox>
           {/* 搜索时只有手机或 MuMu 匹配：模拟器这组的标题也不留 */}
           <If when={!searching() || listed().length > 0 || noMatch()}>
-            <GroupLabel outsideList>设备</GroupLabel>
+            <GroupLabel outsideList>{t({ en: "Devices", zh: "设备" })}</GroupLabel>
           </If>
           <Scroll style={{ flex: 1 }} contentStyle={{ gap: SPACE.hair }}>
             {/* 没连着网关时读不到列表：不说「正在读取」；有断开前的旧列表时说明它可能不是最新的 */}
-            <If when={avds() !== null} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body, paddingHorizontal: ROW_X }}>{gatewayDown(state()) ? "连上网关后显示设备" : "正在读取设备列表…"}</Text>}>
+            <If when={avds() !== null} else={<Text style={{ color: token("muted-foreground"), ...TYPE.body, paddingHorizontal: ROW_X }}>{gatewayDown(state()) ? t({ en: "Devices show up once the gateway connects", zh: "连上网关后显示设备" }) : t({ en: "Reading the device list…", zh: "正在读取设备列表…" })}</Text>}>
               <If when={gatewayDown(state()) && (avds() ?? []).length > 0}>
-                <Text role="summary" style={{ color: token("warning"), ...TYPE.caption, paddingHorizontal: ROW_X, paddingBottom: SPACE.part }}>没连着网关，下面是断开前的列表。</Text>
+                <Text role="summary" style={{ color: token("warning"), ...TYPE.caption, paddingHorizontal: ROW_X, paddingBottom: SPACE.part }}>
+                  {t({ en: "Not connected to the gateway. This is the list from before it disconnected.", zh: "没连着网关，下面是断开前的列表。" })}
+                </Text>
               </If>
               <If when={(avds() ?? []).length > 0} else={
                 <View style={{ gap: SPACE.item, paddingHorizontal: ROW_X, alignItems: "flex-start" }}>
-                  <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>本机还没有模拟器设备</Text>
-                  <Btn label="创建设备…" disabled={!!createWhy()} why={createWhy()} onPress={openCreate} />
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>{t({ en: "No emulator devices on this computer yet", zh: "本机还没有模拟器设备" })}</Text>
+                  <Btn label={t({ en: "Create device…", zh: "创建设备…" })} disabled={!!createWhy()} why={createWhy()} onPress={openCreate} />
                   <If when={env() && emulatorButtonShown(env()!, (avds() ?? []).length, !!showSetup())}>
-                    <Btn label={`安装模拟器（缺 ${missingEmulatorItems(env()!)} 项）`} onPress={() => { animateNext(); setupDismissed.set(false); setupWanted.set(true); }} />
+                    <Btn label={t({ en: `Install emulator (${missingEmulatorItems(env()!)} missing)`, zh: `安装模拟器（缺 ${missingEmulatorItems(env()!)} 项）` })} onPress={() => { animateNext(); setupDismissed.set(false); setupWanted.set(true); }} />
                   </If>
                 </View>
               }>
-                <If when={listed().length > 0} else={noMatch() ? <Text style={{ color: token("muted-foreground"), ...TYPE.body, paddingHorizontal: ROW_X }}>{`没有名字含「${query().trim()}」的设备`}</Text> : null}>
+                <If when={listed().length > 0} else={noMatch() ? <Text style={{ color: token("muted-foreground"), ...TYPE.body, paddingHorizontal: ROW_X }}>{t({ en: `No devices named “${query().trim()}”`, zh: `没有名字含「${query().trim()}」的设备` })}</Text> : null}>
                   <Each of={listed()} key={(a) => a.name}>{(a) => <DeviceRow avd={a} />}</Each>
                 </If>
               </If>
             </If>
             <If when={showPhones(phones()) && (!searching() || listedPhones().length > 0)}>
-              <GroupLabel>手机</GroupLabel>
+              <GroupLabel>{t({ en: "Phones", zh: "手机" })}</GroupLabel>
               <If when={listedPhones().length > 0} else={
                 <Text style={{ color: token("muted-foreground"), ...TYPE.body, paddingHorizontal: ROW_X }}>
-                  {env()?.missing.some((m) => m.id === "platform-tools") ? "先在环境检查里安装 platform-tools（adb），才能看到手机。" : "插上手机并打开 USB 调试。"}
+                  {env()?.missing.some((m) => m.id === "platform-tools")
+                    ? t({ en: "Install platform-tools (adb) in the environment check first to see phones.", zh: "先在环境检查里安装 platform-tools（adb），才能看到手机。" })
+                    : t({ en: "Plug in a phone and turn on USB debugging.", zh: "插上手机并打开 USB 调试。" })}
                 </Text>
               }>
                 <Each of={listedPhones()} key={(p) => p.id}>{(p) => <PhoneRow phone={p} />}</Each>
               </If>
             </If>
             <If when={listedMumu().length > 0 || (mumuAppClosed() && !searching())}>
-              <GroupLabel>MuMu 模拟器</GroupLabel>
+              <GroupLabel>{t({ en: "MuMu emulator", zh: "MuMu 模拟器" })}</GroupLabel>
               <Each of={listedMumu()} key={(r) => r.key}>{(r) => <MumuDeviceRow row={r} />}</Each>
               {/* 只有装了 MuMu 的网关才会报 appClosed：没装的电脑上这一组不出现 */}
               <If when={mumuAppClosed() && !searching()}>
                 <View style={{ gap: SPACE.item, paddingHorizontal: ROW_X, alignItems: "flex-start" }}>
-                  <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>MuMu 没有运行，打开后这里会列出它的设备。</Text>
-                  <Btn label={mumuLaunching() ? "正在打开…" : "打开 MuMu"} disabled={mumuLaunching() || gatewayDown(state())} onPress={launchMumu} />
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>{t({ en: "MuMu isn't running. Open it and its devices show up here.", zh: "MuMu 没有运行，打开后这里会列出它的设备。" })}</Text>
+                  <Btn label={mumuLaunching() ? t({ en: "Opening…", zh: "正在打开…" }) : t({ en: "Open MuMu", zh: "打开 MuMu" })} disabled={mumuLaunching() || gatewayDown(state())} onPress={launchMumu} />
                 </View>
               </If>
             </If>
@@ -2457,26 +2620,30 @@ function App() {
             <If when={iosSimRows(iosSims(), query(), iosShowAll()).rows.length > 0 || iosSimRows(iosSims(), query(), iosShowAll()).hidden > 0}>
               {/* 有没在运行的模拟器、又没在搜索时，标题就是「显示没在运行的」开关（搜索时本来就全列出来） */}
               <GroupLabel open={iosShowAll()} onToggle={iosStopped() > 0 && !query().trim() ? () => { animateNext(); iosShowAll.set(!iosShowAll()); } : undefined}
-                a11y={iosShowAll() ? "iOS 模拟器，已列出没在运行的" : `iOS 模拟器，还有 ${iosStopped()} 台没在运行`}>iOS 模拟器</GroupLabel>
+                a11y={iosShowAll()
+                  ? t({ en: "iOS Simulator, stopped ones shown", zh: "iOS 模拟器，已列出没在运行的" })
+                  : t({ en: `iOS Simulator, ${iosStopped()} more not running`, zh: `iOS 模拟器，还有 ${iosStopped()} 台没在运行` })}>
+                {t({ en: "iOS Simulator", zh: "iOS 模拟器" })}
+              </GroupLabel>
               <Each of={iosSimRows(iosSims(), query(), iosShowAll()).rows} key={(s) => s.udid}>{(s) => <IosSimRow sim={s} />}</Each>
             </If>
           </Scroll>
           <View style={{ height: 1, marginHorizontal: ROW_X, backgroundColor: token("border-subtle") }} />
-          <AppMenu site={site()} theme={theme()} onTheme={pickTheme} setup={setupMenuLabel()}
+          <AppMenu site={site()} theme={theme()} onTheme={pickTheme} lang={lang()} onLang={pickLang} setup={setupMenuLabel()}
             onSetup={() => { animateNext(); setupDismissed.set(false); setupWanted.set(true); }} />
         </View>
       </If>
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: SPACE.inset, paddingVertical: SPACE.item, paddingHorizontal: SPACE.group }}>
           <If when={!sidebarShown()}>
-            <IconButton icon="panelLeft" label="展开侧栏" onPress={() => showSidebar(true)} />
+            <IconButton icon="panelLeft" label={t({ en: "Show sidebar", zh: "展开侧栏" })} onPress={() => showSidebar(true)} />
           </If>
           {/* 220 放得下最长的连接状态（“已连接 · 60 帧/秒 · 延迟 12 毫秒”），状态不被截 */}
           <View style={{ flex: 1, minWidth: 220, gap: SPACE.hair }} onLayout={({ bounds }) => titleWidth.set(bounds.size.width)}>
             <View style={{ flexDirection: "row", alignItems: "baseline", gap: SPACE.item }}>
               {/* 设备名先占够自己的宽度，包名只用剩下的；名字本身放不下时中间省略 */}
               <Text role="header" style={{ flexShrink: 1, color: token("foreground"), ...TYPE.heading, numberOfLines: 1 }}>
-                {noBreak(fitMiddle(shown() ? avdLabel(shown()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : "没有连接设备", titleWidth(), TYPE.heading.fontSize))}
+                {noBreak(fitMiddle(shown() ? avdLabel(shown()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : t(NO_DEVICE), titleWidth(), TYPE.heading.fontSize))}
               </Text>
               <If when={h5Open() ? visiblePkg(pages() ?? []) : null}>
                 {(pkg) => <Text style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, color: token("muted-foreground"), ...TYPE.caption, fontFamily: "monospace", numberOfLines: 1 }}>{noBreak(pkg())}</Text>}
@@ -2497,49 +2664,49 @@ function App() {
             </View>
           </View>
           {/* 能缩：一行放不下时组折到下一行，不把“更多操作”挤出窗口 */}
-          <Toolbar accessibilityLabel="设备操作" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: SPACE.item, flexShrink: 1, minWidth: 0 }}>
+          <Toolbar accessibilityLabel={t({ en: "Device actions", zh: "设备操作" })} style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: SPACE.item, flexShrink: 1, minWidth: 0 }}>
             <ZoomControl zoom={zoom()} onZoom={setZoom} />
-            <ToolGroup label="画面">
+            <ToolGroup label={t({ en: "Screen", zh: "画面" })}>
               <If when={caps()?.rotate !== false}>
-                <IconButton variant="toolbar" icon="rotateLeft" label="向左旋转" tip="点过屏幕后按 ⌘←" disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.rotate", { dir: "left" }))} />
-                <IconButton variant="toolbar" icon="rotateRight" label="向右旋转" tip="点过屏幕后按 ⌘→" disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.rotate", { dir: "right" }))} />
+                <IconButton variant="toolbar" icon="rotateLeft" label={t({ en: "Rotate left", zh: "向左旋转" })} tip={keyTip("⌘←")} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.rotate", { dir: "left" }))} />
+                <IconButton variant="toolbar" icon="rotateRight" label={t({ en: "Rotate right", zh: "向右旋转" })} tip={keyTip("⌘→")} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.rotate", { dir: "right" }))} />
               </If>
-              <IconButton variant="toolbar" icon="camera" label="截图" tip="点过屏幕后按 ⌘S" disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.screenshot", {}))} />
+              <IconButton variant="toolbar" icon="camera" label={t({ en: "Screenshot", zh: "截图" })} tip={keyTip("⌘S")} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.screenshot", {}))} />
             </ToolGroup>
-            <ToolGroup label="硬件按键">
-              <IconButton variant="toolbar" icon="power" label="电源" tip="点过屏幕后按 ⌘P" disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("Power")} />
-              <IconButton variant="toolbar" icon="volDown" label="音量−" tip="点过屏幕后按 ⌘-" disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AudioVolumeDown")} />
-              <IconButton variant="toolbar" icon="volUp" label="音量+" tip="点过屏幕后按 ⌘=" disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AudioVolumeUp")} />
+            <ToolGroup label={t({ en: "Hardware buttons", zh: "硬件按键" })}>
+              <IconButton variant="toolbar" icon="power" label={t({ en: "Power", zh: "电源" })} tip={keyTip("⌘P")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("Power")} />
+              <IconButton variant="toolbar" icon="volDown" label={t({ en: "Volume −", zh: "音量−" })} tip={keyTip("⌘-")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AudioVolumeDown")} />
+              <IconButton variant="toolbar" icon="volUp" label={t({ en: "Volume +", zh: "音量+" })} tip={keyTip("⌘=")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AudioVolumeUp")} />
             </ToolGroup>
             <If when={h5Key() && shownIsLive()}>
-              <ToolGroup label="H5 调试">
-                <ToolToggle icon="code" label="H5 调试" tip="H5 调试" on={h5Open()} onChange={toggleH5} />
+              <ToolGroup label={t(H5_DEBUG)}>
+                <ToolToggle icon="code" label={t(H5_DEBUG)} tip={t(H5_DEBUG)} on={h5Open()} onChange={toggleH5} />
               </ToolGroup>
             </If>
             <If when={logcatOk() && device() !== "" && (viaAdb() || caps()?.logs === true)}>
-              <ToolGroup label="日志">
-                <ToolToggle icon="logs" label="日志" tip={viaAdb() ? "日志（logcat）" : "日志（系统日志）"} on={logOpen()} onChange={toggleLog} />
+              <ToolGroup label={t(LOGS)}>
+                <ToolToggle icon="logs" label={t(LOGS)} tip={viaAdb() ? t({ en: "Logs (logcat)", zh: "日志（logcat）" }) : t({ en: "Logs (system log)", zh: "日志（系统日志）" })} on={logOpen()} onChange={toggleLog} />
               </ToolGroup>
             </If>
-            <ToolGroup label="更多操作">
+            <ToolGroup label={t(MORE)}>
               <Menu align="end" offset={SPACE.item} popupStyle={menuPopup("top right")} popupStartingStyle={popOut("above")} popupEndingStyle={popOut("above")}
                 onOpenChange={releaseOnOpen} trigger={
-                <IconButton variant="toolbar" icon="more" label="更多操作" />
+                <IconButton variant="toolbar" icon="more" label={t(MORE)} />
               }>
                 {/* 和把文件拖到画面上走同一条路（host 的 emu.pickFiles 打开选择文件框） */}
                 <If when={!viaAdb()}>
-                  <Item label="安装 App…" disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
+                  <Item label={t({ en: "Install app…", zh: "安装 App…" })} disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
                 </If>
                 <If when={viaAdb()}>
-                  <Item label="安装 APK 或发送文件…" disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
-                  <Item label={proxyBusy() ? "正在检测网络…" : "检测网络"} disabled={proxyBusy() || !shownIsLive() || state() !== "connected"} onSelect={checkNetwork} />
+                  <Item label={t({ en: "Install APK or send files…", zh: "安装 APK 或发送文件…" })} disabled={!shownIsLive() || state() !== "connected"} onSelect={pickFiles} />
+                  <Item label={proxyBusy() ? t({ en: "Checking network…", zh: "正在检测网络…" }) : t({ en: "Check network", zh: "检测网络" })} disabled={proxyBusy() || !shownIsLive() || state() !== "connected"} onSelect={checkNetwork} />
                 </If>
                 <If when={caps()?.reboot !== false}>
-                  <Item label={state() === "rebooting" ? "重启中…" : `${rebootLabel(kind() === "phone")}…`} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
+                  <Item label={state() === "rebooting" ? t(LABEL.rebooting) : `${rebootLabel(kind() === "phone")}…`} disabled={!shownIsLive() || state() !== "connected"} onSelect={() => rebootAsk.set(true)} />
                 </If>
                 {/* 停止的是画面上这台（同原来的「关闭模拟器」）；别的在运行的设备从侧栏行的右键菜单或主区的按钮停。手机不能从页面停止 */}
                 <If when={caps()?.stop !== false}>
-                  <Item label={onScreen() && beingStopped(onScreen()!) ? "停止中…" : "停止设备…"}
+                  <Item label={onScreen() && beingStopped(onScreen()!) ? t({ en: "Stopping…", zh: "停止中…" }) : t({ en: "Stop device…", zh: "停止设备…" })}
                     disabled={!stoppable(onScreen())}
                     onSelect={() => { const a = onScreen(); if (a) openStop(a); }} />
                 </If>
@@ -2547,8 +2714,8 @@ function App() {
                 <If when={viaAdb() || caps()?.reboot !== false || caps()?.stop !== false}>
                   <MenuLine />
                 </If>
-                <Item label="重命名…" disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
-                <Item label="删除…" danger disabled={!shown() || beingDeleted(shown()!)}
+                <Item label={t({ en: "Rename…", zh: "重命名…" })} disabled={!shown() || beingDeleted(shown()!)} onSelect={() => { const a = shown(); if (a) openRename(a); }} />
+                <Item label={t({ en: "Delete…", zh: "删除…" })} danger disabled={!shown() || beingDeleted(shown()!)}
                   onSelect={() => { const a = shown(); if (a) openDelete(a); }} />
               </Menu>
             </ToolGroup>
@@ -2562,11 +2729,16 @@ function App() {
               <If when={PROBLEM[state()]}>
                 {(text) => (
                   <View role="alert" style={{ gap: SPACE.item, backgroundColor: token("overlay"), borderRadius: token("radius-lg"), padding: SPACE.inset, borderWidth: 1, borderColor: problemColor(), maxWidth: 520 }}>
-                    <Text style={{ color: problemColor(), ...TYPE.body, fontWeight: WEIGHT.strong }}>{text()}</Text>
+                    <Text style={{ color: problemColor(), ...TYPE.body, fontWeight: WEIGHT.strong }}>{t(text())}</Text>
                     <If when={state() === "no-gateway" ? upgrade() : null}>
                       {(cmd) => (
                         <View style={{ gap: SPACE.item }}>
-                          <Text style={{ color: token("foreground"), ...TYPE.body }}>在终端运行下面的命令（第一次会自动安装，之后直接启动；它在后台运行，关闭终端也不影响），这个页面会自动连上。</Text>
+                          <Text style={{ color: token("foreground"), ...TYPE.body }}>
+                            {t({
+                              en: "Run the command below in Terminal (the first run installs it, later runs just start it; it keeps running in the background after you close Terminal). This page connects on its own.",
+                              zh: "在终端运行下面的命令（第一次会自动安装，之后直接启动；它在后台运行，关闭终端也不影响），这个页面会自动连上。",
+                            })}
+                          </Text>
                           <CopyCmd cmd={cmd()} />
                         </View>
                       )}
@@ -2592,7 +2764,7 @@ function App() {
                   <If when={state() === "connected" && shownIsLive() && !painted()}>
                     {/* 有底色：直接换设备时画布上还留着上一台的最后一帧 */}
                     <View role="status" style={{ position: "absolute", top: BEZEL - 1, left: BEZEL - 1, right: BEZEL - 1, bottom: BEZEL - 1, pointerEvents: "none", alignItems: "center", justifyContent: "center", padding: SPACE.section, borderRadius: 34, backgroundColor: token("device-bezel") }}>
-                      <Text style={{ color: token("muted-foreground"), ...TYPE.body, textAlign: "center" }}>正在等待画面…</Text>
+                      <Text style={{ color: token("muted-foreground"), ...TYPE.body, textAlign: "center" }}>{t({ en: "Waiting for the screen…", zh: "正在等待画面…" })}</Text>
                     </View>
                   </If>
                   <If when={drag().active}>
@@ -2602,10 +2774,19 @@ function App() {
                       borderColor: drag().blocked ? token("destructive") : token("primary"), backgroundColor: token("drag-shade"),
                     }}>
                       <Text style={{ color: drag().blocked ? token("destructive") : token("foreground"), ...TYPE.title, textAlign: "center" }}>
-                        {drag().blocked ? `不能发送：${drag().blocked}` : `松开以发送到 ${currentAvd() ? avdLabel(currentAvd()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : "这台设备"}`}
+                        {drag().blocked
+                          ? t({ en: `Can't send: ${drag().blocked}`, zh: `不能发送：${drag().blocked}` })
+                          : (() => {
+                            const target = currentAvd() ? avdLabel(currentAvd()!) : currentPhone() ? phoneTitle(currentPhone()!, mumu()) : currentIos() ? currentIos()!.name : null;
+                            return target
+                              ? t({ en: `Drop to send to ${target}`, zh: `松开以发送到 ${target}` })
+                              : t({ en: "Drop to send to this device", zh: "松开以发送到 这台设备" });
+                          })()}
                       </Text>
                       <If when={!drag().blocked}>
-                        <Text style={{ color: token("muted-foreground"), ...TYPE.caption, textAlign: "center" }}>{viaAdb() ? "APK 会直接安装，其他文件放进「下载」文件夹" : "拖 .app 文件夹，或装着 .app 的 .zip / .ipa 来安装"}</Text>
+                        <Text style={{ color: token("muted-foreground"), ...TYPE.caption, textAlign: "center" }}>{viaAdb()
+                          ? t({ en: "APKs install directly; other files go to the Download folder", zh: "APK 会直接安装，其他文件放进「下载」文件夹" })
+                          : t({ en: "Drag a .app folder, or a .zip / .ipa containing a .app, to install it", zh: "拖 .app 文件夹，或装着 .app 的 .zip / .ipa 来安装" })}</Text>
                       </If>
                     </View>
                   </If>
@@ -2614,34 +2795,40 @@ function App() {
               <If when={!shownIsLive()}>
                 <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: SPACE.item, padding: SPACE.section, backgroundColor: token("background") }}>
                   <Icon name="smartphone" size={ICON.hero} tint={shown() ? avdTint(shown()!) : token("muted-foreground")} />
-                  <Text style={{ color: token("foreground"), ...TYPE.title, textAlign: "center" }}>{shown() ? avdLabel(shown()!) : gatewayDown(state()) ? "未连接网关" : "没有连接设备"}</Text>
+                  <Text style={{ color: token("foreground"), ...TYPE.title, textAlign: "center" }}>{shown() ? avdLabel(shown()!) : gatewayDown(state()) ? t({ en: "Gateway not connected", zh: "未连接网关" }) : t(NO_DEVICE)}</Text>
                   <Text style={{ maxWidth: 360, color: token("muted-foreground"), ...TYPE.body, textAlign: "center" }}>{emptyText()}</Text>
                   {/* 没连着网关时列表是旧的，这些按钮点了必然失败，不给 */}
                   <If when={!gatewayDown(state())}>
                     <If when={shown()?.running === "grpc"}>
                       <View style={{ flexDirection: "row", gap: SPACE.item }}>
-                        <Btn label={pendingText(shown()!, "use") ?? "切换到这台"} kind="primary" disabled={!!pending()} onPress={() => { const a = shown(); if (a) switchTo(a); }} />
-                        <Btn label={beingStopped(shown()!) ? "停止中…" : "停止设备…"} disabled={!stoppable(shown()) || !!pending()} onPress={() => { const a = shown(); if (a) openStop(a); }} />
+                        <Btn label={pendingText(shown()!, "use") ?? t({ en: "Switch to this device", zh: "切换到这台" })} kind="primary" disabled={!!pending()} onPress={() => { const a = shown(); if (a) switchTo(a); }} />
+                        <Btn label={beingStopped(shown()!) ? t({ en: "Stopping…", zh: "停止中…" }) : t({ en: "Stop device…", zh: "停止设备…" })} disabled={!stoppable(shown()) || !!pending()} onPress={() => { const a = shown(); if (a) openStop(a); }} />
                       </View>
                     </If>
                     <If when={shown() && canStart(shown()!)}>
-                      <Btn label={pendingText(shown()!, "start") ?? "启动"} kind="primary" disabled={!!pending()} onPress={() => { const a = shown(); if (a) begin(a.name, "start"); }} />
+                      <Btn label={pendingText(shown()!, "start") ?? t({ en: "Start", zh: "启动" })} kind="primary" disabled={!!pending()} onPress={() => { const a = shown(); if (a) begin(a.name, "start"); }} />
                     </If>
                     <If when={!shown() && (avds() ?? []).length === 0 && avds() !== null}>
-                      <Btn label="创建设备…" kind="primary" disabled={!!createWhy()} why={createWhy()} onPress={openCreate} />
+                      <Btn label={t({ en: "Create device…", zh: "创建设备…" })} kind="primary" disabled={!!createWhy()} why={createWhy()} onPress={openCreate} />
                     </If>
                   </If>
                 </View>
               </If>
             </View>
-            <Toolbar accessibilityLabel="系统导航" style={groupStyle()}>
-              <IconButton variant="toolbar" icon="back" label="返回" tip="点过屏幕后按 ⌘⌫" disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("GoBack")} />
-              <IconButton variant="toolbar" icon="home" label="主页" tip="点过屏幕后按 ⇧⌘H" disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("GoHome")} />
-              <IconButton variant="toolbar" icon="recents" label="最近" tip="点过屏幕后按 ⌘O" disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AppSwitch")} />
+            <Toolbar accessibilityLabel={t({ en: "System navigation", zh: "系统导航" })} style={groupStyle()}>
+              <IconButton variant="toolbar" icon="back" label={t({ en: "Back", zh: "返回" })} tip={keyTip("⌘⌫")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("GoBack")} />
+              <IconButton variant="toolbar" icon="home" label={t({ en: "Home", zh: "主页" })} tip={keyTip("⇧⌘H")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("GoHome")} />
+              <IconButton variant="toolbar" icon="recents" label={t({ en: "Recents", zh: "最近" })} tip={keyTip("⌘O")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AppSwitch")} />
             </Toolbar>
             {/* 一直占着一行，焦点进出时画面不跳 */}
             <Text role="summary" style={{ ...TYPE.caption, color: keyboardShown() ? token("foreground") : token("muted-foreground"), textAlign: "center", minHeight: TYPE.caption.lineHeight }}>
-              {keyboardShown() ? "已接管键盘 · Shift+Tab 离开" : shownIsLive() && caps()?.input !== false ? (viaAdb() ? "点屏幕用键盘输入 · 也可以把 APK 或文件拖到画面上" : "点屏幕用键盘输入 · 也可以把 .app 拖到画面上安装") : ""}
+              {keyboardShown()
+                ? t({ en: "Keyboard captured · Shift+Tab to leave", zh: "已接管键盘 · Shift+Tab 离开" })
+                : shownIsLive() && caps()?.input !== false
+                  ? (viaAdb()
+                    ? t({ en: "Click the screen to type · You can also drag APKs or files onto the screen", zh: "点屏幕用键盘输入 · 也可以把 APK 或文件拖到画面上" })
+                    : t({ en: "Click the screen to type · You can also drag a .app onto the screen to install", zh: "点屏幕用键盘输入 · 也可以把 .app 拖到画面上安装" }))
+                  : ""}
             </Text>
           </View>
           {/* 画面上方的提示同一时间只显示一条（ui/banners.ts 的先后），盖住的地方少；后面排着几条写在能关掉的那条里。
@@ -2657,7 +2844,7 @@ function App() {
                         <If when={b().command}>{(cmd) => <CopyCmd cmd={cmd()} />}</If>
                         <If when={b().kind === "manual"}>
                           <View style={{ flexDirection: "row" }}>
-                            <Btn label="关闭" onPress={() => gatewayDismissed.set(b().text)} />
+                            <Btn label={t(CLOSE)} onPress={() => gatewayDismissed.set(b().text)} />
                           </View>
                         </If>
                       </View>
@@ -2666,16 +2853,20 @@ function App() {
                   <If when={shot().kind === "clip"}>
                     <View role="summary" style={{ flexDirection: "row", alignItems: "center", gap: SPACE.item }}>
                       <Text style={{ color: copyFailed() ? token("destructive") : token("foreground"), ...TYPE.body }}>
-                        {copyFailed() ? "复制失败，请再点一次。" : `${kind() === "phone" ? "手机" : "模拟器"}里复制了新内容`}
+                        {copyFailed()
+                          ? t({ en: "Copy failed. Click again.", zh: "复制失败，请再点一次。" })
+                          : kind() === "phone"
+                            ? t({ en: "New content was copied on the phone", zh: "手机里复制了新内容" })
+                            : t({ en: "New content was copied in the emulator", zh: "模拟器里复制了新内容" })}
                       </Text>
-                      <Btn label="复制到电脑" onPress={copyClip} />
-                      <Btn label="关闭" onPress={() => clip.set(null)} />
+                      <Btn label={t({ en: "Copy to computer", zh: "复制到电脑" })} onPress={copyClip} />
+                      <Btn label={t(CLOSE)} onPress={() => clip.set(null)} />
                     </View>
                   </If>
                   <If when={shot().kind === "adb"}>
                     <AdbStuck onReboot={() => rebootAsk.set(true)} phone={kind() === "phone"} />
                     <View style={{ flexDirection: "row" }}>
-                      <Btn label="关闭" onPress={() => adbStuck.set(false)} />
+                      <Btn label={t(CLOSE)} onPress={() => adbStuck.set(false)} />
                     </View>
                   </If>
                   <If when={shot().notice}>
@@ -2684,14 +2875,14 @@ function App() {
                         <Text style={{ color: n().error ? token("destructive") : token("foreground"), ...TYPE.body, userSelect: noticeTimeoutMs(n()) === null ? "text" : undefined }}>{n().text}</Text>
                         <If when={noticeTimeoutMs(n()) === null}>
                           <View style={{ flexDirection: "row" }}>
-                            <Btn label="关闭" onPress={() => notices.set(dropNotice(notices(), n()))} />
+                            <Btn label={t(CLOSE)} onPress={() => notices.set(dropNotice(notices(), n()))} />
                           </View>
                         </If>
                       </View>
                     )}
                   </If>
                   <If when={banner().shown === shot().kind && waitingShown(banner(), gatewayManual())}>
-                    <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{`关掉这条后还有 ${banner().waiting} 条提示`}</Text>
+                    <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>{t({ en: `${banner().waiting} more after this one`, zh: `关掉这条后还有 ${banner().waiting} 条提示` })}</Text>
                   </If>
                 </View>
               )}
@@ -2699,9 +2890,14 @@ function App() {
             <If when={uploads().length > 0}>
               <View style={{ ...bannerCard(), borderColor: token("border"), width: 420 }}>
                 {/* 进度一直在变，不放在实时播报区里；读屏只听开始和传完（summary） */}
-                <View accessibilityLabel="发送文件" style={{ gap: SPACE.item }}>
+                <View accessibilityLabel={t({ en: "Sending files", zh: "发送文件" })} style={{ gap: SPACE.item }}>
                   <Text role="summary" style={{ color: token("foreground"), ...TYPE.body, fontWeight: WEIGHT.strong }}>
-                    {uploads().every(uploadEnded) ? "发送完了" : `正在发送 ${uploads().filter((u) => !uploadEnded(u)).length} 个文件…`}
+                    {uploads().every(uploadEnded)
+                      ? t({ en: "Sending finished", zh: "发送完了" })
+                      : (() => {
+                        const n = uploads().filter((u) => !uploadEnded(u)).length;
+                        return t({ en: `Sending ${n} ${n === 1 ? "file" : "files"}…`, zh: `正在发送 ${n} 个文件…` });
+                      })()}
                   </Text>
                   <Each of={uploads()} key={(u) => u.id}>
                     {(u) => (
@@ -2715,7 +2911,7 @@ function App() {
                   </Each>
                   <If when={uploads().every(uploadEnded)}>
                     <View style={{ flexDirection: "row" }}>
-                      <Btn label="关闭" onPress={() => host.call("emu.uploadsClear", {})} />
+                      <Btn label={t(CLOSE)} onPress={() => host.call("emu.uploadsClear", {})} />
                     </View>
                   </If>
                 </View>
@@ -2729,11 +2925,11 @@ function App() {
               {/* 选中的标签用 foreground 的下划线（中性色，见颜色的说明），下划线压在标签栏的底边上 */}
               <Tabs style={{ flexDirection: "row", gap: SPACE.part, paddingHorizontal: SPACE.inset, paddingTop: SPACE.item, borderBottomWidth: 1, borderColor: token("border-subtle") }}
                 indicatorStyle={{ bottom: 0, height: 2, backgroundColor: token("foreground") }}>
-                {(["h5", "log"] as const).map((t) => (
-                  <Tab selected={sideTab() === t} onPress={() => sideTab.set(t)} accessibilityLabel={t === "h5" ? "H5 调试" : "日志"}
+                {(["h5", "log"] as const).map((tab) => (
+                  <Tab selected={sideTab() === tab} onPress={() => sideTab.set(tab)} accessibilityLabel={t(tab === "h5" ? H5_DEBUG : LOGS)}
                     hoverStyle={{ backgroundColor: token("accent") }} focusStyle={{ backgroundColor: token("accent") }}
                     style={{ height: CONTROL.sm, justifyContent: "center", paddingHorizontal: SPACE.inset, borderTopLeftRadius: token("radius-sm"), borderTopRightRadius: token("radius-sm"), ...ease() }}>
-                    <Text style={{ color: sideTab() === t ? token("foreground") : token("muted-foreground"), ...TYPE.body, fontWeight: WEIGHT.medium }}>{t === "h5" ? "H5 调试" : "日志"}</Text>
+                    <Text style={{ color: sideTab() === tab ? token("foreground") : token("muted-foreground"), ...TYPE.body, fontWeight: WEIGHT.medium }}>{t(tab === "h5" ? H5_DEBUG : LOGS)}</Text>
                   </Tab>
                 ))}
               </Tabs>
@@ -2768,45 +2964,59 @@ function App() {
             const downloads = () => items().some((i) => i.id === "emulator" || i.id === "platform-tools" || i.id === "system-image");
             const hasAvd = () => items().some((i) => i.id === "avd");
             return (
-              <DialogContent title={avd() ? `创建设备 ${avd()!.name}？` : `下载并安装 ${items().length} 项？`} footer={<>
-                <Btn label="取消" onPress={() => confirm.set(null)} />
-                <Btn label={avd() ? (avd()!.image.installed ? "创建" : "下载并创建") : "下载并安装"} kind="primary" disabled={space().shortMb > 0} onPress={startInstall} />
+              <DialogContent title={avd()
+                ? t({ en: `Create device ${avd()!.name}?`, zh: `创建设备 ${avd()!.name}？` })
+                : t({ en: `Download and install ${items().length} ${items().length === 1 ? "item" : "items"}?`, zh: `下载并安装 ${items().length} 项？` })} footer={<>
+                <Btn label={t(CANCEL)} onPress={() => confirm.set(null)} />
+                <Btn label={avd() ? (avd()!.image.installed ? t({ en: "Create", zh: "创建" }) : t({ en: "Download and create", zh: "下载并创建" })) : t({ en: "Download and install", zh: "下载并安装" })} kind="primary" disabled={space().shortMb > 0} onPress={startInstall} />
               </>}>
                 <If when={avd()} else={
                   <View>
                     <Each of={items()} key={(i) => i.id}>
-                      {(i) => <Text style={{ color: token("foreground"), ...TYPE.body }}>{`· ${envName(i().id)}${i().pkg ? `（${i().pkg}）` : ""}${i().sizeMb ? `，${sizeText(i().sizeMb!)}` : ""}`}</Text>}
+                      {(i) => <Text style={{ color: token("foreground"), ...TYPE.body }}>{t({
+                        en: `· ${envName(i().id)}${i().pkg ? ` (${i().pkg})` : ""}${i().sizeMb ? `, ${sizeText(i().sizeMb!)}` : ""}`,
+                        zh: `· ${envName(i().id)}${i().pkg ? `（${i().pkg}）` : ""}${i().sizeMb ? `，${sizeText(i().sizeMb!)}` : ""}`,
+                      })}</Text>}
                     </Each>
                   </View>
                 }>
                   {(a) => (
                     <View>
                       <Text style={{ color: token("foreground"), ...TYPE.body }}>
-                        {`机型 ${a().device.name} · ${imageLabel(a().image)} · 内存 ${ramMbFor(a().image.apiLevel)} MB`}
+                        {t({ en: `Model ${a().device.name} · ${imageLabel(a().image)} · Memory ${ramMbFor(a().image.apiLevel)} MB`, zh: `机型 ${a().device.name} · ${imageLabel(a().image)} · 内存 ${ramMbFor(a().image.apiLevel)} MB` })}
                       </Text>
                       <If when={!a().image.installed}>
                         <Text style={{ color: token("foreground"), ...TYPE.body }}>
-                          {`要先下载系统镜像（${a().image.pkg}），${sizeText(a().image.sizeMb ?? 0)}，装到 ${env()?.sdkRoot ?? ""}`}
+                          {t({
+                            en: `Downloads the system image (${a().image.pkg}) first, ${sizeText(a().image.sizeMb ?? 0)}, into ${env()?.sdkRoot ?? ""}`,
+                            zh: `要先下载系统镜像（${a().image.pkg}），${sizeText(a().image.sizeMb ?? 0)}，装到 ${env()?.sdkRoot ?? ""}`,
+                          })}
                         </Text>
                       </If>
                     </View>
                   )}
                 </If>
                 <Text style={{ color: token("foreground"), ...TYPE.body }}>
-                  {`${space().downloadMb ? `下载${sizeText(space().downloadMb)}，` : ""}安装后${sizeText(space().diskMb).replace("约", "约占")}，${env()?.sdkRoot ?? ""} 所在磁盘剩余 ${gbText(env()?.freeMb ?? 0)}`}
+                  {t({
+                    en: `${space().downloadMb ? `Downloads ${sizeText(space().downloadMb)}, ` : ""}takes ${sizeText(space().diskMb)} once installed; the disk with ${env()?.sdkRoot ?? ""} has ${gbText(env()?.freeMb ?? 0)} free`,
+                    zh: `${space().downloadMb ? `下载${sizeText(space().downloadMb)}，` : ""}安装后${sizeText(space().diskMb).replace("约", "约占")}，${env()?.sdkRoot ?? ""} 所在磁盘剩余 ${gbText(env()?.freeMb ?? 0)}`,
+                  })}
                 </Text>
                 <If when={hasAvd() && env() && !env()!.sameDisk}>
-                  <Text style={{ color: token("foreground"), ...TYPE.body }}>{`${env()?.avdHome ?? ""} 所在磁盘剩余 ${gbText(env()?.avdFreeMb ?? 0)}`}</Text>
+                  <Text style={{ color: token("foreground"), ...TYPE.body }}>{t({ en: `The disk with ${env()?.avdHome ?? ""} has ${gbText(env()?.avdFreeMb ?? 0)} free`, zh: `${env()?.avdHome ?? ""} 所在磁盘剩余 ${gbText(env()?.avdFreeMb ?? 0)}` })}</Text>
                 </If>
                 <If when={space().shortMb > 0}>
-                  <Text role="alert" style={{ color: token("destructive"), ...TYPE.body, fontWeight: WEIGHT.strong }}>{`磁盘空间不足：还需要约 ${gbText(space().shortMb)}`}</Text>
+                  <Text role="alert" style={{ color: token("destructive"), ...TYPE.body, fontWeight: WEIGHT.strong }}>{t({ en: `Not enough disk space: about ${gbText(space().shortMb)} more needed`, zh: `磁盘空间不足：还需要约 ${gbText(space().shortMb)}` })}</Text>
                 </If>
                 <If when={hasAvd()}>
-                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption, userSelect: "text" }}>{`设备建在 ${env()?.avdHome ?? ""}，第一次启动时要约 ${gbText(AVD_DISK_MB)} 空闲空间`}</Text>
+                  <Text style={{ color: token("muted-foreground"), ...TYPE.caption, userSelect: "text" }}>{t({ en: `The device is created in ${env()?.avdHome ?? ""} and needs about ${gbText(AVD_DISK_MB)} free space on first start`, zh: `设备建在 ${env()?.avdHome ?? ""}，第一次启动时要约 ${gbText(AVD_DISK_MB)} 空闲空间` })}</Text>
                 </If>
                 <If when={downloads()}>
                   <Text style={{ color: token("muted-foreground"), ...TYPE.caption }}>
-                    {"从 Google 的 SDK 仓库（dl.google.com）直接下载，校验 sha1 后再解压。下载前会显示 Google 的许可证，你同意后才会继续。"}
+                    {t({
+                      en: "Downloads straight from Google's SDK repository (dl.google.com) and checks the sha1 before unpacking. Google's license is shown before downloading, and it only continues once you accept.",
+                      zh: "从 Google 的 SDK 仓库（dl.google.com）直接下载，校验 sha1 后再解压。下载前会显示 Google 的许可证，你同意后才会继续。",
+                    })}
                   </Text>
                 </If>
               </DialogContent>
@@ -2839,12 +3049,15 @@ function App() {
         </If>
       </AppDialog>
       <AppDialog open={license() !== null} size="lg">
-        <DialogContent title={`同意许可证 ${license()?.name ?? ""} 后继续安装`} scroll={false}
-          description="下面是 Google 的 SDK 仓库清单里这份许可证的全文。同意后会记在 SDK 的 licenses 目录里，Android Studio 也认；不同意的话，这一项不会安装。"
+        <DialogContent title={t({ en: `Accept license ${license()?.name ?? ""} to continue installing`, zh: `同意许可证 ${license()?.name ?? ""} 后继续安装` })} scroll={false}
+          description={t({
+            en: "Below is the full text of this license from Google's SDK repository manifest. Accepting is recorded in the SDK's licenses folder, which Android Studio also reads; if you decline, this item won't be installed.",
+            zh: "下面是 Google 的 SDK 仓库清单里这份许可证的全文。同意后会记在 SDK 的 licenses 目录里，Android Studio 也认；不同意的话，这一项不会安装。",
+          })}
           footer={<>
             {/* 不同意没有损失（只是这一项不装），要提交的是同意，所以同意是主操作 */}
-            <Btn label="不同意" disabled={answered() === license()?.id} onPress={() => answer("emu.rejectLicenses")} />
-            <Btn label="同意" kind="primary" disabled={answered() === license()?.id} onPress={() => answer("emu.acceptLicenses")} />
+            <Btn label={t({ en: "Decline", zh: "不同意" })} disabled={answered() === license()?.id} onPress={() => answer("emu.rejectLicenses")} />
+            <Btn label={t({ en: "Accept", zh: "同意" })} kind="primary" disabled={answered() === license()?.id} onPress={() => answer("emu.acceptLicenses")} />
           </>}>
           {/* 平时 420 高；窗口矮时跟着对话框缩，按钮一直看得见（Esc 和点背景关不掉这个框） */}
           <Scroll style={{ height: 420, flexShrink: 1, minHeight: 0, borderRadius: token("radius-lg"), borderWidth: 1, borderColor: token("border"), backgroundColor: token("field") }} contentStyle={{ padding: SPACE.inset }}>
@@ -2855,13 +3068,14 @@ function App() {
       <AppDialog open={renameTarget() !== null} size="sm" onClose={() => renameTarget.set(null)}>
         <If when={renameTarget()}>
           {(a) => (
-            <DialogContent title="重命名设备" description={`只改显示名称，Android Studio 里也会看到；设备 ID ${a().name} 不变。`} footer={<>
-              <Btn label="取消" onPress={() => renameTarget.set(null)} />
-              <Btn label={renaming() ? "保存中…" : "保存"} kind="primary" disabled={renaming()} onPress={saveRename} />
+            <DialogContent title={t({ en: "Rename device", zh: "重命名设备" })}
+              description={t({ en: `Changes only the display name, which Android Studio also shows; the device ID ${a().name} stays the same.`, zh: `只改显示名称，Android Studio 里也会看到；设备 ID ${a().name} 不变。` })} footer={<>
+              <Btn label={t(CANCEL)} onPress={() => renameTarget.set(null)} />
+              <Btn label={renaming() ? t({ en: "Saving…", zh: "保存中…" }) : t({ en: "Save", zh: "保存" })} kind="primary" disabled={renaming()} onPress={saveRename} />
             </>}>
               <FieldBox error={!!renameError()}>
                 <Input value={renameDraft()} onChange={({ value }) => { renameDraft.set(value); renameError.set(null); }} onSubmit={saveRename}
-                  autoFocus accessibilityLabel="显示名称" autoCorrect={false} style={fieldText()} />
+                  autoFocus accessibilityLabel={t({ en: "Display name", zh: "显示名称" })} autoCorrect={false} style={fieldText()} />
               </FieldBox>
               <If when={renameError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption }}>{e()}</Text>}</If>
             </DialogContent>
@@ -2871,13 +3085,15 @@ function App() {
       <AppDialog open={deleteTarget() !== null} size="sm" onClose={() => { if (!deleting()) deleteTarget.set(null); }}>
         <If when={deleteTarget()}>
           {(a) => (
-            <DialogContent title={`删除设备 ${avdLabel(a())}？`} footer={<>
-              <Btn label="取消" disabled={deleting()} onPress={() => deleteTarget.set(null)} />
-              <Btn label={deleting() ? "删除中…" : "删除"} kind="danger" disabled={deleting()} onPress={confirmDelete} />
+            <DialogContent title={t({ en: `Delete device ${avdLabel(a())}?`, zh: `删除设备 ${avdLabel(a())}？` })} footer={<>
+              <Btn label={t(CANCEL)} disabled={deleting()} onPress={() => deleteTarget.set(null)} />
+              <Btn label={deleting() ? t({ en: "Deleting…", zh: "删除中…" }) : t({ en: "Delete", zh: "删除" })} kind="danger" disabled={deleting()} onPress={confirmDelete} />
             </>}>
-              <Text style={{ color: token("foreground"), ...TYPE.body }}>会删除这台设备的全部数据（已装的 App、文件、快照），不能恢复。系统镜像不会删除。</Text>
+              <Text style={{ color: token("foreground"), ...TYPE.body }}>
+                {t({ en: "All of this device's data (installed apps, files, snapshots) will be deleted and can't be recovered. System images are not deleted.", zh: "会删除这台设备的全部数据（已装的 App、文件、快照），不能恢复。系统镜像不会删除。" })}
+              </Text>
               <If when={live(a())}>
-                <Text style={{ color: token("warning"), ...TYPE.body }}>这台设备正在运行，删除前会先停止它。</Text>
+                <Text style={{ color: token("warning"), ...TYPE.body }}>{t({ en: "This device is running; it will be stopped before deleting.", zh: "这台设备正在运行，删除前会先停止它。" })}</Text>
               </If>
               <If when={deleteError()}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption, userSelect: "text" }}>{e()}</Text>}</If>
             </DialogContent>
@@ -2887,11 +3103,11 @@ function App() {
       <AppDialog open={iosSimCloseAsk() !== null} size="sm" onClose={() => iosSimCloseAsk.set(null)}>
         <If when={iosSimCloseAsk()}>
           {(m) => (
-            <DialogContent title={`关掉 iOS 模拟器「${m().name}」？`} footer={<>
-              <Btn label="取消" onPress={() => iosSimCloseAsk.set(null)} />
-              <Btn label="关机" kind="danger" onPress={() => { gw(host.call("emu.iosSimClose", { udid: m().udid })); iosSimCloseAsk.set(null); }} />
+            <DialogContent title={t({ en: `Shut down iOS Simulator “${m().name}”?`, zh: `关掉 iOS 模拟器「${m().name}」？` })} footer={<>
+              <Btn label={t(CANCEL)} onPress={() => iosSimCloseAsk.set(null)} />
+              <Btn label={t({ en: "Shut down", zh: "关机" })} kind="danger" onPress={() => { gw(host.call("emu.iosSimClose", { udid: m().udid })); iosSimCloseAsk.set(null); }} />
             </>}>
-              <Text style={{ color: token("foreground"), ...TYPE.body }}>正在运行的 App 和未保存的内容会丢失。之后可以在这里再启动。</Text>
+              <Text style={{ color: token("foreground"), ...TYPE.body }}>{t({ en: "Running apps and unsaved work will be lost. You can start it again here later.", zh: "正在运行的 App 和未保存的内容会丢失。之后可以在这里再启动。" })}</Text>
             </DialogContent>
           )}
         </If>
@@ -2899,11 +3115,11 @@ function App() {
       <AppDialog open={mumuCloseAsk() !== null} size="sm" onClose={() => mumuCloseAsk.set(null)}>
         <If when={mumuCloseAsk()}>
           {(m) => (
-            <DialogContent title={`关掉 MuMu 模拟器「${m().name}」？`} footer={<>
-              <Btn label="取消" onPress={() => mumuCloseAsk.set(null)} />
-              <Btn label="关机" kind="danger" onPress={() => { gw(host.call("emu.mumuClose", { index: m().index })); mumuCloseAsk.set(null); }} />
+            <DialogContent title={t({ en: `Shut down MuMu emulator “${m().name}”?`, zh: `关掉 MuMu 模拟器「${m().name}」？` })} footer={<>
+              <Btn label={t(CANCEL)} onPress={() => mumuCloseAsk.set(null)} />
+              <Btn label={t({ en: "Shut down", zh: "关机" })} kind="danger" onPress={() => { gw(host.call("emu.mumuClose", { index: m().index })); mumuCloseAsk.set(null); }} />
             </>}>
-              <Text style={{ color: token("foreground"), ...TYPE.body }}>正在运行的 App 和未保存的内容会丢失。之后可以在这里再启动。</Text>
+              <Text style={{ color: token("foreground"), ...TYPE.body }}>{t({ en: "Running apps and unsaved work will be lost. You can start it again here later.", zh: "正在运行的 App 和未保存的内容会丢失。之后可以在这里再启动。" })}</Text>
             </DialogContent>
           )}
         </If>
@@ -2911,31 +3127,35 @@ function App() {
       <AppDialog open={stop().ask !== null} size="sm" onClose={() => stopEvent({ kind: "cancel" })}>
         <If when={stop().ask}>
           {(a) => (
-            <DialogContent title={`停止设备 ${a().label}？`} footer={<>
-              <Btn label="取消" disabled={isStopping(stop(), a().name)} onPress={() => stopEvent({ kind: "cancel" })} />
-              <Btn label={isStopping(stop(), a().name) ? "停止中…" : "停止"} kind="danger" disabled={isStopping(stop(), a().name)} onPress={() => stopEvent({ kind: "confirm" })} />
+            <DialogContent title={t({ en: `Stop device ${a().label}?`, zh: `停止设备 ${a().label}？` })} footer={<>
+              <Btn label={t(CANCEL)} disabled={isStopping(stop(), a().name)} onPress={() => stopEvent({ kind: "cancel" })} />
+              <Btn label={isStopping(stop(), a().name) ? t({ en: "Stopping…", zh: "停止中…" }) : t({ en: "Stop", zh: "停止" })} kind="danger" disabled={isStopping(stop(), a().name)} onPress={() => stopEvent({ kind: "confirm" })} />
             </>}>
-              <Text style={{ color: token("foreground"), ...TYPE.body }}>正在运行的 App 和未保存的内容会丢失。设备的数据还在，之后可以再启动。</Text>
+              <Text style={{ color: token("foreground"), ...TYPE.body }}>
+                {t({ en: "Running apps and unsaved work will be lost. The device's data stays, and you can start it again later.", zh: "正在运行的 App 和未保存的内容会丢失。设备的数据还在，之后可以再启动。" })}
+              </Text>
               <If when={stop().error}>{(e) => <Text role="alert" style={{ color: token("destructive"), ...TYPE.caption, userSelect: "text" }}>{e()}</Text>}</If>
             </DialogContent>
           )}
         </If>
       </AppDialog>
       <AppDialog open={proxyIssue() !== null} size="sm" onClose={() => proxyIssue.set(null)}>
-        <DialogContent title={proxyIssue()?.kind === "untrusted" ? "清除解密 HTTPS 的代理？" : "清除连不上的代理？"} footer={<>
-          <Btn label="取消" onPress={() => proxyIssue.set(null)} />
-          <Btn label="清除代理" kind="primary" onPress={clearProxyIssue} />
+        <DialogContent title={proxyIssue()?.kind === "untrusted" ? t({ en: "Clear the proxy that decrypts HTTPS?", zh: "清除解密 HTTPS 的代理？" }) : t({ en: "Clear the unreachable proxy?", zh: "清除连不上的代理？" })} footer={<>
+          <Btn label={t(CANCEL)} onPress={() => proxyIssue.set(null)} />
+          <Btn label={t({ en: "Clear proxy", zh: "清除代理" })} kind="primary" onPress={clearProxyIssue} />
         </>}>
           <Text style={{ color: token("foreground"), ...TYPE.body }}>{proxyIssueText(proxyIssue())}</Text>
           <Text style={{ color: token("muted-foreground"), ...TYPE.body }}>{proxyIssueHint(proxyIssue())}</Text>
         </DialogContent>
       </AppDialog>
       <AppDialog open={rebootAsk()} size="sm" onClose={() => rebootAsk.set(false)}>
-        <DialogContent title={`${rebootLabel(kind() === "phone")}？`} footer={<>
-          <Btn label="取消" onPress={() => rebootAsk.set(false)} />
-          <Btn label="重启" kind="danger" onPress={reboot} />
+        <DialogContent title={t({ en: `${rebootLabel(kind() === "phone")}?`, zh: `${rebootLabel(kind() === "phone")}？` })} footer={<>
+          <Btn label={t(CANCEL)} onPress={() => rebootAsk.set(false)} />
+          <Btn label={t({ en: "Restart", zh: "重启" })} kind="danger" onPress={reboot} />
         </>}>
-          <Text style={{ color: token("foreground"), ...TYPE.body }}>{kind() === "phone" ? "手机会重启，正在运行的 App 和未保存的内容会丢失。开机后自动重新连接，大约 1 分钟。" : "正在运行的 App 和未保存的内容会丢失，约 30 秒后恢复。"}</Text>
+          <Text style={{ color: token("foreground"), ...TYPE.body }}>{kind() === "phone"
+            ? t({ en: "The phone restarts; running apps and unsaved work will be lost. It reconnects automatically after booting, in about 1 minute.", zh: "手机会重启，正在运行的 App 和未保存的内容会丢失。开机后自动重新连接，大约 1 分钟。" })
+            : t({ en: "Running apps and unsaved work will be lost; it's back in about 30 seconds.", zh: "正在运行的 App 和未保存的内容会丢失，约 30 秒后恢复。" })}</Text>
         </DialogContent>
       </AppDialog>
     </View>
