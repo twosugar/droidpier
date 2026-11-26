@@ -32,7 +32,7 @@ export function avdNameErrorMsg(name: string, existing: string[]): Msg | null {
   return same ? { en: `A device named ${same} already exists`, zh: `已有同名设备 ${same}` } : null;
 }
 
-/** avdNameErrorMsg 的中文，网关用（网关的文字还只有中文）。 */
+/** avdNameErrorMsg 的中文：parseClientMsg 只看它是不是 null。 */
 export const avdNameError = (name: string, existing: string[]): string | null => avdNameErrorMsg(name, existing)?.zh ?? null;
 
 /** 显示名的长度上限（字符）：侧栏一行放得下，再长也看不全。 */
@@ -47,7 +47,7 @@ export function displayNameErrorMsg(name: string): Msg | null {
   return null;
 }
 
-/** displayNameErrorMsg 的中文，网关用。 */
+/** displayNameErrorMsg 的中文。 */
 export const displayNameError = (name: string): string | null => displayNameErrorMsg(name)?.zh ?? null;
 
 /** 新设备的内存（MB）：低于 API 28 的镜像用 2048，其余 4096。 */

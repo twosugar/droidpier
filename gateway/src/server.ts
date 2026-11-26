@@ -200,7 +200,7 @@ const BUSY = {
   deleting: { en: "Deleting a device", zh: "正在删除设备" },
   rebooting: { en: "A device is restarting", zh: "设备正在重启" },
   transfers: { en: "Sending a file", zh: "正在传文件" },
-  devtools: { en: "Debugging H5", zh: "正在调试 H5" },
+  devtools: { en: "H5 debugging", zh: "正在调试 H5" },
 } satisfies Record<string, Msg>;
 const busyMsg = (zh: string | undefined): Msg | string | undefined =>
   [...Object.values(BUSY), GATEWAY_STOPPING].find((m) => m.zh === zh) ?? zh;

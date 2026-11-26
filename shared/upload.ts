@@ -62,7 +62,7 @@ export const IOS_ONLY_APPS_MSG: Msg = {
   en: "iOS simulators only install apps: drop a .app folder, or a .zip / .ipa that holds one",
   zh: "iOS 模拟器只能装 App：拖 .app 文件夹，或装着 .app 的 .zip / .ipa",
 };
-/** IOS_ONLY_APPS_MSG 的中文，网关用。 */
+/** IOS_ONLY_APPS_MSG 的中文。 */
 export const IOS_ONLY_APPS = IOS_ONLY_APPS_MSG.zh;
 
 export type IosFileKind = { kind: "ios-app"; format: "tar" | "zip" } | { kind: "unsupported" };

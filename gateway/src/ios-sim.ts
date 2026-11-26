@@ -347,7 +347,7 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
 
   // 等到第一个关键帧（小程序启动时先出一帧）才算连上，这时 device 尺寸也有了
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => done(new TextError({ en: "No picture from the simulator", zh: "等不到模拟器的画面" })), deps.firstFrameMs ?? FIRST_FRAME_MS);
+    const timer = setTimeout(() => done(new TextError({ en: "No video from the simulator", zh: "等不到模拟器的画面" })), deps.firstFrameMs ?? FIRST_FRAME_MS);
     const done = (e?: Error) => {
       clearTimeout(timer);
       firstKey = null;

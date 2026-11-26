@@ -25,7 +25,7 @@ const ERR_MAP: Record<string, Msg> = {
 
 /** 页面加载超时、页面已关闭：navigate 的回复用（server.ts 也用）。 */
 export const PAGE_TIMEOUT: Msg = { en: "The page timed out loading", zh: "页面加载超时" };
-export const PAGE_CLOSED: Msg = { en: "The page has closed", zh: "页面已关闭" };
+export const PAGE_CLOSED: Msg = { en: "The H5 page closed", zh: "页面已关闭" };
 const CDP_CLOSED: Msg = { en: "The debugging connection has closed", zh: "CDP socket 已关闭" };
 
 function mapError(text: string): string | Msg {

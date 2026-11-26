@@ -156,7 +156,7 @@ export function startAvd(name: string, deps?: Partial<LifecycleDeps>): StartJob 
     const reason = bootLogReason(log);
     const hint = bootLogHint(log);
     const parts = [reason ? msgOf(reason) : null, hint].filter((x): x is Msg => x !== null);
-    const en = parts.map((x) => x.en).join(". ");
+    const en = parts.map((x) => x.en.replace(/\.$/, "")).join(". ");
     const zh = parts.map((x) => x.zh).join("。");
     return new TextError({
       en: `The emulator process exited during boot (${what.en})${en ? `: ${en}` : ""}. Full log: ${logPath}`,

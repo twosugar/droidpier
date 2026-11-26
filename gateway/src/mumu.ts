@@ -54,7 +54,7 @@ const STATES = new Set<MumuInfo["state"]>(["stopped", "starting", "running", "st
 type ToolReply = { errcode?: number; message?: string; return?: Record<string, unknown> };
 
 /** 解析 mumutool 的 JSON；errcode 非 0 时抛出它的 message。 */
-const NOT_INSTALLED: Msg = { en: "MuMu Player is not installed on this Mac", zh: "本机没有安装 MuMu 模拟器" };
+const NOT_INSTALLED: Msg = { en: "The MuMu emulator is not installed on this Mac", zh: "本机没有安装 MuMu 模拟器" };
 
 function toolReturn(json: string): Record<string, unknown> {
   const r = JSON.parse(json) as ToolReply;
