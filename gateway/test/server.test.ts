@@ -3588,3 +3588,21 @@ test("界面语言：adb 无响应和自动更新推迟的原因也有英文", a
   await until(() => d.msgs.some((m) => m.t === "update" && m.state === "deferred"));
   assert.equal(d.msgs.find((m) => m.t === "update" && m.state === "deferred").message, "Installing the SDK");
 });
+
+test("方向变化时设备尺寸也变了（折叠机换到另一块屏）：先按新尺寸重发 ready 再发方向；尺寸没变的转屏不重发 ready", async (t) => {
+  const { connect, session } = await setup(t);
+  const c = await connect();
+  hello(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  const readies = () => c.msgs.filter((m) => m.t === "ready");
+  session!.fireRotation(90);
+  await until(() => c.msgs.some((m) => m.t === "orientation" && m.rotation === 90));
+  assert.equal(readies().length, 1);
+  session!.device = { width: 2007, height: 2853 };
+  session!.fireRotation(270);
+  await until(() => c.msgs.some((m) => m.t === "orientation" && m.rotation === 270));
+  assert.equal(readies().length, 2);
+  assert.deepEqual(readies()[1].device, { width: 2007, height: 2853 });
+  const i = c.msgs.indexOf(readies()[1]);
+  assert.equal(c.msgs.findIndex((m, k) => k > i && m.t === "orientation" && m.rotation === 270) > i, true);
+});

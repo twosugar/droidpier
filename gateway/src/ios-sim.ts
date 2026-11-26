@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DeviceCaps, IosCatalog, IosSimInfo } from "../../shared/protocol.ts";
+import type { DeviceCaps, IosCatalog, IosSimInfo, Rotation } from "../../shared/protocol.ts";
 import type { DeviceSession, VideoPacket } from "./emulator.ts";
 import { iosKey, PASTE, type IosInput } from "./ios-keys.ts";
 import { TextError } from "../../shared/i18n.ts";
@@ -223,7 +223,11 @@ export type IosSimDeps = {
   log?(s: string): void;
 };
 
-type HelperEvent = { t: "ready"; width: number; height: number } | { t: "error"; message: string };
+/**
+ * ready 的 width / height 是帧缓冲（竖屏）的尺寸；rotation 是界面方向（设备顺时针转过的角度）：折叠机展开后界面横过来，
+ * 小程序把画面转正了再编码，视频是横的，触摸照旧按帧缓冲坐标。旧小程序不带 rotation，当 0。
+ */
+type HelperEvent = { t: "ready"; width: number; height: number; rotation?: Rotation } | { t: "error"; message: string };
 
 /** 把小程序 stdout 的字节流切成包：[u32 小端 长度][u8 类型][内容]。任意切块喂入都行。 */
 export function createHelperParser(on: { video(p: Omit<VideoPacket, "data"> & { data: Buffer }): void; event(e: HelperEvent): void }) {
@@ -256,6 +260,7 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
   const log = deps.log ?? ((s: string) => console.log(s));
   const subs = new Set<(p: VideoPacket) => void>();
   const closedCbs: Array<() => void> = [];
+  const rotationCbs: Array<(r: Rotation) => void> = [];
   let lastConfig: VideoPacket | null = null;
   let closed = false;
   let firstKey: (() => void) | null = null;
@@ -321,7 +326,7 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     rotate: unsupported,
     reboot: unsupported,
     screenshot: () => deps.screenshot(),
-    onRotation: () => {},
+    onRotation: (cb) => void rotationCbs.push(cb),
     onClosed: (cb) => void closedCbs.push(cb),
     close: () => close("网关关闭了会话"),
   };
@@ -333,7 +338,14 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
       if (p.key && firstKey) firstKey();
     },
     event(e) {
-      if (e.t === "ready") session.device = { width: e.width, height: e.height };
+      if (e.t === "ready") {
+        const r = e.rotation ?? 0;
+        const changed = r !== session.rotation || e.width !== session.device.width || e.height !== session.device.height;
+        session.device = { width: e.width, height: e.height };
+        session.rotation = r;
+        // 方向变了，或者折叠机换到另一块屏（尺寸变了）：网关重发方向，尺寸变了时连 ready 一起（server.ts 的 watch）
+        if (changed) for (const cb of rotationCbs) cb(r);
+      }
       else if (e.t === "error") {
         log(`${name}：${e.message}`);
         failStart?.(new Error(e.message));
