@@ -20,7 +20,9 @@ import { randomBytes } from "node:crypto";
 const randomToken = () => randomBytes(32).toString("base64url");
 import { screenshotName } from "../src/server.ts";
 import { AdbUnresponsive } from "../src/adb.ts";
-import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
+import { ADB_UNRESPONSIVE, ADB_UNRESPONSIVE_MSG } from "../../shared/protocol.ts";
+import type { Msg } from "../../shared/i18n.ts";
+import { renameAvd } from "../src/avd.ts";
 
 type Sub = { size: { width: number; height: number }; onFrame: (h: FrameHeader, d: Buffer) => void; active: boolean };
 
@@ -536,10 +538,10 @@ function fakeAvd(sessions: Record<string, FakeSession>) {
       job.progress = "ready";
       resolve({ pid: 1, serial: 5556, grpcPort: 8556, avdName: job.name });
     },
-    fail: (msg: string) => {
+    fail: (msg: string | Msg) => {
       job.progress = "failed";
       job.error = msg;
-      reject(new Error(msg));
+      reject(new Error(typeof msg === "string" ? msg : msg.zh));
     },
   };
 }
@@ -3517,4 +3519,72 @@ test("界面语言：hello 带 en 的页面收到英文，没带的（旧页面�
   assert.equal(await failOf(old, 2), "没有连接设备");
   en.ws.send(JSON.stringify({ t: "lang", lang: "zh" }));
   assert.equal(await failOf(en, 3), "没有连接设备");
+});
+
+const helloEn = (c: Client) => c.ws.send(JSON.stringify({ t: "hello", version: PROTOCOL_VERSION, width: 540, height: 1170, lang: "en" }));
+
+test("界面语言：开机失败的原因广播给两个页面，英文页面收到英文、中文页面收到中文", async (t) => {
+  const f = fakeAvd({});
+  const { connect } = await setup(t, null, undefined, f.ops);
+  const en = await connect();
+  helloEn(en);
+  const zh = await connect();
+  hello(zh);
+  await until(() => [en, zh].every((c) => c.msgs.some((m) => m.t === "status")));
+  en.ws.send(JSON.stringify({ t: "start", name: "A" }));
+  await until(() => [en, zh].every((c) => c.msgs.some((m) => m.t === "boot")));
+  f.fail({ en: "Boot timed out (180 seconds)", zh: "开机超时（180 秒）" });
+  const failed = (c: Client) => c.msgs.find((m) => m.t === "boot" && m.progress === "failed");
+  await until(() => !!failed(en) && !!failed(zh));
+  assert.equal(failed(en).error, "Boot timed out (180 seconds)");
+  assert.equal(failed(zh).error, "开机超时（180 秒）");
+});
+
+test("界面语言：装 APK 失败时英文页面收到英文的失败码说明", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "emu-upload-"));
+  const files = fakeFiles(root);
+  const s = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { files: files.ops });
+  const c = await s.connect();
+  helloEn(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  files.err = new Error("Command failed: adb install\nadb: failed to install /x/a.apk: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]");
+  const ups = (id: number) => c.msgs.filter((m) => m.t === "upload" && m.id === id);
+  await sendFile(c, 4, "a.apk", Buffer.from("x"), ups);
+  await until(() => ups(4).at(-1)?.state === "failed");
+  assert.equal(ups(4).at(-1).error, "INSTALL_FAILED_UPDATE_INCOMPATIBLE (The signature differs from the version on the device; uninstall it first)");
+});
+
+test("界面语言：模块抛的 TextError 按页面的语言回复（改名时显示名为空）", async (t) => {
+  const f = fakeAvd({});
+  const { connect } = await setup(t, new FakeSession(), undefined, { ...f.ops, rename: (name, d) => renameAvd(name, d) });
+  const en = await connect();
+  helloEn(en);
+  const zh = await connect();
+  hello(zh);
+  await until(() => [en, zh].every((c) => c.msgs.some((m) => m.t === "ready")));
+  for (const c of [en, zh]) c.ws.send(JSON.stringify({ t: "renameAvd", rid: 9, name: "A", displayName: " " }));
+  await until(() => [en, zh].every((c) => c.msgs.some((m) => m.t === "renameAvd")));
+  assert.deepEqual(en.msgs.find((m) => m.t === "renameAvd"), { t: "renameAvd", rid: 9, ok: false, error: "Enter a display name" });
+  assert.deepEqual(zh.msgs.find((m) => m.t === "renameAvd"), { t: "renameAvd", rid: 9, ok: false, error: "请输入显示名称" });
+});
+
+test("界面语言：adb 无响应和自动更新推迟的原因也有英文", async (t) => {
+  const f = fakeDebug();
+  f.ensureError = new AdbUnresponsive();
+  const r = await setup(t, new FakeSession(), undefined, undefined, f.deps);
+  const c = await r.connect();
+  helloEn(c);
+  await until(() => c.msgs.some((m) => m.t === "ready"));
+  c.ws.send(JSON.stringify({ t: "navigate", rid: 33, socket: PAGE.socket, id: "p1", address: "localhost:5173" }));
+  await until(() => !!reply(c, "navigate", 33));
+  assert.deepEqual(reply(c, "navigate", 33), { t: "navigate", rid: 33, ok: false, error: ADB_UNRESPONSIVE_MSG.en, code: "adb-unresponsive" });
+
+  const u = fakeUpdate({ autoUpdate: true, report: { state: "deferred", message: "正在安装 SDK" } });
+  const s = await setup(t, new FakeSession(), undefined, undefined, undefined, undefined, { service: true, update: u.opts });
+  const d = await s.connect();
+  helloEn(d);
+  await until(() => d.msgs.length > 0);
+  d.ws.send(JSON.stringify({ t: "update" }));
+  await until(() => d.msgs.some((m) => m.t === "update" && m.state === "deferred"));
+  assert.equal(d.msgs.find((m) => m.t === "update" && m.state === "deferred").message, "Installing the SDK");
 });

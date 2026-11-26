@@ -41,14 +41,15 @@ test("bootLogReason：超过 300 字截断并加省略号", () => {
 });
 
 test("bootLogHint：系统镜像没装", () => {
-  assert.match(bootLogHint(MISSING_IMAGE) ?? "", /系统镜像/);
-  assert.match(bootLogHint("PANIC: Broken AVD system path. Check your ANDROID_SDK_ROOT value [/x]!") ?? "", /系统镜像/);
+  assert.match(bootLogHint(MISSING_IMAGE)?.zh ?? "", /系统镜像/);
+  assert.match(bootLogHint("PANIC: Broken AVD system path. Check your ANDROID_SDK_ROOT value [/x]!")?.zh ?? "", /系统镜像/);
 });
 
 test("bootLogHint：同一个 AVD 已在运行", () => {
   const h = bootLogHint("ERROR | Another emulator instance is running. Please close it or run all emulators with -read-only flag.");
-  assert.match(h ?? "", /已经在运行/);
-  assert.match(bootLogHint("emulator: ERROR: Running multiple emulators with the same AVD is an experimental feature.") ?? "", /已经在运行/);
+  assert.match(h?.zh ?? "", /已经在运行/);
+  assert.match(h?.en ?? "", /already running/);
+  assert.match(bootLogHint("emulator: ERROR: Running multiple emulators with the same AVD is an experimental feature.")?.zh ?? "", /已经在运行/);
 });
 
 test("bootLogHint：x86 镜像在 Apple 芯片上跑不了", () => {
@@ -56,18 +57,18 @@ test("bootLogHint：x86 镜像在 Apple 芯片上跑不了", () => {
     "PANIC: x86_64 emulation currently requires hardware acceleration!",
     "PANIC: Avd's CPU Architecture 'x86_64' is not supported by the QEMU2 emulator on aarch64 host.",
     "PANIC: Missing emulator engine program for 'x86' CPU.",
-  ]) assert.match(bootLogHint(line) ?? "", /arm64/, line);
+  ]) assert.match(bootLogHint(line)?.zh ?? "", /arm64/, line);
 });
 
 test("bootLogHint：模拟器版本太旧", () => {
   for (const line of [
     "PANIC: Missing emulator engine program for 'arm64' CPU.",
     "FATAL | This system image requires a newer version of the emulator.",
-  ]) assert.match(bootLogHint(line) ?? "", /更新 Android Emulator/, line);
+  ]) assert.match(bootLogHint(line)?.zh ?? "", /更新 Android Emulator/, line);
 });
 
 test("bootLogHint：磁盘空间不够", () => {
-  assert.match(bootLogHint("ERROR | Not enough space to create userdata partition. Available: 100 MB") ?? "", /磁盘空间/);
+  assert.match(bootLogHint("ERROR | Not enough space to create userdata partition. Available: 100 MB")?.zh ?? "", /磁盘空间/);
 });
 
 test("bootLogHint：认不出时返回 null", () => {
@@ -83,30 +84,30 @@ ERROR        | bad color buffer handle 256
 `;
 
 test("bootStuckDetail：模拟器自己报了开机完成 → 是 adb 读不到，不拿 ERROR 噪音当原因", () => {
-  const d = bootStuckDetail(BOOTED, true);
+  const d = bootStuckDetail(BOOTED, true)!.zh;
   assert.match(d, /模拟器已经开机/);
   assert.match(d, /adb kill-server/);
   assert.doesNotMatch(d, /bad color buffer/);
 });
 
 test("bootStuckDetail：还没问过 adb 时，不因为开机完成就怪 adb", () => {
-  assert.equal(bootStuckDetail(BOOTED, false), "日志最后一行：ERROR | bad color buffer handle 256");
+  assert.deepEqual(bootStuckDetail(BOOTED, false), { en: "Last log line: ERROR | bad color buffer handle 256", zh: "日志最后一行：ERROR | bad color buffer handle 256" });
 });
 
 test("bootStuckDetail：没开机完成但认得出常见问题 → 给中文建议", () => {
-  assert.match(bootStuckDetail(MISSING_IMAGE, true), /系统镜像/);
+  assert.match(bootStuckDetail(MISSING_IMAGE, true)!.zh, /系统镜像/);
 });
 
 test("bootStuckDetail：都认不出 → 给日志最后一行，说明卡在哪", () => {
   assert.equal(
-    bootStuckDetail("INFO | Started GRPC server\nINFO   |  Loading snapshot 'default_boot'...\n\n", true),
+    bootStuckDetail("INFO | Started GRPC server\nINFO   |  Loading snapshot 'default_boot'...\n\n", true)?.zh,
     "日志最后一行：INFO | Loading snapshot 'default_boot'...",
   );
 });
 
-test("bootStuckDetail：最后一行超过 300 字截断，空日志返回空串", () => {
-  const d = bootStuckDetail(`INFO | ${"x".repeat(500)}`, true);
+test("bootStuckDetail：最后一行超过 300 字截断，空日志返回 null", () => {
+  const d = bootStuckDetail(`INFO | ${"x".repeat(500)}`, true)!.zh;
   assert.ok(d.length <= "日志最后一行：".length + 300, String(d.length));
   assert.ok(d.endsWith("…"));
-  assert.equal(bootStuckDetail("\n \n", true), "");
+  assert.equal(bootStuckDetail("\n \n", true), null);
 });

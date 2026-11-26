@@ -11,7 +11,7 @@ import { CLOSE_UNKNOWN_SOCKET, DEVTOOLS_FRONTEND_ORIGIN, frontendFileUrl, inspec
 import { browserView, createInspectorSlot, liveValue, pageBox, pickMapping, scaleRect, toPageCss, toPanel, type HighlightTarget, type InspectPointer } from "./inspect.ts";
 import { checkHost, checkUpgrade, createTickets, type Tickets } from "./auth.ts";
 import { createPeerCheck, type SocketsLookup } from "./peer.ts";
-import { DEV_SERVER_DOWN, navigateAndCheck, type CdpClient } from "./cdp.ts";
+import { DEV_SERVER_DOWN, navigateAndCheck, PAGE_CLOSED, PAGE_TIMEOUT, type CdpClient } from "./cdp.ts";
 import { normalizeTarget } from "../../shared/target-url.ts";
 import type { EmulatorSession } from "./emulator.ts";
 import type { IosInspector } from "./ios-inspector.ts";
@@ -22,13 +22,16 @@ import type { LogcatSub } from "./logcat.ts";
 import type { ProxyState } from "./proxy-check.ts";
 import type { LogFilter, LogLine } from "../../shared/logcat.ts";
 import type { StartJob } from "./lifecycle.ts";
-import type { InstallJob, Installer } from "./installer.ts";
+import type { InstallJob, Installer, Progress } from "./installer.ts";
+import type { EnvMsgs } from "./setup.ts";
+import type { CatalogMsgs } from "./catalog.ts";
 import { AdbUnresponsive } from "./adb.ts";
 import { gbText, spaceCheck } from "../../shared/disk-space.ts";
-import { avdNameError, createItems, ramMbFor } from "../../shared/avd-spec.ts";
+import { avdNameErrorMsg, createItems, ramMbFor } from "../../shared/avd-spec.ts";
 import { UPLOAD_DIR_PREFIX } from "./upload-temp.ts";
-import { BIN_UPLOAD, checkChunk, decodeUploadChunk, fileKind, installFailure, IOS_ONLY_APPS, iosFileKind, PUSH_DIR, sanitizeFileName, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
-import { localize, type Lang, type Localizable, type Msg } from "../../shared/i18n.ts";
+import { BIN_UPLOAD, checkChunk, decodeUploadChunk, fileKind, installFailure, IOS_ONLY_APPS_MSG, iosFileKind, PUSH_DIR, sanitizeFileName, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { localize, msgOf, textOf, type Lang, type Localizable, type Msg } from "../../shared/i18n.ts";
+import { GATEWAY_STOPPING } from "./updater.ts";
 import {
   BIN_SCREENSHOT,
   binKind,
@@ -107,10 +110,10 @@ export type AvdOps = {
 
 /** 环境检查和安装，由 main.ts 接到 setup.ts / installer.ts。只有收到页面的 install 才安装。 */
 export type SetupOps = {
-  check(): Promise<EnvReport>;
+  check(): Promise<EnvReport | EnvMsgs>;
   installer: Installer;
   /** 创建设备对话框的目录（机型、系统版本、已有的 AVD 名字）。 */
-  catalog(): Promise<AvdCatalog>;
+  catalog(): Promise<AvdCatalog | CatalogMsgs>;
 };
 
 /** 一台设备上的 WebView 调试工具，由 main.ts 接到 webviews.ts / reverse.ts。 */
@@ -171,8 +174,39 @@ export function webInspectorUrl(port: number, page: { socket: string; id: string
   return `http://127.0.0.1:${port}${WEBINSPECTOR_PATH}Main.html?${q}`;
 }
 /** 手机上 adb 超时的说法：ADB_UNRESPONSIVE 是给模拟器的，会叫人去重启模拟器。 */
-const PHONE_ADB_UNRESPONSIVE = "手机的 adb 没有响应：重新插拔手机，或稍后再试";
-const NO_ADB = "iOS 模拟器暂不支持这个功能";
+const PHONE_ADB_UNRESPONSIVE: Msg = { en: "adb on the phone is not responding: unplug and replug the phone, or try again later", zh: "手机的 adb 没有响应：重新插拔手机，或稍后再试" };
+const NO_ADB: Msg = { en: "The iOS Simulator does not support this yet", zh: "iOS 模拟器暂不支持这个功能" };
+const NO_DEVICE: Msg = { en: "No device connected", zh: "没有连接设备" };
+const LIST_FAILED: Msg = { en: "Reading the WebView list failed", zh: "读取 WebView 列表失败" };
+const NO_AVD_OPS: Msg = { en: "The gateway does not manage devices", zh: "网关没有管理设备" };
+const NO_IOS_CREATE: Msg = { en: "The gateway cannot create iOS Simulators", zh: "网关不支持创建 iOS 模拟器" };
+/** 「做某事失败：原因」的两种语言：原因是 TextError 时分语言，别的（adb 的输出、别的程序的报错）原样放进两种。 */
+const withReason = (what: Msg, why: unknown): Msg => {
+  const r = msgOf(why instanceof Error ? textOf(why) : (why as Msg | string));
+  return { en: `${what.en}: ${r.en}`, zh: `${what.zh}：${r.zh}` };
+};
+/** 原因只取第一行（simctl 的报错后面跟着一大段）。 */
+const firstLine = (e: unknown): Msg => {
+  const r = msgOf(textOf(e));
+  return { en: r.en.split("\n")[0], zh: r.zh.split("\n")[0] };
+};
+/**
+ * 挡着自动更新的操作：busy() 给 updater 中文（日志、droidpier status），页面收到的 deferred 原因按这张表换回两种语言。
+ * GATEWAY_STOPPING 是 updater.ts 自己报的。
+ */
+const BUSY = {
+  installing: { en: "Installing the SDK", zh: "正在安装 SDK" },
+  booting: { en: "A device is starting", zh: "设备正在开机" },
+  deleting: { en: "Deleting a device", zh: "正在删除设备" },
+  rebooting: { en: "A device is restarting", zh: "设备正在重启" },
+  transfers: { en: "Sending a file", zh: "正在传文件" },
+  devtools: { en: "Debugging H5", zh: "正在调试 H5" },
+} satisfies Record<string, Msg>;
+const busyMsg = (zh: string | undefined): Msg | string | undefined =>
+  [...Object.values(BUSY), GATEWAY_STOPPING].find((m) => m.zh === zh) ?? zh;
+/** update 消息里 deferred 的原因换成两种语言（见 BUSY）。 */
+const updateMsg = (r: { state: UpdateState; message?: string }): Localizable<ServerMsg> =>
+  r.state === "deferred" && r.message !== undefined ? { t: "update", state: r.state, message: busyMsg(r.message) } : { t: "update", ...r };
 /** 会话走不走 adb（H5 调试、日志、装 APK 都靠它）：只有 caps.adb 明确为 false 时不走（iOS 模拟器）。 */
 const viaAdb = (s: EmulatorSession) => s.caps.adb !== false;
 /** 有没有日志面板：走 adb 的设备都有，iOS 模拟器靠 caps.logs。 */
@@ -256,7 +290,7 @@ export async function startServer(opts: {
   const jobs = new Set<StartJob>();
   // 正在删除的 AVD：删完之前同名的启动、切换、改名、再删都拒绝
   const deleting = new Set<string>();
-  const DELETING = "正在删除这台设备";
+  const DELETING: Msg = { en: "This device is being deleted", zh: "正在删除这台设备" };
   // 收分片或正在 adb install / push 的传文件：重启会打断它们
   const transfers = new Set<object>();
   const now = opts.now ?? Date.now;
@@ -568,12 +602,12 @@ export async function startServer(opts: {
     });
   };
   // adb 无响应统一成一句话并带 code，页面据此给出“重启模拟器”；其他失败照旧加前缀
-  const adbFail = (prefix: string, e: unknown): { error: string; code?: "adb-unresponsive" } =>
-    e instanceof AdbUnresponsive ? { error: e.message, code: "adb-unresponsive" } : { error: `${prefix}${(e as Error).message}` };
+  const adbFail = (what: Msg, e: unknown): { error: Msg | string; code?: "adb-unresponsive" } =>
+    e instanceof AdbUnresponsive ? { error: textOf(e), code: "adb-unresponsive" } : { error: withReason(what, e) };
   // 正在重启的设备：同时只有一台、一次
   let rebooting: { id: string } | null = null;
   const isRebooting = (s: EmulatorSession) => rebooting?.id === s.id;
-  const REBOOTING = "设备正在重启，等它开机后再试";
+  const REBOOTING: Msg = { en: "The device is restarting; try again once it has started", zh: "设备正在重启，等它开机后再试" };
   // 每个页面的界面语言（hello 的 lang、lang 消息）；没说的是旧页面，用中文
   const langOf = new WeakMap<WebSocket, Lang>();
   // 消息里的 { en, zh } 按这个页面的语言换成字符串（shared/i18n.ts 的 localize）
@@ -617,7 +651,7 @@ export async function startServer(opts: {
       (s) => { if (s && pinned === id) for (const c of live()) if (!c.session) c.attach(s); },
       (e: Error) => {
         log(`重新连接 ${id} 失败：${e.message}`);
-        broadcast({ t: "error", message: `重新连接 ${id} 失败：${e.message}` }, (c) => !c.session);
+        broadcast({ t: "error", message: withReason({ en: `Reconnecting ${id} failed`, zh: `重新连接 ${id} 失败` }, e) }, (c) => !c.session);
       },
     ).finally(() => { reconnecting = false; });
   };
@@ -663,31 +697,35 @@ export async function startServer(opts: {
 
   // 按名字停一台设备（开机中的按开机任务的串口），等列表里看到它停了；返回给页面看的失败原因，成功返回 null。
   // announce：停完给所有页面发新列表；删除流程里不发，删完统一发一次
-  const stopByName = async (name: string, announce = true): Promise<string | null> => {
+  const stopByName = async (name: string, announce = true): Promise<Msg | null> => {
     const avd = opts.avd!;
     // 模拟器退出前要存快速启动快照，几台一起跑时要十几二十秒（2026-11-22 实测超过 10 秒）；页面那边等 75 秒（host/src/main.ts 的 STOP_REPLY_MS）
     const deadline = Date.now() + (opts.stopWaitMs ?? 60_000);
     const wait = () => new Promise((r) => setTimeout(r, opts.pollMs ?? 1000));
     const jobOf = () => [...jobs].find((j) => j.name === name);
     const info = (await avd.list()).find((a) => a.name === name);
-    if (!jobOf() && !info) return `没有这个设备：${name}`;
-    if (!jobOf() && info!.running === "no") return "这台设备没有在运行";
+    if (!jobOf() && !info) return { en: `No such device: ${name}`, zh: `没有这个设备：${name}` };
+    if (!jobOf() && info!.running === "no") return { en: "This device is not running", zh: "这台设备没有在运行" };
     // 开机任务刚建时串口还是 0，要等模拟器写出发现文件（gateway/src/lifecycle.ts 的 startAvd）
     let serial = jobOf()?.serial || info?.serial;
     while (!serial && jobOf() && Date.now() <= deadline) {
       await wait();
       serial = jobOf()?.serial;
     }
-    if (!serial) return jobOf() ? "设备还在启动，暂时停不了，稍后再试" : "找不到这台设备的串口，没法停止";
+    if (!serial) {
+      return jobOf()
+        ? { en: "The device is still starting and cannot be stopped yet; try again later", zh: "设备还在启动，暂时停不了，稍后再试" }
+        : { en: "Cannot find this device's serial number, so it cannot be stopped", zh: "找不到这台设备的串口，没法停止" };
+    }
     try {
       await avd.stop(serial);
     } catch (e) {
-      return `停止失败：${(e as Error).message}`;
+      return withReason({ en: "Stop failed", zh: "停止失败" }, e);
     }
     for (;;) {
       const now = (await avd.list()).find((a) => a.name === name);
       if (!jobOf() && (!now || now.running === "no")) break;
-      if (Date.now() > deadline) return "已经发出停止指令，但设备还在运行，稍后再试";
+      if (Date.now() > deadline) return { en: "Sent the stop command, but the device is still running; try again later", zh: "已经发出停止指令，但设备还在运行，稍后再试" };
       await wait();
     }
     if (announce) avd.list().then((list) => broadcast({ t: "avds", list }), (e: Error) => log(`停止后读取 AVD 列表失败：${e.message}`));
@@ -705,7 +743,7 @@ export async function startServer(opts: {
           const s = await useDevice(job.name).catch((e: Error) => (log(`接管 ${job.name} 失败：${e.message}`), null));
           if (s) switchTo(s);
           else {
-            broadcast({ t: "error", message: `${job.name} 已开机，但连不上它的 gRPC` });
+            broadcast({ t: "error", message: { en: `${job.name} has started, but its gRPC cannot be reached`, zh: `${job.name} 已开机，但连不上它的 gRPC` } });
             // 这些连接之前收到过 booting，要告诉它们开机这条路结束了
             broadcast({ t: "status", state: "no-emulator" }, (c) => !c.session);
           }
@@ -723,7 +761,7 @@ export async function startServer(opts: {
 
   // 安装状态只在这里：后连上的页面从这里补齐
   let installing = false;
-  const installs = new Map<string, InstallProgress>();
+  const installs = new Map<string, Progress>();
   // 正在等页面回答的许可证；回答必须带着它的 id
   let license: Licence | null = null;
   const setLicense = (l: Licence | null) => {
@@ -731,31 +769,33 @@ export async function startServer(opts: {
     license = l;
     broadcast({ t: "licenses", licence: l });
   };
-  const checkEnv = () => opts.setup!.check().catch((e: Error): EnvReport => {
+  const checkEnv = () => opts.setup!.check().catch((e: Error): EnvReport | EnvMsgs => {
     log(`环境检查失败：${e.message}`);
     return {
-      ok: false, missing: [], error: `环境检查失败：${e.message}`, sdkRoot: "", avdHome: "",
+      ok: false, missing: [], error: withReason({ en: "Environment check failed", zh: "环境检查失败" }, e), sdkRoot: "", avdHome: "",
       freeMb: 0, avdFreeMb: 0, sameDisk: true,
     };
   });
-  const notAuto = (env: EnvReport, ids: string[]) => {
+  const notAuto = (env: EnvReport | EnvMsgs, ids: string[]): Msg | null => {
     const m = env.missing.find((x) => ids.includes(x.id) && !x.auto);
-    return m ? `${m.detail}，不能自动安装` : null;
+    if (!m) return null;
+    const d = msgOf(m.detail);
+    return { en: `${d.en}; cannot be installed automatically`, zh: `${d.zh}，不能自动安装` };
   };
-  const spaceShort = (items: Parameters<typeof spaceCheck>[0], env: EnvReport) => {
+  const spaceShort = (items: Parameters<typeof spaceCheck>[0], env: EnvReport | EnvMsgs): Msg | null => {
     const { shortMb } = spaceCheck(items, env);
-    return shortMb > 0 ? `磁盘空间不足：还需要约 ${gbText(shortMb)}` : null;
+    return shortMb > 0 ? { en: `Not enough disk space: about ${gbText(shortMb)} more is needed`, zh: `磁盘空间不足：还需要约 ${gbText(shortMb)}` } : null;
   };
   // 安装和建设备共用：先占住 installing，再按 check 给的理由拒绝或开始
-  const runChecked = async (ws: WebSocket, what: string, check: () => Promise<{ reason: string } | { ids: string[]; job: InstallJob }>) => {
+  const runChecked = async (ws: WebSocket, what: string, check: () => Promise<{ reason: Msg | string } | { ids: string[]; job: InstallJob }>) => {
     const setup = opts.setup;
     if (!setup) return;
-    if (installing) return send(ws, { t: "error", message: "正在安装，等这一轮结束再试" });
+    if (installing) return send(ws, { t: "error", message: { en: "Installing; try again when this round finishes", zh: "正在安装，等这一轮结束再试" } });
     installing = true;
-    const r = await check().catch((e: Error) => ({ reason: e.message }));
+    const r = await check().catch((e: Error) => ({ reason: textOf(e) }));
     if ("reason" in r) {
       installing = false;
-      log(`拒绝${what}：${r.reason}`);
+      log(`拒绝${what}：${msgOf(r.reason).zh}`);
       return send(ws, { t: "error", message: r.reason });
     }
     installs.clear();
@@ -779,14 +819,16 @@ export async function startServer(opts: {
   const install = (ws: WebSocket, ids: string[]) => {
     if (ids.length === 0) return;
     // 建设备要选机型和系统版本，只走 createAvd
-    if (ids.includes("avd")) return send(ws, { t: "error", message: "创建设备请在“创建设备”对话框里选机型和系统版本" });
+    if (ids.includes("avd")) {
+      return send(ws, { t: "error", message: { en: "To create a device, choose the model and system version in the Create device dialog", zh: "创建设备请在“创建设备”对话框里选机型和系统版本" } });
+    }
     return runChecked(ws, "安装", async () => {
       // 页面确认框已经拦过一次；这里按同一套算法再查，防止页面旧了或绕过页面
       const env = await checkEnv();
       if (env.error) return { reason: env.error };
       // 只装这次环境检查里缺的：已装好的包不重下、不替换（也就不会绕过磁盘检查）
       const want = ids.filter((id) => env.missing.some((m) => m.id === id));
-      if (want.length === 0) return { reason: "要装的都不缺，没有安装" };
+      if (want.length === 0) return { reason: { en: "Nothing is missing; nothing installed", zh: "要装的都不缺，没有安装" } };
       const reason = notAuto(env, want) ?? spaceShort(env.missing.filter((m) => want.includes(m.id)), env);
       // 装哪个系统镜像由这次环境检查决定（比如设备缺的那个），不信页面
       const image = want.includes("system-image") ? env.missing.find((m) => m.id === "system-image")?.pkg : undefined;
@@ -799,9 +841,9 @@ export async function startServer(opts: {
       const image = cat.images.find((i) => i.pkg === m.image);
       const ids = [...(image && !image.installed ? ["system-image"] : []), "avd"];
       const reason = env.error
-        ?? (cat.devices.some((d) => d.id === m.device) ? null : `没有这个机型：${m.device}`)
-        ?? (image ? null : `没有这个系统版本：${m.image}`)
-        ?? avdNameError(m.name, cat.existing)
+        ?? (cat.devices.some((d) => d.id === m.device) ? null : { en: `No such device model: ${m.device}`, zh: `没有这个机型：${m.device}` })
+        ?? (image ? null : { en: `No such system version: ${m.image}`, zh: `没有这个系统版本：${m.image}` })
+        ?? avdNameErrorMsg(m.name, cat.existing)
         ?? spaceShort(createItems(image!), env);
       if (reason) return { reason };
       return { ids, job: { avd: { name: m.name, device: m.device, image: image!.pkg, ramMb: ramMbFor(image!.apiLevel) } } };
@@ -914,7 +956,7 @@ export async function startServer(opts: {
       if (!s || isRebooting(s)) return;
       inputChain = inputChain.then(() => run(s)).catch((e: Error) => {
         log(`${what} 失败：${e.message}`);
-        if (e instanceof AdbUnresponsive) send(ws, { t: "error", code: "adb-unresponsive", message: e.message });
+        if (e instanceof AdbUnresponsive) send(ws, { t: "error", code: "adb-unresponsive", message: textOf(e) });
       });
     };
 
@@ -1053,13 +1095,13 @@ export async function startServer(opts: {
     const webviews = async (rid: number) => {
       const s = conn.session;
       // 没配 Android 的调试（debug）也可能有 iOS 的（ios）：先看会话是哪种
-      if (!s) return send(ws, { t: "webviews", rid, list: [], ...(opts.debug || opts.ios ? { error: "没有连接设备" } : {}) });
+      if (!s) return send(ws, { t: "webviews", rid, list: [], ...(opts.debug || opts.ios ? { error: NO_DEVICE } : {}) });
       if (!viaAdb(s)) {
         const ios = iosFor(s);
         if (!ios) return send(ws, { t: "webviews", rid, list: [], error: NO_ADB });
         return ios.inspector.list().then(
           (list) => send(ws, { t: "webviews", rid, list }),
-          (e: Error) => send(ws, { t: "webviews", rid, list: [], error: `读取 iOS 页面列表失败：${e.message}` }),
+          (e: Error) => send(ws, { t: "webviews", rid, list: [], error: withReason({ en: "Reading the iOS page list failed", zh: "读取 iOS 页面列表失败" }, e) }),
         );
       }
       if (!opts.debug) return send(ws, { t: "webviews", rid, list: [] });
@@ -1067,14 +1109,14 @@ export async function startServer(opts: {
       try {
         send(ws, { t: "webviews", rid, list: await listPages(debugFor(s.id)) });
       } catch (e) {
-        send(ws, { t: "webviews", rid, list: [], ...adbFail("读取 WebView 列表失败：", e) });
+        send(ws, { t: "webviews", rid, list: [], ...adbFail(LIST_FAILED, e) });
       }
     };
     // 检测、清除代理：走 adb 的设备都行（真机、MuMu 也会被抓包工具设上代理），iOS 模拟器不行
-    const proxyBlocked = (s: EmulatorSession | null): string | null =>
-      !s ? "没有连接设备" : !viaAdb(s) ? NO_ADB : !opts.proxy ? "网关不支持检测网络" : isRebooting(s) ? REBOOTING : null;
-    const proxyAdbFail = (s: EmulatorSession, prefix: string, e: unknown) =>
-      e instanceof AdbUnresponsive && s.kind === "phone" ? { error: PHONE_ADB_UNRESPONSIVE } : adbFail(prefix, e);
+    const proxyBlocked = (s: EmulatorSession | null): Msg | null =>
+      !s ? NO_DEVICE : !viaAdb(s) ? NO_ADB : !opts.proxy ? { en: "The gateway cannot check the network", zh: "网关不支持检测网络" } : isRebooting(s) ? REBOOTING : null;
+    const proxyAdbFail = (s: EmulatorSession, what: Msg, e: unknown) =>
+      e instanceof AdbUnresponsive && s.kind === "phone" ? { error: PHONE_ADB_UNRESPONSIVE } : adbFail(what, e);
     const proxyCheck = async (rid: number) => {
       const s = conn.session;
       const blocked = proxyBlocked(s);
@@ -1082,7 +1124,7 @@ export async function startServer(opts: {
       try {
         send(ws, { t: "proxyCheck", rid, ...(await opts.proxy!.check(s!.id)) });
       } catch (e) {
-        send(ws, { t: "proxyCheck", rid, proxy: null, ...proxyAdbFail(s!, "检测代理失败：", e) });
+        send(ws, { t: "proxyCheck", rid, proxy: null, ...proxyAdbFail(s!, { en: "Checking the proxy failed", zh: "检测代理失败" }, e) });
       }
     };
     const proxyClear = async (rid: number, expected: string) => {
@@ -1093,10 +1135,12 @@ export async function startServer(opts: {
         const r = await opts.proxy!.clear(s!.id, expected);
         if (r === "cleared") log(`已清除 ${s!.id} 的全局 HTTP 代理 ${expected}`);
         if (r === "failed") log(`清除 ${s!.id} 的全局 HTTP 代理后读回来还在`);
-        const error = r === "changed" ? "代理设置和检测时不一样了（可能换了设备），没有清除。请重新检测" : r === "failed" ? "清除后代理设置还在" : null;
+        const error: Msg | null = r === "changed"
+          ? { en: "The proxy setting changed since the check (maybe the device changed), so it was not cleared. Check again", zh: "代理设置和检测时不一样了（可能换了设备），没有清除。请重新检测" }
+          : r === "failed" ? { en: "The proxy setting is still there after clearing", zh: "清除后代理设置还在" } : null;
         send(ws, { t: "proxyClear", rid, ok: r === "cleared", ...(error ? { error } : {}) });
       } catch (e) {
-        send(ws, { t: "proxyClear", rid, ok: false, ...proxyAdbFail(s!, "清除代理失败：", e) });
+        send(ws, { t: "proxyClear", rid, ok: false, ...proxyAdbFail(s!, { en: "Clearing the proxy failed", zh: "清除代理失败" }, e) });
       }
     };
     const findPage = async (socket: string, id: string) => {
@@ -1113,15 +1157,15 @@ export async function startServer(opts: {
       return page ? { h, page } : null;
     };
     const inspect = async (rid: number, socket: string, id: string) => {
-      if (!conn.session) return send(ws, { t: "inspect", rid, error: "没有连接设备" });
+      if (!conn.session) return send(ws, { t: "inspect", rid, error: NO_DEVICE });
       if (isRebooting(conn.session)) return send(ws, { t: "inspect", rid, error: REBOOTING });
       let found: Awaited<ReturnType<typeof findPage>>;
       try {
         found = await findPage(socket, id);
       } catch (e) {
-        return send(ws, { t: "inspect", rid, ...adbFail("读取 WebView 列表失败：", e) });
+        return send(ws, { t: "inspect", rid, ...adbFail(LIST_FAILED, e) });
       }
-      if (!found) return send(ws, { t: "inspect", rid, error: "页面已关闭" });
+      if (!found) return send(ws, { t: "inspect", rid, error: PAGE_CLOSED });
       const { page } = found;
       const ticket = tickets.issue(page.socket, page.id);
       // 没用掉的票据 60 秒后自己过期，这里只防表无限长
@@ -1131,55 +1175,55 @@ export async function startServer(opts: {
       const appspot = "ios" in found ? undefined : inspectUrl(page, gatewayPort, ticket);
       const url = "ios" in found ? webInspectorUrl(gatewayPort, page, ticket, found.ios) : appspot && localPage ? localFrontendUrl(appspot, gatewayPort) : appspot;
       if (url) send(ws, { t: "inspect", rid, url });
-      else send(ws, { t: "inspect", rid, hint: `在 chrome://inspect 里找：${page.pkg ?? page.socket} / ${page.title}` });
+      else send(ws, { t: "inspect", rid, hint: { en: `Find it in chrome://inspect: ${page.pkg ?? page.socket} / ${page.title}`, zh: `在 chrome://inspect 里找：${page.pkg ?? page.socket} / ${page.title}` } });
     };
     const navigate = async (rid: number, socket: string, id: string, address: string) => {
       const target = normalizeTarget(address);
       if ("error" in target) return send(ws, { t: "navigate", rid, ok: false, error: target.error });
-      if (!conn.session) return send(ws, { t: "navigate", rid, ok: false, error: "没有连接设备" });
+      if (!conn.session) return send(ws, { t: "navigate", rid, ok: false, error: NO_DEVICE });
       if (isRebooting(conn.session)) return send(ws, { t: "navigate", rid, ok: false, error: REBOOTING });
 
       const timeoutMs = opts.debug?.navigateTimeoutMs ?? 12000;
       let cdp: CdpClient | undefined;
       // 防止超时和正常路径双重回复
       let replied = false;
-      const reply = (r: { ok: false; error: string; code?: "adb-unresponsive" } | { ok: true; href: string; title: string; bridge: boolean }) => {
+      const reply = (r: { ok: false; error: string | Msg; code?: "adb-unresponsive" } | { ok: true; href: string; title: string; bridge: boolean }) => {
         if (replied) return;
         replied = true;
         send(ws, { t: "navigate", rid, ...r });
       };
-      const fail = (error: string, code?: "adb-unresponsive") => reply({ ok: false, error, ...(code ? { code } : {}) });
-      const failAdb = (prefix: string, e: unknown) => {
-        const f = adbFail(prefix, e);
+      const fail = (error: string | Msg, code?: "adb-unresponsive") => reply({ ok: false, error, ...(code ? { code } : {}) });
+      const failAdb = (what: Msg, e: unknown) => {
+        const f = adbFail(what, e);
         fail(f.error, f.code);
       };
 
-      const tid = setTimeout(() => { cdp?.close(); fail("页面加载超时"); }, timeoutMs);
+      const tid = setTimeout(() => { cdp?.close(); fail(PAGE_TIMEOUT); }, timeoutMs);
       try {
         let found: Awaited<ReturnType<typeof findPage>>;
         try {
           found = await findPage(socket, id);
         } catch (e) {
-          return failAdb("读取 WebView 列表失败：", e);
+          return failAdb(LIST_FAILED, e);
         }
-        if (!found) return fail("页面已关闭");
+        if (!found) return fail(PAGE_CLOSED);
         const { h } = found;
         // 「指向本地开发服务器」靠 adb reverse 和 CDP，iOS 模拟器没有
         if (!h) return fail(NO_ADB);
         const port = h.d.webviews.portOf(socket);
         // 设备已切走：旧设备的 reverse 已收掉，不能再建
-        if (h.disposed || port === undefined) return fail("页面已关闭");
+        if (h.disposed || port === undefined) return fail(PAGE_CLOSED);
         if (target.reversePort !== undefined) {
           try {
             await h.d.reverses.ensure(target.reversePort);
           } catch (e) {
-            return failAdb("adb reverse 失败：", e);
+            return failAdb({ en: "adb reverse failed", zh: "adb reverse 失败" }, e);
           }
         }
         try {
           cdp = await opts.debug!.connectCdp(`ws://127.0.0.1:${port}/devtools/page/${encodeURIComponent(id)}`);
         } catch (e) {
-          return fail(`连不上页面的调试端口：${(e as Error).message}`);
+          return fail(withReason({ en: "Cannot reach the page's debugging port", zh: "连不上页面的调试端口" }, e));
         }
         try {
           const r = await navigateAndCheck(cdp, target.url);
@@ -1226,43 +1270,43 @@ export async function startServer(opts: {
       u.idle = null;
       if (upload === u) upload = null;
     };
-    const abortUpload = (u: Upload, why: string) => {
+    const abortUpload = (u: Upload, why: Msg) => {
       if (u.ended) return;
       endReceiving(u);
-      log(`传文件 ${u.name} 中止：${why}`);
+      log(`传文件 ${u.name} 中止：${why.zh}`);
       uploadMsg(u.id, "failed", { error: why });
       void dropTemp(u);
     };
     const touchIdle = (u: Upload) => {
       if (u.idle) clearTimeout(u.idle);
-      u.idle = setTimeout(() => abortUpload(u, "太久没有收到数据，已中止"), opts.files?.idleMs ?? 30_000);
+      u.idle = setTimeout(() => abortUpload(u, { en: "No data for too long; stopped", zh: "太久没有收到数据，已中止" }), opts.files?.idleMs ?? 30_000);
     };
     const startUpload = (m: { id: number; name: string; size: number }) => {
       const fail = (error: string | Msg) => uploadMsg(m.id, "failed", { error });
       const files = opts.files;
-      if (!files) return fail("这个网关不支持传文件");
+      if (!files) return fail({ en: "This gateway cannot receive files", zh: "这个网关不支持传文件" });
       const s = conn.session;
-      if (!s) return fail({ en: "No device connected", zh: "没有连接设备" });
+      if (!s) return fail(NO_DEVICE);
       if (isRebooting(s)) return fail(REBOOTING);
       const name = sanitizeFileName(m.name);
-      if (!name) return fail("文件名不合法");
+      if (!name) return fail({ en: "Invalid file name", zh: "文件名不合法" });
       let kind: Upload["kind"];
       let format: Upload["format"];
       if (!viaAdb(s)) {
         // iOS 模拟器只装 App（gateway/src/ios-app.ts）
         const k = iosFileKind(name);
-        if (k.kind === "unsupported") return fail(IOS_ONLY_APPS);
-        if (!files.iosInstall) return fail("这个网关不能给 iOS 模拟器装 App");
+        if (k.kind === "unsupported") return fail(IOS_ONLY_APPS_MSG);
+        if (!files.iosInstall) return fail({ en: "This gateway cannot install apps on the iOS Simulator", zh: "这个网关不能给 iOS 模拟器装 App" });
         kind = "ios-app";
         format = k.format;
       } else {
         const k = fileKind(name);
-        if (k.kind === "unsupported") return fail(`暂不支持 ${k.ext}，请提供 .apk`);
+        if (k.kind === "unsupported") return fail({ en: `${k.ext} is not supported yet; use an .apk`, zh: `暂不支持 ${k.ext}，请提供 .apk` });
         kind = k.kind;
       }
-      if (m.size > UPLOAD_MAX_BYTES) return fail("文件太大：最大 2 GB");
+      if (m.size > UPLOAD_MAX_BYTES) return fail({ en: "File too large: 2 GB at most", zh: "文件太大：最大 2 GB" });
       // 页面一次只传一个：还在收的旧传输是页面已经不要了的
-      if (upload) abortUpload(upload, "页面开始传下一个文件，这个已作废");
+      if (upload) abortUpload(upload, { en: "The page started sending the next file; this one was dropped", zh: "页面开始传下一个文件，这个已作废" });
       const u: Upload = {
         id: m.id, name, kind, format, size: m.size, session: s,
         arrived: 0, written: 0, dir: null, fh: null, chain: Promise.resolve(), ended: false, idle: null,
@@ -1276,7 +1320,7 @@ export async function startServer(opts: {
           u.dir = await mkdtemp(join(files.tmpRoot ?? tmpdir(), UPLOAD_DIR_PREFIX));
           u.fh = await open(join(u.dir, name), "wx");
         } catch (e) {
-          return abortUpload(u, `建临时文件失败：${(e as Error).message}`);
+          return abortUpload(u, withReason({ en: "Creating the temporary file failed", zh: "建临时文件失败" }, e));
         }
         if (u.ended) return;
         uploadMsg(u.id, "uploading", { received: 0 });
@@ -1285,7 +1329,7 @@ export async function startServer(opts: {
     };
     const cancelUpload = (id: number) => {
       // 已经在装的不打断：adb 结束后照常回报并删临时文件
-      if (upload?.id === id) abortUpload(upload, "页面取消了");
+      if (upload?.id === id) abortUpload(upload, { en: "Cancelled by the page", zh: "页面取消了" });
     };
     const onChunk = (buf: Buffer) => {
       const u = upload;
@@ -1302,7 +1346,7 @@ export async function startServer(opts: {
         try {
           for (let off = 0; off < data.byteLength;) off += (await u.fh.write(data, off)).bytesWritten;
         } catch (e) {
-          return abortUpload(u, `写临时文件失败：${(e as Error).message}`);
+          return abortUpload(u, withReason({ en: "Writing the temporary file failed", zh: "写临时文件失败" }, e));
         }
         u.written += data.byteLength;
         uploadMsg(u.id, "uploading", { received: u.written });
@@ -1318,9 +1362,9 @@ export async function startServer(opts: {
       try {
         const s = conn.session;
         if (wsClosed) return;
-        if (!s) return uploadMsg(u.id, "failed", { error: "设备已断开" });
+        if (!s) return uploadMsg(u.id, "failed", { error: { en: "The device has disconnected", zh: "设备已断开" } });
         // 同一个设备 id（emulator-<serial>）可能已换成另一台 AVD，按会话认人
-        if (s !== u.session) return uploadMsg(u.id, "failed", { error: "设备已切换，没有安装" });
+        if (s !== u.session) return uploadMsg(u.id, "failed", { error: { en: "The device changed; not installed", zh: "设备已切换，没有安装" } });
         if (isRebooting(s)) return uploadMsg(u.id, "failed", { error: REBOOTING });
         uploadMsg(u.id, u.kind === "file" ? "pushing" : "installing");
         if (u.kind === "ios-app") {
@@ -1330,7 +1374,7 @@ export async function startServer(opts: {
             uploadMsg(u.id, "done");
           } catch (e) {
             log(`${u.name} 安装失败：${(e as Error).message}`);
-            uploadMsg(u.id, "failed", { error: (e as Error).message });
+            uploadMsg(u.id, "failed", { error: textOf(e) });
           }
           return;
         }
@@ -1343,8 +1387,8 @@ export async function startServer(opts: {
           log(`${u.name} ${u.kind === "apk" ? "已安装" : `已放到 ${PUSH_DIR}`}`);
           uploadMsg(u.id, "done");
         } catch (e) {
-          const error = e instanceof AdbUnresponsive ? "等了太久还没完成，已停止" : installFailure((e as Error).message).text;
-          log(`${u.name} ${u.kind === "apk" ? "安装" : "放进设备"}失败：${error}`);
+          const error: Msg = e instanceof AdbUnresponsive ? { en: "Took too long; stopped", zh: "等了太久还没完成，已停止" } : installFailure((e as Error).message).text;
+          log(`${u.name} ${u.kind === "apk" ? "安装" : "放进设备"}失败：${error.zh}`);
           uploadMsg(u.id, "failed", { error });
         }
       } finally {
@@ -1355,9 +1399,9 @@ export async function startServer(opts: {
     // 不进输入队列：卡住的输入（比如 adb 粘贴等满超时）不能拖住重启；重启中的输入由 enqueue 丢掉
     const reboot = async () => {
       const s = conn.session;
-      if (!s) return send(ws, { t: "error", message: "重启失败：没有连接设备" });
-      if (!s.caps.reboot) return send(ws, { t: "error", message: "这台设备不支持重启" });
-      if (rebooting) return send(ws, { t: "error", message: "设备正在重启，等这一轮结束再试" });
+      if (!s) return send(ws, { t: "error", message: { en: "Restart failed: no device connected", zh: "重启失败：没有连接设备" } });
+      if (!s.caps.reboot) return send(ws, { t: "error", message: { en: "This device cannot be restarted", zh: "这台设备不支持重启" } });
+      if (rebooting) return send(ws, { t: "error", message: { en: "A device is restarting; try again when it finishes", zh: "设备正在重启，等这一轮结束再试" } });
       rebooting = { id: s.id };
       log(`页面确认重启 ${s.id}`);
       const onIt = (c: Conn) => c.session === s;
@@ -1367,7 +1411,7 @@ export async function startServer(opts: {
       // 重启后设备里的 adb reverse 和 WebView socket 都没了，旧的转发不能再用
       dropDebug(s.id);
       let result: "done" | "adb-down" | "failed";
-      let error: string | undefined;
+      let error: Msg | string | undefined;
       try {
         try {
           await s.reboot();
@@ -1379,13 +1423,13 @@ export async function startServer(opts: {
         result = await (opts.rebootWait?.(s.id) ?? Promise.resolve("adb-down" as const));
       } catch (e) {
         result = "failed";
-        error = (e as Error).message;
+        error = textOf(e);
       }
       rebooting = null;
       if (liveSession(s.id)) {
         // 按 id 找：会话对象可能已经换过（比如重启期间有人切回这台），旧对象上已经没有页面了
         const onDevice = (c: Conn) => c.session?.id === s.id;
-        log(`${s.id} 重启结束：${result}${error ? `（${error}）` : ""}`);
+        log(`${s.id} 重启结束：${result}${error ? `（${msgOf(error).zh}）` : ""}`);
         broadcast({ t: "status", state: "connected" }, onDevice);
         broadcast({ t: "reboot", result, ...(error ? { error } : {}) }, onDevice);
         return;
@@ -1399,10 +1443,10 @@ export async function startServer(opts: {
           if (next) for (const c of live()) if (!c.session) c.attach(next);
         } catch (e) {
           result = "failed";
-          error = (e as Error).message;
+          error = textOf(e);
         }
       }
-      log(`${s.id} 重启结束：${result}${error ? `（${error}）` : ""}`);
+      log(`${s.id} 重启结束：${result}${error ? `（${msgOf(error).zh}）` : ""}`);
       // 没接上的页面（包括重启期间新开的）都离开「重启中」；重启结果只发给点了重启时就在的页面
       for (const c of live()) if (!c.session) send(c.ws, { t: "status", state: isPhone(s) ? "phone-closed" : "emulator-closed" });
       for (const c of back) send(c.ws, { t: "reboot", result, ...(error ? { error } : {}) });
@@ -1453,10 +1497,10 @@ export async function startServer(opts: {
           }
           return;
         }
-        let failure: string | null = null;
+        let failure: Msg | string | null = null;
         const session = await opts.getSession().catch((e) => {
-          failure = (e as Error).message;
-          log(`获取模拟器会话失败：${failure}`);
+          failure = textOf(e);
+          log(`获取模拟器会话失败：${(e as Error).message}`);
           return null;
         });
         if (ws.readyState !== ws.OPEN || conn.session) return;
@@ -1464,7 +1508,7 @@ export async function startServer(opts: {
         else {
           send(ws, { t: "status", state: booting() ? "booting" : "no-emulator" });
           // 模拟器在运行但连不上（例如 gRPC 认证失败）时，把原因告诉页面，不要只显示“没有模拟器”
-          if (failure) send(ws, { t: "error", message: `连不上模拟器：${failure}` });
+          if (failure) send(ws, { t: "error", message: withReason({ en: "Cannot connect to the emulator", zh: "连不上模拟器" }, failure) });
         }
         return;
       }
@@ -1488,7 +1532,7 @@ export async function startServer(opts: {
           if (conn.session?.caps.input === false) break;
           // 模拟器不接受按键时页面上看起来就是“点了没反应”：把原因告诉页面，日志照旧由 enqueue 写
           enqueue("key", (s) => s.key(m.key, m.eventType).catch((e: Error) => {
-            send(ws, { t: "error", message: `按键没有发出：${e.message}` });
+            send(ws, { t: "error", message: withReason({ en: "The key was not sent", zh: "按键没有发出" }, e) });
             throw e;
           }));
           break;
@@ -1512,14 +1556,14 @@ export async function startServer(opts: {
           break;
         case "rotate":
           if (conn.session && !conn.session.caps.rotate) {
-            send(ws, { t: "error", message: "这台设备不支持旋转" });
+            send(ws, { t: "error", message: { en: "This device cannot rotate", zh: "这台设备不支持旋转" } });
             break;
           }
           // 排进输入队列：连点两次时第二次要读到第一次转完的方向
           // 新方向由 onRotation 广播
           enqueue("rotate", (s) => s.rotate(m.dir).then(
             () => {},
-            (e: Error) => send(ws, { t: "error", message: `旋转失败：${e.message}` }),
+            (e: Error) => send(ws, { t: "error", message: withReason({ en: "Rotation failed", zh: "旋转失败" }, e) }),
           ));
           break;
         case "pause":
@@ -1538,14 +1582,14 @@ export async function startServer(opts: {
           if (!opts.avd) break;
           opts.avd.list().then(
             (list) => send(ws, { t: "avds", list }),
-            (e: Error) => send(ws, { t: "error", message: `读取 AVD 列表失败：${e.message}` }),
+            (e: Error) => send(ws, { t: "error", message: withReason({ en: "Reading the AVD list failed", zh: "读取 AVD 列表失败" }, e) }),
           );
           break;
         case "start": {
           if (!opts.avd) break;
           // 名字会拼进启动参数，不合 AVD 名规则的不启动
-          const bad = avdNameError(m.name, []);
-          if (bad) send(ws, { t: "error", message: `设备名不对：${bad}` });
+          const bad = avdNameErrorMsg(m.name, []);
+          if (bad) send(ws, { t: "error", message: withReason({ en: "Invalid device name", zh: "设备名不对" }, bad) });
           else if (deleting.has(m.name)) send(ws, { t: "error", message: DELETING });
           else startJob(m.name);
           break;
@@ -1553,21 +1597,21 @@ export async function startServer(opts: {
         case "stop":
           if (!opts.avd) break;
           if (!conn.session) {
-            send(ws, { t: "error", message: "没有连接设备" });
+            send(ws, { t: "error", message: NO_DEVICE });
             break;
           }
           if (!conn.session.caps.stop) {
-            send(ws, { t: "error", message: "这台设备不支持关机" });
+            send(ws, { t: "error", message: { en: "This device cannot be shut down", zh: "这台设备不支持关机" } });
             break;
           }
-          opts.avd.stop(conn.session.serial).catch((e: Error) => send(ws, { t: "error", message: `关闭失败：${e.message}` }));
+          opts.avd.stop(conn.session.serial).catch((e: Error) => send(ws, { t: "error", message: withReason({ en: "Shutdown failed", zh: "关闭失败" }, e) }));
           break;
         case "use": {
           if (!opts.avd) break;
           // 真机 id 是 adb 序列号、iOS 模拟器是 UDID，不按 AVD 名的规则检查（main.ts 的 discover 认得它们）
-          const bad = usablePhone(m.name) || usableIosSim(m.name) ? null : avdNameError(m.name, []);
+          const bad = usablePhone(m.name) || usableIosSim(m.name) ? null : avdNameErrorMsg(m.name, []);
           if (bad) {
-            send(ws, { t: "error", message: `设备名不对：${bad}` });
+            send(ws, { t: "error", message: withReason({ en: "Invalid device name", zh: "设备名不对" }, bad) });
             break;
           }
           if (deleting.has(m.name)) {
@@ -1579,10 +1623,17 @@ export async function startServer(opts: {
             send(ws, { t: "error", message: REBOOTING });
             break;
           }
-          let failure: string | null = null;
-          const s = await useDevice(m.name).catch((e: Error) => ((failure = e.message), log(`切换到 ${m.name} 失败：${e.message}`), null));
+          let failure: Error | null = null;
+          const s = await useDevice(m.name).catch((e: Error) => ((failure = e), log(`切换到 ${m.name} 失败：${e.message}`), null));
           if (s) switchTo(s);
-          else send(ws, { t: "error", message: failure ? `${m.name} 连不上：${failure}` : `${m.name} 没有在运行或没开 gRPC` });
+          else {
+            send(ws, {
+              t: "error",
+              message: failure
+                ? withReason({ en: `Cannot connect to ${m.name}`, zh: `${m.name} 连不上` }, failure)
+                : { en: `${m.name} is not running or has no gRPC`, zh: `${m.name} 没有在运行或没开 gRPC` },
+            });
+          }
           break;
         }
         case "install":
@@ -1592,7 +1643,7 @@ export async function startServer(opts: {
           if (!opts.setup) break;
           opts.setup.catalog().then(
             (catalog) => send(ws, { t: "catalog", catalog }),
-            (e: Error) => send(ws, { t: "error", message: `读取机型和系统版本失败：${e.message}` }),
+            (e: Error) => send(ws, { t: "error", message: withReason({ en: "Reading device models and system versions failed", zh: "读取机型和系统版本失败" }, e) }),
           );
           break;
         case "createAvd":
@@ -1621,11 +1672,11 @@ export async function startServer(opts: {
           break;
         case "renameAvd": {
           if (!opts.avd) {
-            send(ws, { t: "renameAvd", rid: m.rid, ok: false, error: "网关没有管理设备" });
+            send(ws, { t: "renameAvd", rid: m.rid, ok: false, error: NO_AVD_OPS });
             break;
           }
           const avd = opts.avd;
-          const done = deleting.has(m.name) ? DELETING : await avd.rename(m.name, m.displayName).then(() => null, (e: Error) => e.message);
+          const done = deleting.has(m.name) ? DELETING : await avd.rename(m.name, m.displayName).then(() => null, (e: Error) => textOf(e));
           send(ws, { t: "renameAvd", rid: m.rid, ok: done === null, ...(done === null ? {} : { error: done }) });
           // 别的页面也要看到新名字
           if (done === null) avd.list().then((list) => broadcast({ t: "avds", list }), (e: Error) => log(`改名后读取 AVD 列表失败：${e.message}`));
@@ -1633,7 +1684,7 @@ export async function startServer(opts: {
         }
         case "logcatOpen":
           if (!opts.logcat) {
-            send(ws, { t: "error", message: "网关不支持日志" });
+            send(ws, { t: "error", message: { en: "The gateway does not support logs", zh: "网关不支持日志" } });
             break;
           }
           logFilter = m.filter;
@@ -1657,13 +1708,13 @@ export async function startServer(opts: {
         }
         case "logcatRead": {
           const s = conn.session;
-          if (!opts.logcatRead) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: "网关不支持读日志" });
-          else if (!s) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: "没有连接设备" });
+          if (!opts.logcatRead) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: { en: "The gateway cannot read logs", zh: "网关不支持读日志" } });
+          else if (!s) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: NO_DEVICE });
           else if (!hasLogs(s)) send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: NO_ADB });
           else {
             await opts.logcatRead(s.id, m.filter, m.limit).then(
               (lines) => send(ws, { t: "logcatRead", rid: m.rid, lines }),
-              (e: Error) => send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: e instanceof AdbUnresponsive && s.kind === "phone" ? PHONE_ADB_UNRESPONSIVE : e.message }),
+              (e: Error) => send(ws, { t: "logcatRead", rid: m.rid, lines: [], error: e instanceof AdbUnresponsive && s.kind === "phone" ? PHONE_ADB_UNRESPONSIVE : textOf(e) }),
             );
           }
           break;
@@ -1674,22 +1725,22 @@ export async function startServer(opts: {
             () => log("已打开 MuMuPlayer"),
             (e: Error) => {
               log(`打开 MuMuPlayer 失败：${e.message}`);
-              send(ws, { t: "error", message: `打开 MuMu 失败：${e.message}` });
+              send(ws, { t: "error", message: withReason({ en: "Opening MuMu failed", zh: "打开 MuMu 失败" }, e) });
             },
           );
           break;
         case "iosCatalog":
-          if (!opts.iosSims?.catalog) send(ws, { t: "iosCatalog", rid: m.rid, error: "网关不支持创建 iOS 模拟器" });
+          if (!opts.iosSims?.catalog) send(ws, { t: "iosCatalog", rid: m.rid, error: NO_IOS_CREATE });
           else await opts.iosSims.catalog().then(
             (catalog) => send(ws, { t: "iosCatalog", rid: m.rid, catalog }),
-            (e: Error) => send(ws, { t: "iosCatalog", rid: m.rid, error: `读不到 iOS 系统版本：${e.message.split("\n")[0]}` }),
+            (e: Error) => send(ws, { t: "iosCatalog", rid: m.rid, error: withReason({ en: "Cannot read the iOS versions", zh: "读不到 iOS 系统版本" }, firstLine(e)) }),
           );
           break;
         case "createIosSim":
-          if (!opts.iosSims?.create) send(ws, { t: "createIosSim", rid: m.rid, error: "网关不支持创建 iOS 模拟器" });
+          if (!opts.iosSims?.create) send(ws, { t: "createIosSim", rid: m.rid, error: NO_IOS_CREATE });
           else await opts.iosSims.create(m.name, m.deviceType, m.runtime).then(
             (udid) => send(ws, { t: "createIosSim", rid: m.rid, udid }),
-            (e: Error) => send(ws, { t: "createIosSim", rid: m.rid, error: `创建失败：${e.message.split("\n")[0]}` }),
+            (e: Error) => send(ws, { t: "createIosSim", rid: m.rid, error: withReason({ en: "Creating the simulator failed", zh: "创建失败" }, firstLine(e)) }),
           );
           break;
         case "iosSimOpen":
@@ -1700,7 +1751,10 @@ export async function startServer(opts: {
             () => log(`iOS 模拟器 ${m.udid} 已${verb}`),
             (e: Error) => {
               log(`iOS 模拟器 ${m.udid} ${verb}失败：${e.message}`);
-              send(ws, { t: "error", message: `iOS 模拟器${verb}失败：${e.message}` });
+              send(ws, {
+                t: "error",
+                message: withReason(m.t === "iosSimOpen" ? { en: "Starting the iOS Simulator failed", zh: "iOS 模拟器开机失败" } : { en: "Shutting down the iOS Simulator failed", zh: "iOS 模拟器关机失败" }, e),
+              });
             },
           );
           break;
@@ -1713,14 +1767,17 @@ export async function startServer(opts: {
             () => log(`MuMu ${m.index} 已${verb === "开机" ? "开始开机" : "开始关机"}`),
             (e: Error) => {
               log(`MuMu ${m.index} ${verb}失败：${e.message}`);
-              send(ws, { t: "error", message: `MuMu ${verb}失败：${e.message}` });
+              send(ws, {
+                t: "error",
+                message: withReason(m.t === "mumuOpen" ? { en: "Starting MuMu failed", zh: "MuMu 开机失败" } : { en: "Shutting down MuMu failed", zh: "MuMu 关机失败" }, e),
+              });
             },
           );
           break;
         }
         case "stopAvd": {
           if (!opts.avd) {
-            send(ws, { t: "stopAvd", rid: m.rid, ok: false, error: "网关没有管理设备" });
+            send(ws, { t: "stopAvd", rid: m.rid, ok: false, error: NO_AVD_OPS });
             break;
           }
           if (deleting.has(m.name)) {
@@ -1728,13 +1785,13 @@ export async function startServer(opts: {
             break;
           }
           const failed = await stopByName(m.name);
-          log(failed === null ? `已停止设备 ${m.name}` : `停止设备 ${m.name} 失败：${failed}`);
+          log(failed === null ? `已停止设备 ${m.name}` : `停止设备 ${m.name} 失败：${failed.zh}`);
           send(ws, { t: "stopAvd", rid: m.rid, ok: failed === null, ...(failed === null ? {} : { error: failed }) });
           break;
         }
         case "deleteAvd": {
           if (!opts.avd) {
-            send(ws, { t: "deleteAvd", rid: m.rid, ok: false, error: "网关没有管理设备" });
+            send(ws, { t: "deleteAvd", rid: m.rid, ok: false, error: NO_AVD_OPS });
             break;
           }
           const avd = opts.avd;
@@ -1742,11 +1799,11 @@ export async function startServer(opts: {
           const stopFirst = m.stop === true;
           // 失败原因给页面看；cause 里带本机路径的细节只写日志（gateway/src/avd.ts 的 deleteAvd）
           let detail = "";
-          const tryDelete = async (): Promise<string | null> => {
+          const tryDelete = async (): Promise<Msg | string | null> => {
             if (deleting.has(name)) return DELETING;
             // 开机任务进行中时发现文件可能还没写出来，AvdOps 看不出它在运行
             const booting = [...jobs].some((j) => j.name === name);
-            if (booting && !stopFirst) return "这台设备正在开机，等它开机后先关闭再删除";
+            if (booting && !stopFirst) return { en: "This device is starting; once it has started, stop it and then delete it", zh: "这台设备正在开机，等它开机后先关闭再删除" };
             deleting.add(name);
             try {
               if (stopFirst) {
@@ -1758,19 +1815,19 @@ export async function startServer(opts: {
               }
               // 最后再按列表看一次：它还认 adb 里看得到、没开 gRPC 的模拟器（no-grpc）
               const info = (await avd.list()).find((a) => a.name === name);
-              if (info && info.running !== "no") return "先关闭这台设备再删除";
+              if (info && info.running !== "no") return { en: "Stop this device before deleting it", zh: "先关闭这台设备再删除" };
               await avd.delete(name);
               return null;
             } catch (e) {
               const cause = (e as Error).cause;
               if (cause instanceof Error) detail = `（${cause.message}）`;
-              return (e as Error).message;
+              return textOf(e);
             } finally {
               deleting.delete(name);
             }
           };
           const done = await tryDelete();
-          log(done === null ? `已删除设备 ${m.name}` : `删除设备 ${m.name} 失败：${done}${detail}`);
+          log(done === null ? `已删除设备 ${m.name}` : `删除设备 ${m.name} 失败：${msgOf(done).zh}${detail}`);
           send(ws, { t: "deleteAvd", rid: m.rid, ok: done === null, ...(done === null ? {} : { error: done }) });
           if (done === null) avd.list().then((list) => broadcast({ t: "avds", list }), (e: Error) => log(`删除后读取 AVD 列表失败：${e.message}`));
           break;
@@ -1780,7 +1837,7 @@ export async function startServer(opts: {
           break;
         case "navigate":
           navigate(m.rid, m.socket, m.id, m.address).catch((e: Error) =>
-            send(ws, { t: "navigate", rid: m.rid, ok: false, error: e.message }),
+            send(ws, { t: "navigate", rid: m.rid, ok: false, error: textOf(e) }),
           );
           break;
         case "reboot":
@@ -1794,8 +1851,8 @@ export async function startServer(opts: {
           }
           send(ws, { t: "update", state: "checking" });
           const r = await u.request();
-          if (r.state === "restarting") broadcast({ t: "update", ...r });
-          else send(ws, { t: "update", ...r });
+          if (r.state === "restarting") broadcast(updateMsg(r));
+          else send(ws, updateMsg(r));
           break;
         }
         case "upload":
@@ -1808,7 +1865,7 @@ export async function startServer(opts: {
           // 截图返回前会话可能已退出或换了一台：按发起时的会话命名
           const s = conn.session;
           if (!s) {
-            send(ws, { t: "error", message: "截图失败：没有连接设备" });
+            send(ws, { t: "error", message: { en: "Screenshot failed: no device connected", zh: "截图失败：没有连接设备" } });
             break;
           }
           s.screenshot().then(
@@ -1821,7 +1878,7 @@ export async function startServer(opts: {
               header.writeUInt32LE(BIN_SCREENSHOT, 0);
               if (ws.readyState === ws.OPEN) ws.send(Buffer.concat([header, png]));
             },
-            (e: Error) => send(ws, { t: "error", message: `截图失败：${e.message}` }),
+            (e: Error) => send(ws, { t: "error", message: withReason({ en: "Screenshot failed", zh: "截图失败" }, e) }),
           );
           break;
         }
@@ -1832,7 +1889,7 @@ export async function startServer(opts: {
       wsClosed = true;
       iosUnlight();
       // 还在收分片的传输：删掉临时文件；已经在装的等 adb 结束后由 finishUpload 删
-      if (upload && !upload.ended) abortUpload(upload, "连接断开");
+      if (upload && !upload.ended) abortUpload(upload, { en: "Connection closed", zh: "连接断开" });
       // 连接异常断开时若手指还按着，补发抬起，避免 Android 侧卡住
       if (lastTouch?.down) {
         const { x, y } = lastTouch;
@@ -1879,7 +1936,7 @@ export async function startServer(opts: {
   const mcpNeed = async () => {
     const s = await mcpSession();
     if (!s) throw new Error("没有连接设备：先在 Droidpier 页面上打开一台设备");
-    if (isRebooting(s)) throw new Error(REBOOTING);
+    if (isRebooting(s)) throw new Error(REBOOTING.zh);
     return s;
   };
   const mcp: McpDeps = {
@@ -1917,16 +1974,16 @@ export async function startServer(opts: {
     port: gatewayPort,
     mcp,
     busy: () =>
-      installing ? "正在安装 SDK"
-      : booting() ? "设备正在开机"
-      : deleting.size ? "正在删除设备"
-      : rebooting ? "设备正在重启"
-      : transfers.size ? "正在传文件"
+      installing ? BUSY.installing.zh
+      : booting() ? BUSY.booting.zh
+      : deleting.size ? BUSY.deleting.zh
+      : rebooting ? BUSY.rebooting.zh
+      : transfers.size ? BUSY.transfers.zh
       // 重启会断开 DevTools，而 iframe 里的票据只能用一次，前端自带的重连连不上。只在最近有操作时等：
       // 页面上有网页时控制台会自己打开，一直开着页面的话光凭“连着”更新就永远等不到（2026-11-22 实测）
-      : pausedDevtools.size || (devtoolsWss.clients.size && now() - devtoolsInputAt < (opts.devtoolsIdleMs ?? DEVTOOLS_IDLE_MS)) ? "正在调试 H5"
+      : pausedDevtools.size || (devtoolsWss.clients.size && now() - devtoolsInputAt < (opts.devtoolsIdleMs ?? DEVTOOLS_IDLE_MS)) ? BUSY.devtools.zh
       : null,
-    notifyUpdate: (r) => broadcast({ t: "update", ...r }),
+    notifyUpdate: (r) => broadcast(updateMsg(r)),
     close: async () => {
       clearInterval(debugTimer);
       clearInterval(ticker);

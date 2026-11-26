@@ -50,27 +50,29 @@ test("fileKind：.apk（不分大小写）是 apk；.xapk/.apks/.aab/.apkm 不�
   assert.deepEqual(fileKind("apk"), { kind: "file" });
 });
 
-test("installFailure：认出 adb 的失败码，常见的配中文说明", () => {
+test("installFailure：认出 adb 的失败码，常见的配说明（两种语言）", () => {
   const out = "Command failed: adb -s emulator-5554 install -r -t /tmp/x/a.apk\nPerforming Streamed Install\nadb: failed to install /tmp/x/a.apk: Failure [INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected: Update version code 1 is older than current 2]\n";
   const f = installFailure(out);
   assert.equal(f.code, "INSTALL_FAILED_VERSION_DOWNGRADE");
-  assert.match(f.text, /^INSTALL_FAILED_VERSION_DOWNGRADE（.+）$/);
-  assert.match(f.text, /版本/);
-  assert.match(installFailure("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package x signatures do not match]").text, /签名.*卸载/);
-  assert.match(installFailure("Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]").text, /空间/);
-  assert.match(installFailure("Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]").text, /arm64/);
-  assert.match(installFailure("Failure [INSTALL_FAILED_DEPRECATED_SDK_VERSION: App package must target at least SDK version 23]").text, /targetSdk/);
+  assert.match(f.text.zh, /^INSTALL_FAILED_VERSION_DOWNGRADE（.+）$/);
+  assert.match(f.text.zh, /版本/);
+  assert.equal(f.text.en, "INSTALL_FAILED_VERSION_DOWNGRADE (A newer version is already installed on the device; uninstall it first)");
+  assert.match(installFailure("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package x signatures do not match]").text.zh, /签名.*卸载/);
+  assert.match(installFailure("Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]").text.zh, /空间/);
+  assert.match(installFailure("Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]").text.zh, /arm64/);
+  assert.match(installFailure("Failure [INSTALL_FAILED_DEPRECATED_SDK_VERSION: App package must target at least SDK version 23]").text.zh, /targetSdk/);
   const p = installFailure("Failure [INSTALL_PARSE_FAILED_NOT_APK: Failed to parse /data/app/vmdl.tmp/base.apk]");
   assert.equal(p.code, "INSTALL_PARSE_FAILED_NOT_APK");
-  assert.match(p.text, /^INSTALL_PARSE_FAILED_NOT_APK（.+）$/);
+  assert.match(p.text.zh, /^INSTALL_PARSE_FAILED_NOT_APK（.+）$/);
+  assert.match(p.text.en, /^INSTALL_PARSE_FAILED_NOT_APK \(.+\)$/);
 });
 
 test("installFailure：不认识的失败码原样给出；没有失败码时取最后一行", () => {
-  assert.deepEqual(installFailure("Failure [INSTALL_FAILED_SOMETHING_NEW: x]"), { code: "INSTALL_FAILED_SOMETHING_NEW", text: "INSTALL_FAILED_SOMETHING_NEW" });
+  assert.deepEqual(installFailure("Failure [INSTALL_FAILED_SOMETHING_NEW: x]"), { code: "INSTALL_FAILED_SOMETHING_NEW", text: { en: "INSTALL_FAILED_SOMETHING_NEW", zh: "INSTALL_FAILED_SOMETHING_NEW" } });
   assert.deepEqual(installFailure("Command failed: adb push\nadb: error: failed to copy 'x' to '/sdcard/Download/x': remote No space left on device\n"), {
-    text: "adb: error: failed to copy 'x' to '/sdcard/Download/x': remote No space left on device",
+    text: { en: "adb: error: failed to copy 'x' to '/sdcard/Download/x': remote No space left on device", zh: "adb: error: failed to copy 'x' to '/sdcard/Download/x': remote No space left on device" },
   });
-  assert.deepEqual(installFailure(""), { text: "未知原因" });
+  assert.deepEqual(installFailure(""), { text: { en: "Unknown reason", zh: "未知原因" } });
 });
 
 test("分片：发送方最多领先确认 UPLOAD_WINDOW_BYTES，发完为止", () => {
@@ -97,12 +99,13 @@ test("分片帧往返：kind 是 BIN_UPLOAD，带传输 id 和数据", () => {
 test("checkChunk：id 不对、超过总大小、分片太大、收下未写的太多都拒绝", () => {
   const t = { id: 3, size: 1000, arrived: 0, written: 0 };
   assert.equal(checkChunk(t, 3, 100), null);
-  assert.match(checkChunk(t, 4, 100)!, /传输/);
-  assert.match(checkChunk(t, 3, 0)!, /空/);
-  assert.match(checkChunk({ ...t, arrived: 950 }, 3, 100)!, /大小/);
-  assert.match(checkChunk({ ...t, size: 10 * UPLOAD_CHUNK_BYTES }, 3, UPLOAD_CHUNK_BYTES + 1)!, /分片/);
+  assert.match(checkChunk(t, 4, 100)!.zh, /传输/);
+  assert.match(checkChunk(t, 3, 0)!.zh, /空/);
+  assert.match(checkChunk({ ...t, arrived: 950 }, 3, 100)!.zh, /大小/);
+  assert.match(checkChunk({ ...t, size: 10 * UPLOAD_CHUNK_BYTES }, 3, UPLOAD_CHUNK_BYTES + 1)!.zh, /分片/);
   const big = { id: 3, size: 100 * UPLOAD_CHUNK_BYTES, arrived: 2 * UPLOAD_WINDOW_BYTES, written: 0 };
-  assert.match(checkChunk(big, 3, UPLOAD_CHUNK_BYTES)!, /太快/);
+  assert.match(checkChunk(big, 3, UPLOAD_CHUNK_BYTES)!.zh, /太快/);
+  assert.equal(checkChunk(t, 3, 0)!.en, "Empty chunk");
 });
 
 test("parseClientMsg：uploadCancel 要有数字 id", () => {

@@ -1,4 +1,4 @@
-import type { Msg } from "./i18n.ts";
+import { msgOf, type Msg } from "./i18n.ts";
 /** 二进制消息类型：页面发给网关的文件分片（4 字节 kind + 4 字节传输 id + 数据）。 */
 export const BIN_UPLOAD = 3;
 export const UPLOAD_HEADER_BYTES = 8;
@@ -75,24 +75,25 @@ export function iosFileKind(name: string): IosFileKind {
   return { kind: "unsupported" };
 }
 
-const HINT: Record<string, string> = {
-  INSTALL_FAILED_VERSION_DOWNGRADE: "设备上已装了更高的版本，先卸载再装",
-  INSTALL_FAILED_UPDATE_INCOMPATIBLE: "签名和设备上已装的不同，先卸载再装",
-  INSTALL_FAILED_INSUFFICIENT_STORAGE: "模拟器存储空间不足",
-  INSTALL_FAILED_NO_MATCHING_ABIS: "APK 不支持 arm64，装不到这台模拟器上",
-  INSTALL_FAILED_OLDER_SDK: "APK 要求的 Android 版本比这台模拟器高",
-  INSTALL_FAILED_DEPRECATED_SDK_VERSION: "APK 的 targetSdk 低于 23，Android 14 起不让装",
+const HINT: Record<string, Msg> = {
+  INSTALL_FAILED_VERSION_DOWNGRADE: { en: "A newer version is already installed on the device; uninstall it first", zh: "设备上已装了更高的版本，先卸载再装" },
+  INSTALL_FAILED_UPDATE_INCOMPATIBLE: { en: "The signature differs from the version on the device; uninstall it first", zh: "签名和设备上已装的不同，先卸载再装" },
+  INSTALL_FAILED_INSUFFICIENT_STORAGE: { en: "Not enough storage on the emulator", zh: "模拟器存储空间不足" },
+  INSTALL_FAILED_NO_MATCHING_ABIS: { en: "The APK does not support arm64 and cannot be installed on this emulator", zh: "APK 不支持 arm64，装不到这台模拟器上" },
+  INSTALL_FAILED_OLDER_SDK: { en: "The APK needs a newer Android version than this emulator has", zh: "APK 要求的 Android 版本比这台模拟器高" },
+  INSTALL_FAILED_DEPRECATED_SDK_VERSION: { en: "The APK's targetSdk is below 23; Android 14 and later refuse to install it", zh: "APK 的 targetSdk 低于 23，Android 14 起不让装" },
 };
+const PARSE_FAILED: Msg = { en: "The APK file is damaged or not a valid APK", zh: "APK 文件损坏或不是有效的 APK" };
 
-/** 把 adb install / push 的失败输出变成一句给人看的话：认得的失败码带中文说明。 */
-export function installFailure(output: string): { code?: string; text: string } {
+/** 把 adb install / push 的失败输出变成一句给人看的话（两种语言）：认得的失败码带说明。 */
+export function installFailure(output: string): { code?: string; text: Msg } {
   const code = /\b(INSTALL_(?:PARSE_)?FAILED_[A-Z0-9_]+)/.exec(output)?.[1];
   if (code) {
-    const hint = HINT[code] ?? (code.startsWith("INSTALL_PARSE_FAILED_") ? "APK 文件损坏或不是有效的 APK" : undefined);
-    return { code, text: hint ? `${code}（${hint}）` : code };
+    const hint = HINT[code] ?? (code.startsWith("INSTALL_PARSE_FAILED_") ? PARSE_FAILED : undefined);
+    return { code, text: hint ? { en: `${code} (${hint.en})`, zh: `${code}（${hint.zh}）` } : msgOf(code) };
   }
   const last = output.split("\n").map((l) => l.trim()).filter(Boolean).pop();
-  return { text: last ? last.slice(0, 300) : "未知原因" };
+  return { text: last ? msgOf(last.slice(0, 300)) : { en: "Unknown reason", zh: "未知原因" } };
 }
 
 /** 发送方还能不能再发一片：没发完，且领先确认不到一个窗口。 */
@@ -125,11 +126,11 @@ export function decodeUploadChunk(buf: Uint8Array): { id: number; data: Uint8Arr
  * 网关收到一片时检查：arrived 是已收到（含还没写完）的字节，written 是已写进文件的。
  * 返回拒绝的原因；没问题返回 null。
  */
-export function checkChunk(t: { id: number; size: number; arrived: number; written: number }, id: number, len: number): string | null {
-  if (id !== t.id) return "传输编号不对";
-  if (len === 0) return "空分片";
-  if (len > UPLOAD_CHUNK_BYTES) return "分片太大";
-  if (t.arrived + len > t.size) return "收到的数据超过了文件大小";
-  if (t.arrived - t.written + len > 2 * UPLOAD_WINDOW_BYTES) return "页面发得太快，没有等网关确认";
+export function checkChunk(t: { id: number; size: number; arrived: number; written: number }, id: number, len: number): Msg | null {
+  if (id !== t.id) return { en: "Wrong transfer ID", zh: "传输编号不对" };
+  if (len === 0) return { en: "Empty chunk", zh: "空分片" };
+  if (len > UPLOAD_CHUNK_BYTES) return { en: "Chunk too large", zh: "分片太大" };
+  if (t.arrived + len > t.size) return { en: "Received more data than the file size", zh: "收到的数据超过了文件大小" };
+  if (t.arrived - t.written + len > 2 * UPLOAD_WINDOW_BYTES) return { en: "The page sent data too fast without waiting for the gateway", zh: "页面发得太快，没有等网关确认" };
   return null;
 }

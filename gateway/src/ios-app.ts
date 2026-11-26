@@ -2,6 +2,7 @@
 // 只认模拟器编出来的包（Xcode 里选模拟器编译，Debug-iphonesimulator 下的 .app）；真机的包 simctl 装不上。
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { msgOf, TextError, type Msg } from "../../shared/i18n.ts";
 
 export type IosAppDeps = {
   /** 跑一个命令，返回 stdout；失败时抛错，message 带着输出。 */
@@ -14,11 +15,16 @@ const UNPACK_TIMEOUT_MS = 2 * 60_000;
 
 const DEVICE_BUILD = /iphoneos|built for iOS,? but not iOS Simulator|not built for (the )?iOS Simulator/i;
 
-/** simctl install 的失败输出变成一句给人看的话。 */
-export function iosInstallFailure(output: string): string {
-  if (DEVICE_BUILD.test(output)) return "这是给 iPhone 真机编的包，模拟器装不了：在 Xcode 里选一台模拟器编译，拖 Debug-iphonesimulator 下的 .app";
+/** simctl install 的失败输出变成一句给人看的话（两种语言）。 */
+export function iosInstallFailure(output: string): Msg {
+  if (DEVICE_BUILD.test(output)) {
+    return {
+      en: "This build is for a real iPhone and cannot be installed on the simulator: build for a simulator in Xcode and drop the .app under Debug-iphonesimulator",
+      zh: "这是给 iPhone 真机编的包，模拟器装不了：在 Xcode 里选一台模拟器编译，拖 Debug-iphonesimulator 下的 .app",
+    };
+  }
   const last = output.split("\n").map((l) => l.trim()).filter(Boolean).pop();
-  return last ? last.slice(0, 300) : "未知原因";
+  return last ? msgOf(last.slice(0, 300)) : { en: "Unknown reason", zh: "未知原因" };
 }
 
 /** 解开后的目录里找 .app：最外层，或 .ipa 的 Payload/ 下。 */
@@ -40,14 +46,15 @@ export async function installIosApp(deps: IosAppDeps, o: { udid: string; archive
     if (o.format === "tar") await deps.run("/usr/bin/tar", ["-xf", o.archive, "-C", out], UNPACK_TIMEOUT_MS);
     else await deps.run("/usr/bin/ditto", ["-x", "-k", o.archive, out], UNPACK_TIMEOUT_MS);
   } catch (e) {
-    throw new Error(`解压失败：${iosInstallFailure((e as Error).message)}`);
+    const r = iosInstallFailure((e as Error).message);
+    throw new TextError({ en: `Unpacking failed: ${r.en}`, zh: `解压失败：${r.zh}` });
   }
   const app = await findApp(out);
-  if (!app) throw new Error("包里没有 .app：要拖 .app，或装着 .app 的 .zip / .ipa");
+  if (!app) throw new TextError({ en: "No .app in the package: drop a .app, or a .zip / .ipa that holds one", zh: "包里没有 .app：要拖 .app，或装着 .app 的 .zip / .ipa" });
   try {
     await deps.run("/usr/bin/xcrun", ["simctl", "install", o.udid, app], INSTALL_TIMEOUT_MS);
   } catch (e) {
-    throw new Error(iosInstallFailure((e as Error).message));
+    throw new TextError(iosInstallFailure((e as Error).message));
   }
   return { app };
 }

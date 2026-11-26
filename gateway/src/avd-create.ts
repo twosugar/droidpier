@@ -2,6 +2,7 @@ import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { androidUserHome } from "./platform.ts";
 import type { AvdSpec, DeviceModel } from "../../shared/protocol.ts";
+import { TextError } from "../../shared/i18n.ts";
 
 /** 创建设备对话框里的一个机型和它的屏幕：分辨率（像素）、密度（dpi）。 */
 export type DeviceDef = DeviceModel & { width: number; height: number; density: number };
@@ -114,14 +115,14 @@ const exists = (p: string) => access(p).then(() => true, () => false);
  */
 export async function writeAvd(spec: AvdSpec, avdHome: string, userHome = androidUserHome()): Promise<void> {
   const model = DEVICE_MODELS.find((d) => d.id === spec.device);
-  if (!model) throw new Error(`没有这个机型：${spec.device}`);
+  if (!model) throw new TextError({ en: `No such device model: ${spec.device}`, zh: `没有这个机型：${spec.device}` });
   const m = /^system-images;(android-[^;]+);([^;]+);([^;]+)$/.exec(spec.image);
-  if (!m) throw new Error(`不认识的系统镜像：${spec.image}`);
+  if (!m) throw new TextError({ en: `Unknown system image: ${spec.image}`, zh: `不认识的系统镜像：${spec.image}` });
   const [, api, tag, abi] = m;
   const avdDir = join(avdHome, `${spec.name}.avd`);
   const iniPath = join(avdHome, `${spec.name}.ini`);
   await mkdir(avdHome, { recursive: true });
-  if ((await exists(avdDir)) || (await exists(iniPath))) throw new Error(`已有设备文件 ${spec.name}.ini 或 ${spec.name}.avd`);
+  if ((await exists(avdDir)) || (await exists(iniPath))) throw new TextError({ en: `Device files ${spec.name}.ini or ${spec.name}.avd already exist`, zh: `已有设备文件 ${spec.name}.ini 或 ${spec.name}.avd` });
   const tmpDir = join(avdHome, `.${spec.name}.avd.droidpier-${process.pid}-${Date.now()}`);
   const rel = relative(userHome, avdDir);
   const relLine = rel && !rel.startsWith("..") && !isAbsolute(rel) ? `path.rel=${rel}\n` : "";

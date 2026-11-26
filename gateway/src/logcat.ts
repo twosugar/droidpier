@@ -2,6 +2,7 @@
 // （docs/superpowers/specs/2026-11-13-real-device-design.md 6.2「logcat」）
 import { matchLog, parseLogcatLine, type LogFilter, type LogLine } from "../../shared/logcat.ts";
 import type { AdbStream, AdbStreamHandlers } from "./adb.ts";
+import { TextError } from "../../shared/i18n.ts";
 
 /** 合批间隔：刷屏时一行一条消息会把页面拖垮（spec 6.2 定的数值）。 */
 const BATCH_MS = 100;
@@ -225,7 +226,7 @@ export async function dumpLogcat(run: (lines: number) => Promise<string>): Promi
   try {
     return await run(READ_DUMP_FALLBACK);
   } catch (e) {
-    if (tooBig(e)) throw new Error(`日志行太长，最近 ${READ_DUMP_FALLBACK} 行也超过了 adb 的输出上限：稍后再试`);
+    if (tooBig(e)) throw new TextError({ en: `Log lines too long: even the last ${READ_DUMP_FALLBACK} lines exceed adb's output limit. Try again later`, zh: `日志行太长，最近 ${READ_DUMP_FALLBACK} 行也超过了 adb 的输出上限：稍后再试` });
     throw e;
   }
 }

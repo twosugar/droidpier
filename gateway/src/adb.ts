@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { ADB_UNRESPONSIVE } from "../../shared/protocol.ts";
+import { ADB_UNRESPONSIVE_MSG } from "../../shared/protocol.ts";
+import { TextError } from "../../shared/i18n.ts";
 import { adbBin } from "./platform.ts";
 
 /** 短命令（排在设备队列里的）一次 adb 调用的超时；long 队列的超时由调用方给。 */
@@ -11,9 +12,9 @@ const RECONNECT_AFTER = 2;
 const RECONNECT_COOLDOWN_MS = 30_000;
 
 /** adb 调用超时：设备里的 adbd 多半卡住了。 */
-export class AdbUnresponsive extends Error {
+export class AdbUnresponsive extends TextError {
   constructor() {
-    super(ADB_UNRESPONSIVE);
+    super(ADB_UNRESPONSIVE_MSG);
     this.name = "AdbUnresponsive";
   }
 }

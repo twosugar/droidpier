@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { DeviceCaps, IosCatalog, IosSimInfo } from "../../shared/protocol.ts";
 import type { DeviceSession, VideoPacket } from "./emulator.ts";
 import { iosKey, PASTE, type IosInput } from "./ios-keys.ts";
+import { TextError } from "../../shared/i18n.ts";
 
 /** 多久读一次列表（我定的数值，和 MuMu 一样：开关机后几秒内侧栏跟上；空转只是一次 simctl list）。 */
 const INTERVAL_MS = 5000;
@@ -138,10 +139,10 @@ export function createIosSims(deps: {
   /** 对列表里的一台执行 simctl boot / shutdown，然后马上刷新列表（状态变化随 onChange 推出去）。 */
   async function act(verb: "boot" | "shutdown", udid: string): Promise<void> {
     const s = (current ?? []).find((x) => x.udid === udid);
-    if (!s) throw new Error("找不到这台 iOS 模拟器");
+    if (!s) throw new TextError({ en: "Cannot find this iOS Simulator", zh: "找不到这台 iOS 模拟器" });
     // 列表刷新前按钮可能被连点：已经在开、在关的不再发一次
-    if (verb === "boot" && s.state !== "shutdown") throw new Error(`${s.name} 已经开着或正在开关机`);
-    if (verb === "shutdown" && s.state !== "booted") throw new Error(`${s.name} 没有在运行`);
+    if (verb === "boot" && s.state !== "shutdown") throw new TextError({ en: `${s.name} is already on, starting or shutting down`, zh: `${s.name} 已经开着或正在开关机` });
+    if (verb === "shutdown" && s.state !== "booted") throw new TextError({ en: `${s.name} is not running`, zh: `${s.name} 没有在运行` });
     // boot 立刻返回、模拟器在后台开机；先把状态报成开机中，免得下一次读列表前按钮还能再点
     current = current!.map((x) => (x.udid === udid ? { ...x, state: verb === "boot" ? "booting" : "shutting-down" } : x));
     for (const cb of listeners) cb(current);
@@ -167,7 +168,7 @@ export function createIosSims(deps: {
       const udid = (await deps.simctl(["create", name, deviceType, runtime])).trim();
       await refresh();
       // simctl 只该输出新模拟器的 UDID；别的内容不往下传（页面会拿它去开机）
-      if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(udid)) throw new Error(`simctl 没有返回新模拟器的 UDID：${udid.slice(0, 80)}`);
+      if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(udid)) throw new TextError({ en: `simctl did not return the UDID of the new simulator: ${udid.slice(0, 80)}`, zh: `simctl 没有返回新模拟器的 UDID：${udid.slice(0, 80)}` });
       return udid;
     },
     close: (udid: string) => act("shutdown", udid),
@@ -249,7 +250,7 @@ export function createHelperParser(on: { video(p: Omit<VideoPacket, "data"> & { 
   };
 }
 
-const unsupported = () => Promise.reject(new Error("iOS 模拟器暂不支持这个操作"));
+const unsupported = () => Promise.reject(new TextError({ en: "The iOS Simulator does not support this yet", zh: "iOS 模拟器暂不支持这个操作" }));
 
 export async function connectIosSim(udid: string, name: string, deps: IosSimDeps): Promise<DeviceSession> {
   const log = deps.log ?? ((s: string) => console.log(s));
@@ -302,7 +303,11 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     },
     async key(key, eventType) {
       const seq = iosKey(key, eventType, session.device, deps.homeButton === true);
-      if (!seq) throw new Error(key.startsWith("AudioVolume") ? "iOS 模拟器暂不支持音量键" : `不认识的按键：${key}`);
+      if (!seq) {
+        throw new TextError(key.startsWith("AudioVolume")
+          ? { en: "The iOS Simulator does not support volume keys yet", zh: "iOS 模拟器暂不支持音量键" }
+          : { en: `Unknown key: ${key}`, zh: `不认识的按键：${key}` });
+      }
       await run(seq);
     },
     // 中文、粘贴：写进模拟器剪贴板再按 ⌘V（同 Android 的写剪贴板再粘贴，会覆盖模拟器剪贴板）
@@ -336,13 +341,13 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     },
   }));
   helper.onExit((code) => {
-    failStart?.(new Error(`画面程序退出了（${code ?? "信号"}）`));
+    failStart?.(new TextError({ en: `The screen helper exited (${code ?? "signal"})`, zh: `画面程序退出了（${code ?? "信号"}）` }));
     close(`画面程序退出（${code ?? "信号"}）`);
   });
 
   // 等到第一个关键帧（小程序启动时先出一帧）才算连上，这时 device 尺寸也有了
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => done(new Error("等不到模拟器的画面")), deps.firstFrameMs ?? FIRST_FRAME_MS);
+    const timer = setTimeout(() => done(new TextError({ en: "No picture from the simulator", zh: "等不到模拟器的画面" })), deps.firstFrameMs ?? FIRST_FRAME_MS);
     const done = (e?: Error) => {
       clearTimeout(timer);
       firstKey = null;
@@ -428,7 +433,7 @@ export function createHelperSpawner(o: { source: string; cacheDir: string; log: 
   return async (udid: string): Promise<HelperProcess> => {
     building ??= build().catch((e: Error) => {
       building = null;
-      throw new Error(`编译 iOS 模拟器画面程序失败：${e.message}`);
+      throw new TextError({ en: `Compiling the iOS Simulator screen helper failed: ${e.message}`, zh: `编译 iOS 模拟器画面程序失败：${e.message}` });
     });
     let { bin, developerDir } = await building;
     // 网关运行期间缓存目录可能被清理工具删掉：没了就重新编译

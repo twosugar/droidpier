@@ -181,7 +181,7 @@ test("超过 180s 未就绪 → failed，error 包含 '超时'，并结束子进
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done, /超时/);
   assert.equal(job.progress, "failed");
-  assert.match(job.error ?? "", /超时/);
+  assert.match(job.error?.zh ?? "", /超时/);
   assert.equal(f.spawned[0].killed, true);
   assert.ok(f.now() >= 180_000);
 });
@@ -190,7 +190,7 @@ test("开机超时 → error 带上卡在哪和日志路径；关机时追加的
   const f = fakes({ bootAfterMs: Infinity, log: "INFO | Loading snapshot 'default_boot'...\n", killLog: "INFO | Shutting down\n" });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.equal(job.error, "开机超时（180 秒）：日志最后一行：INFO | Loading snapshot 'default_boot'...。完整日志：/logs/A.log");
+  assert.equal(job.error?.zh, "开机超时（180 秒）：日志最后一行：INFO | Loading snapshot 'default_boot'...。完整日志：/logs/A.log");
   assert.ok(f.execs.includes("-s emulator-5556 emu kill"));
 });
 
@@ -198,21 +198,21 @@ test("开机超时但模拟器自己报了开机完成 → error 说是 adb 读�
   const f = fakes({ getpropHangs: true, log: "INFO | Boot completed in 12455 ms\nERROR | bad color buffer handle 256\n" });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.match(job.error ?? "", /^开机超时（180 秒）：模拟器已经开机，但 adb .*。完整日志：\/logs\/A\.log$/);
+  assert.match(job.error?.zh ?? "", /^开机超时（180 秒）：模拟器已经开机，但 adb .*。完整日志：\/logs\/A\.log$/);
 });
 
 test("开机超时、模拟器报了开机完成但没找到发现文件 → 没问过 adb，不怪 adb", async () => {
   const f = fakes({ undiscovered: true, log: "INFO | Boot completed in 12455 ms\nINFO | idle\n" });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.equal(job.error, "开机超时（180 秒）：日志最后一行：INFO | idle。完整日志：/logs/A.log");
+  assert.equal(job.error?.zh, "开机超时（180 秒）：日志最后一行：INFO | idle。完整日志：/logs/A.log");
 });
 
 test("开机超时且日志读不到 → 保持原来的错误", async () => {
   const f = fakes({ bootAfterMs: Infinity, noLog: true });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.equal(job.error, "开机超时（180 秒）");
+  assert.equal(job.error?.zh, "开机超时（180 秒）");
 });
 
 test("已在运行（grpc）的 AVD → 立即 ready，不调用 spawn", async () => {
@@ -276,7 +276,7 @@ test("开机中途退出（code 1）→ error 带上日志里的原因、提示�
   const f = fakes({ bootAfterMs: Infinity, exitAtMs: 2000, exitCode: 1, log });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  const err = job.error ?? "";
+  const err = job.error?.zh ?? "";
   assert.ok(err.startsWith("模拟器进程在开机中退出（code 1）：PANIC: Cannot find AVD system path. Please define ANDROID_SDK_ROOT"), err);
   assert.match(err, /系统镜像/);
   assert.ok(err.endsWith("完整日志：/logs/A.log"), err);
@@ -286,21 +286,21 @@ test("开机中途 pid 不在了 → error 也带上日志里的原因", async (
   const f = fakes({ bootAfterMs: Infinity, deadAtMs: 2000, log: "FATAL | boom\n" });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.match(job.error ?? "", /^模拟器进程在开机中退出（pid \d+ 已不在）：FATAL \| boom。完整日志：\/logs\/A\.log$/);
+  assert.match(job.error?.zh ?? "", /^模拟器进程在开机中退出（pid \d+ 已不在）：FATAL \| boom。完整日志：\/logs\/A\.log$/);
 });
 
 test("开机中途退出但日志为空 → 只给日志路径", async () => {
   const f = fakes({ bootAfterMs: Infinity, exitAtMs: 2000, exitCode: 1, log: "" });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.equal(job.error, "模拟器进程在开机中退出（code 1）。完整日志：/logs/A.log");
+  assert.equal(job.error?.zh, "模拟器进程在开机中退出（code 1）。完整日志：/logs/A.log");
 });
 
 test("开机中途退出且日志读不到 → 保持原来的错误", async () => {
   const f = fakes({ bootAfterMs: Infinity, exitAtMs: 2000, exitCode: 1, noLog: true });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done);
-  assert.equal(job.error, "模拟器进程在开机中退出（code 1）");
+  assert.equal(job.error?.zh, "模拟器进程在开机中退出（code 1）");
 });
 
 test("spawn 收到这个 AVD 的日志路径", async () => {
@@ -338,4 +338,16 @@ test("getprop 一直不返回也不会卡住任务：到期 failed", { timeout: 
   const f = fakes({ getpropHangs: true });
   const job = startAvd("A", f.deps);
   await assert.rejects(job.done, /超时/);
+});
+
+test("开机失败的原因有英文：页面是英文时用（server.ts 按页面的语言发）", async () => {
+  const log = "PANIC: Cannot find AVD system path. Please define ANDROID_SDK_ROOT\n";
+  const f = fakes({ bootAfterMs: Infinity, exitAtMs: 2000, exitCode: 1, log });
+  const job = startAvd("A", f.deps);
+  await assert.rejects(job.done);
+  assert.equal(
+    job.error?.en,
+    "The emulator process exited during boot (code 1): PANIC: Cannot find AVD system path. Please define ANDROID_SDK_ROOT. " +
+      "The system image of this AVD is not installed or cannot be found: install it in Android Studio's SDK Manager. Full log: /logs/A.log",
+  );
 });

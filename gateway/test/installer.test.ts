@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import { cleanStaleInstallTmp, createInstaller, fetchWithIdle, realInstallerDeps, replaceDir, type InstallerDeps, type Licence, type Progress } from "../src/installer.ts";
 import { licenceHashes } from "../src/sdk-repo.ts";
+import { msgOf } from "../../shared/i18n.ts";
 import { H, REPO, SYS_IMG } from "./fixtures/repo-manifests.ts";
 
 const REPO_URL = "https://dl.google.com/android/repository/repository2-3.xml";
@@ -82,7 +83,11 @@ async function fakes(t: import("node:test").TestContext, opts: FakeOpts = {}) {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 10));
-const lastOf = (ps: Progress[], id: string) => ps.filter((p) => p.id === id).at(-1);
+// logTail 是两种语言（server.ts 按页面的语言发）；这里的断言看中文
+const lastOf = (ps: Progress[], id: string) => {
+  const p = ps.filter((x) => x.id === id).at(-1);
+  return p && { ...p, logTail: msgOf(p.logTail).zh };
+};
 /** 跑安装，每份许可证都由 answer 决定同不同意（模拟页面上的用户点按钮）。 */
 async function runWith(deps: InstallerDeps, ids: string[], answer: (l: Licence) => boolean | null = () => true, job = {}) {
   const ps: Progress[] = [];

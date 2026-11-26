@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkEnv, SYSTEM_IMAGE, type EnvDeps } from "../src/setup.ts";
+import { checkEnv as checkEnvMsgs, SYSTEM_IMAGE, type EnvDeps } from "../src/setup.ts";
+import type { Lang } from "../../shared/i18n.ts";
+
+// 说明是两种语言（server.ts 按页面的语言发）；这里的断言看中文
+const checkEnvIn = async (d: EnvDeps, lang: Lang) => {
+  const r = await checkEnvMsgs(d);
+  return { ...r, missing: r.missing.map((m) => ({ ...m, detail: m.detail[lang] })) };
+};
+const checkEnv = (d: EnvDeps) => checkEnvIn(d, "zh");
 
 const SDK = "/fake/sdk";
 const AVD_HOME = "/fake/avd";
@@ -192,4 +200,9 @@ test("报告 AVD 目录里有几台设备：没装模拟器程序时页面靠它
   assert.equal((await checkEnv(fakeFs({}))).avds, 0);
   const r = await checkEnv(fakeFs({ ...avd("Pixel_5", "system-images/android-34/google_apis/arm64-v8a/"), ...avd("Pixel_9", "system-images/android-36/google_apis/arm64-v8a/") }));
   assert.equal(r.avds, 2);
+});
+
+test("缺的东西的说明有英文", async () => {
+  const r = await checkEnvIn(fakeFs({}), "en");
+  assert.deepEqual(r.missing.map((m) => m.detail), ["No emulator program", "No adb", "No system image; Android 14 will be installed", "No emulator devices yet"]);
 });
