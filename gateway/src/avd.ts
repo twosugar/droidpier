@@ -5,7 +5,8 @@ import { promisify } from "node:util";
 import { androidUserHome, avdHome as defaultAvdHome, emulatorBin, emulatorEnv, adbBin, discoveryDir as defaultDiscoveryDir } from "./platform.ts";
 import { discoveryAvdName, pidAlive } from "./discovery.ts";
 import type { AvdInfo } from "../../shared/protocol.ts";
-import { avdNameError, displayNameError } from "../../shared/avd-spec.ts";
+import { avdNameErrorMsg, displayNameErrorMsg } from "../../shared/avd-spec.ts";
+import { TextError, type Msg } from "../../shared/i18n.ts";
 
 const execFileP = promisify(execFile);
 
@@ -258,12 +259,12 @@ function setIniValue(text: string, key: string, value: string): string {
  * name 必须是 emulator -list-avds 列出的 id，不认识的不碰，免得拼出别处的文件路径。
  */
 export async function renameAvd(name: string, displayName: string, deps?: Partial<Deps>): Promise<void> {
-  const error = displayNameError(displayName);
-  if (error) throw new Error(error);
+  const error = displayNameErrorMsg(displayName);
+  if (error) throw new TextError(error);
   // 只跑 -list-avds，不跑 listAvds：它还要问 adb，adb 卡住时改名不能跟着卡
-  if (!(await avdIds(deps?.exec ?? realExec)).includes(name)) throw new Error(`没有这个设备：${name}`);
+  if (!(await avdIds(deps?.exec ?? realExec)).includes(name)) throw new TextError({ en: `No such device: ${name}`, zh: `没有这个设备：${name}` });
   const found = await resolveConfigIni(deps?.avdHome ?? defaultAvdHome(), name);
-  if (!found) throw new Error(`找不到 ${name} 的 config.ini`);
+  if (!found) throw new TextError({ en: `Cannot find the config.ini of ${name}`, zh: `找不到 ${name} 的 config.ini` });
   // config.ini 是符号链接时改它指向的文件，换过去也不能把链接换成普通文件
   const path = await realpath(found);
   const [text, { mode }] = await Promise.all([readFile(path, "utf8"), stat(path)]);
@@ -284,7 +285,7 @@ type DeleteDeps = Deps & {
   userHome: string;
 };
 
-const STOP_FIRST = "先关闭这台设备再删除";
+const STOP_FIRST: Msg = { en: "Stop this device before deleting it", zh: "先关闭这台设备再删除" };
 
 /** 进程还在的模拟器发现文件里的 AVD 名和数据目录（不要求开了 gRPC）。 */
 async function runningAvds(dir: string, alive: (pid: number) => boolean): Promise<Array<{ name?: string; dir?: string }>> {
@@ -350,10 +351,11 @@ async function lockedByLiveProcess(dir: string, alive: (pid: number) => boolean)
   return null;
 }
 
-/** 删除被拒绝：message 给页面看，不带本机路径；带路径的细节放在 cause 里，只写进网关日志。 */
-class DeleteRefused extends Error {
-  constructor(message: string, detail?: string) {
-    super(message, detail === undefined ? undefined : { cause: new Error(detail) });
+/** 删除被拒绝：msg 给页面看，不带本机路径；带路径的细节放在 cause 里，只写进网关日志。 */
+class DeleteRefused extends TextError {
+  constructor(msg: Msg, detail?: string) {
+    super(msg);
+    if (detail !== undefined) this.cause = new Error(detail);
   }
 }
 
@@ -369,28 +371,33 @@ export async function deleteAvd(name: string, deps?: Partial<DeleteDeps>): Promi
   } catch (e) {
     if (e instanceof DeleteRefused) throw e;
     // 文件系统的报错带着本机路径，页面上只说去看日志
-    throw new Error(`删除 ${name} 失败，详情见网关日志`, { cause: e });
+    const err = new TextError({ en: `Could not delete ${name}; see the gateway log for details`, zh: `删除 ${name} 失败，详情见网关日志` });
+    err.cause = e;
+    throw err;
   }
 }
 
 async function deleteAvdFiles(name: string, deps: Partial<DeleteDeps>): Promise<void> {
-  const nameError = avdNameError(name, []);
+  const nameError = avdNameErrorMsg(name, []);
   if (nameError) throw new DeleteRefused(nameError);
   const home = deps?.avdHome ?? defaultAvdHome();
   const userHome = deps?.userHome ?? androidUserHome();
   const alive = deps?.alive ?? pidAlive;
-  if (!(await avdIds(deps?.exec ?? realExec)).includes(name)) throw new DeleteRefused(`没有这个设备：${name}`);
+  if (!(await avdIds(deps?.exec ?? realExec)).includes(name)) throw new DeleteRefused({ en: `No such device: ${name}`, zh: `没有这个设备：${name}` });
   const iniFile = join(home, `${name}.ini`);
   const ini = await readFile(iniFile, "utf8").catch(() => null);
-  if (ini === null) throw new DeleteRefused(`找不到 ${name} 的 .ini 文件`, `找不到 ${iniFile}`);
-  const refuse = (dir: string, why: string) => new DeleteRefused(`${name} 的数据目录${why}；请在 Android Studio 里删除它`, `${name} 的数据目录 ${dir}`);
-  const dir = await avdDataDir(ini, userHome).catch((e: Error) => { throw new DeleteRefused(`${name} 的数据目录不是绝对路径；请在 Android Studio 里删除它`, e.message); });
+  if (ini === null) throw new DeleteRefused({ en: `Cannot find the .ini file of ${name}`, zh: `找不到 ${name} 的 .ini 文件` }, `找不到 ${iniFile}`);
+  const refuse = (dir: string, why: Msg) =>
+    new DeleteRefused({ en: `The data folder of ${name} ${why.en}; delete it in Android Studio`, zh: `${name} 的数据目录${why.zh}；请在 Android Studio 里删除它` }, `${name} 的数据目录 ${dir}`);
+  const dir = await avdDataDir(ini, userHome).catch((e: Error) => {
+    throw new DeleteRefused({ en: `The data folder path of ${name} is not absolute; delete it in Android Studio`, zh: `${name} 的数据目录不是绝对路径；请在 Android Studio 里删除它` }, e.message);
+  });
 
   const realDir = dir === null ? null : await real(dir);
   if (dir !== null) {
-    if (realDir === null) throw refuse(dir, "读不到");
+    if (realDir === null) throw refuse(dir, { en: "cannot be read", zh: "读不到" });
     const realHome = (await real(home)) ?? home;
-    if (dirname(realDir) !== realHome || !realDir.endsWith(".avd")) throw refuse(dir, "不是 AVD 目录里的 .avd 目录");
+    if (dirname(realDir) !== realHome || !realDir.endsWith(".avd")) throw refuse(dir, { en: "is not a .avd folder in the AVD folder", zh: "不是 AVD 目录里的 .avd 目录" });
     for (const other of await readdir(home).catch(() => [] as string[])) {
       if (!other.endsWith(".ini") || other === `${name}.ini`) continue;
       const otherName = other.slice(0, -4);
@@ -398,7 +405,7 @@ async function deleteAvdFiles(name: string, deps: Partial<DeleteDeps>): Promise<
       const theirs = [join(home, `${otherName}.avd`), await avdDataDir(otherIni, userHome).catch(() => null)];
       for (const d of theirs) {
         const r = d === null ? null : await real(d);
-        if (r !== null && overlaps(r, realDir)) throw refuse(dir, `和 ${otherName} 的数据目录重叠`);
+        if (r !== null && overlaps(r, realDir)) throw refuse(dir, { en: `overlaps the data folder of ${otherName}`, zh: `和 ${otherName} 的数据目录重叠` });
       }
     }
   }

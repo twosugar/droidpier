@@ -12,6 +12,7 @@ import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { UpdateFailure, UpdateState } from "../../shared/protocol.ts";
+import type { Msg } from "../../shared/i18n.ts";
 import { PUBLIC_ORIGIN } from "./auth.ts";
 
 // 从构建时信任的公网页面所在站点下载（gateway/src/auth.ts 的 PUBLIC_ORIGIN）：fork 构建的网关不会换成官方版本
@@ -36,6 +37,9 @@ const SIG_MAX = 1024;
 const MAX_PENDING_STARTS = 3;
 /** 前台运行时发现新版本打印的话。 */
 export const NEWER_LINE = "有新版本，运行 droidpier start 切到后台并自动更新，或重新运行安装命令";
+
+/** 网关正在退出时 busy() 报的原因；页面收到的 deferred 原因由 server.ts 换回两种语言。 */
+export const GATEWAY_STOPPING: Msg = { en: "The gateway is quitting", zh: "网关正在退出" };
 
 export type UpdateReport = { state: UpdateState; message?: string };
 export type CheckResult =
@@ -420,7 +424,7 @@ export function realUpdaterDeps(o: { base: string; bin: string; stamp: string; v
   };
   return {
     ...o,
-    busy: () => (stopping.signal.aborted ? "网关正在退出" : o.busy()),
+    busy: () => (stopping.signal.aborted ? GATEWAY_STOPPING.zh : o.busy()),
     abort: () => stopping.abort(new Error("网关正在退出")),
     publicKey: UPDATE_PUBLIC_KEY,
     getSmall: async (url, max) => {

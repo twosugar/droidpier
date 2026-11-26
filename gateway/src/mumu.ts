@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import { connect as netConnect } from "node:net";
 import type { MumuInfo } from "../../shared/protocol.ts";
+import { TextError, type Msg } from "../../shared/i18n.ts";
 
 /** MuMuPlayer（macOS）自带的命令行工具：info / open / close 都输出 JSON（2026-11-20 本机实测）。 */
 export const MUMU_TOOL = "/Applications/MuMuPlayer.app/Contents/MacOS/mumutool";
@@ -53,6 +54,8 @@ const STATES = new Set<MumuInfo["state"]>(["stopped", "starting", "running", "st
 type ToolReply = { errcode?: number; message?: string; return?: Record<string, unknown> };
 
 /** 解析 mumutool 的 JSON；errcode 非 0 时抛出它的 message。 */
+const NOT_INSTALLED: Msg = { en: "The MuMu emulator is not installed on this Mac", zh: "本机没有安装 MuMu 模拟器" };
+
 function toolReturn(json: string): Record<string, unknown> {
   const r = JSON.parse(json) as ToolReply;
   if (r.errcode !== 0) throw new Error(r.message || `mumutool errcode ${r.errcode}`);
@@ -149,12 +152,12 @@ export function createMumu(deps: {
 
   /** 对列表里的一台执行 mumutool open / close，成功后马上刷新列表（状态变化随 onChange 推出去）。 */
   async function act(verb: "open" | "close", index: number): Promise<void> {
-    if (!deps.tool) throw new Error("本机没有安装 MuMu 模拟器");
+    if (!deps.tool) throw new TextError(NOT_INSTALLED);
     const m = (current ?? []).find((x) => x.index === index);
-    if (!m) throw new Error(`MuMu 里没有编号 ${index} 的设备`);
+    if (!m) throw new TextError({ en: `MuMu has no device number ${index}`, zh: `MuMu 里没有编号 ${index} 的设备` });
     // 列表刷新前页面上的按钮可能被连点：已经在开、在关的不再发一次
-    if (verb === "open" && m.state !== "stopped") throw new Error(`${m.name} 已经开着或正在开关机`);
-    if (verb === "close" && m.state !== "running") throw new Error(`${m.name} 没有在运行`);
+    if (verb === "open" && m.state !== "stopped") throw new TextError({ en: `${m.name} is already on, starting or shutting down`, zh: `${m.name} 已经开着或正在开关机` });
+    if (verb === "close" && m.state !== "running") throw new TextError({ en: `${m.name} is not running`, zh: `${m.name} 没有在运行` });
     toolReturn(await deps.tool([verb, String(index)]));
     await tick();
   }
@@ -167,7 +170,7 @@ export function createMumu(deps: {
     appClosed: () => appClosed,
     /** 打开 MuMuPlayer；打开后下一轮读列表（5 秒内）就能读到设备。 */
     async launch(): Promise<void> {
-      if (!deps.launch) throw new Error("本机没有安装 MuMu 模拟器");
+      if (!deps.launch) throw new TextError(NOT_INSTALLED);
       await deps.launch();
     },
     onChange(cb: (list: MumuInfo[]) => void) {

@@ -135,8 +135,10 @@ The gateway serves its own copy of the page (`--local`, `http://127.0.0.1:<port>
   Comments explain why, and carry the source of measured numbers (version and date: "2026-11-12 实测").
 - Text the page and the host module show comes in English (the default) and Chinese, written where it is used:
   `t({ en: "Install APK…", zh: "安装 APK…" })` (`shared/i18n.ts`). The user's choice is stored in the browser
-  (`emu.lang`). Gateway messages are still Chinese only; a text in `shared/` that both use comes as a `{ en, zh }`
-  value with the old name kept as its Chinese (`avdNameErrorMsg` / `avdNameError`). The tools the page gives to an AI
+  (`emu.lang`). The gateway learns each page's language (hello `lang`, the `lang` message) and puts `{ en, zh }`
+  wherever a message to the page has text; `send()` picks the page's language (`localize`), and pages that say none get
+  Chinese. Errors that reach the page are thrown as `TextError` and sent with `textOf(e)`. The gateway's terminal output,
+  its logs and the MCP tools stay as they are. The tools the page gives to an AI
   (`host/src/webmcp.ts`) are described in English only.
 - Pure logic goes in a small module with its own test (`ui/h5-poll.ts`, `shared/screen.ts`); `ui/App.tsx` and
   `host/src/main.ts` wire them together.

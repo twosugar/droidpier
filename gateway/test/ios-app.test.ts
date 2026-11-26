@@ -75,6 +75,7 @@ test("installIosApp：包里没有 .app 时说清楚；simctl 装失败时带上
 });
 
 test("iosInstallFailure：真机的包说明要用模拟器编的；别的取最后一行", () => {
-  assert.match(iosInstallFailure("...\nUnable to install \"Demo\"\nThe app is built for iphoneos and cannot be installed"), /真机/);
-  assert.equal(iosInstallFailure("line one\nInvalid device: U\n"), "Invalid device: U");
+  assert.match(iosInstallFailure("...\nUnable to install \"Demo\"\nThe app is built for iphoneos and cannot be installed").zh, /真机/);
+  assert.match(iosInstallFailure("The app is built for iphoneos").en, /real iPhone/);
+  assert.deepEqual(iosInstallFailure("line one\nInvalid device: U\n"), { en: "Invalid device: U", zh: "Invalid device: U" });
 });

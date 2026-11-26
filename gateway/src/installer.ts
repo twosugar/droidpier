@@ -10,8 +10,10 @@ import { SYSTEM_IMAGE } from "./setup.ts";
 import { writeAvd } from "./avd-create.ts";
 import { findPackage, isLicenceAccepted, licenceFileText, type RepoPackage } from "./sdk-repo.ts";
 import { INSTALL_IDS, type AvdSpec, type InstallProgress, type Licence } from "../../shared/protocol.ts";
+import { TextError, textOf, type Msg } from "../../shared/i18n.ts";
 
-export type Progress = InstallProgress;
+/** logTail 给页面看（两种语言；没分语言的原文是字符串），发给哪个页面就用哪种（server.ts 的 send）。 */
+export type Progress = Omit<InstallProgress, "logTail"> & { logTail: Msg | string };
 export type { Licence };
 
 /** url：跳转后最终的地址。 */
@@ -42,7 +44,7 @@ export type Installer = {
   stop(): void;
 };
 
-class StepError extends Error {}
+class StepError extends TextError {}
 
 const PACKAGES: Record<string, string> = { emulator: "emulator", "platform-tools": "platform-tools" };
 /** 清单和 zip 只从 Google 的 SDK 仓库下（platform.ts 的清单地址都在这台主机上）。 */
@@ -51,9 +53,11 @@ const REPO_HOST = "dl.google.com";
 const LICENCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** 地址必须是 https://dl.google.com/…，否则这一项失败。 */
-export function requireRepoUrl(href: string, what: string): void {
+export function requireRepoUrl(href: string, what: Msg): void {
   const u = new URL(href);
-  if (u.protocol !== "https:" || u.hostname !== REPO_HOST) throw new StepError(`${what}不在 https://${REPO_HOST} 上，不用它：${href}`);
+  if (u.protocol !== "https:" || u.hostname !== REPO_HOST) {
+    throw new StepError({ en: `${what.en} is not on https://${REPO_HOST}, not using it: ${href}`, zh: `${what.zh}不在 https://${REPO_HOST} 上，不用它：${href}` });
+  }
 }
 const exists = (p: string) => access(p).then(() => true, () => false);
 
@@ -88,7 +92,8 @@ export async function replaceDir(src: string, target: string, parking: string, m
       try {
         await mv(parking, target);
       } catch (back) {
-        throw new Error(`${(e as Error).message}；原来的包也挪不回去：${(back as Error).message}，它在 ${parking}`);
+        const [a, b] = [(e as Error).message, (back as Error).message];
+        throw new TextError({ en: `${a}; the old package could not be moved back either: ${b}, it is in ${parking}`, zh: `${a}；原来的包也挪不回去：${b}，它在 ${parking}` });
       }
     }
     throw e;
@@ -106,17 +111,17 @@ export function createInstaller(deps: InstallerDeps): Installer {
       const licence = { id: ++licenceSeq, name: pkg.licence.id, text: pkg.licence.text };
       waiting = { id: licence.id, answer: resolve };
       if (abort.signal.aborted) return resolve(false);
-      emit({ id, phase: "license", logTail: `等你同意许可证 ${pkg.licence.id}` });
+      emit({ id, phase: "license", logTail: { en: `Waiting for you to accept license ${pkg.licence.id}`, zh: `等你同意许可证 ${pkg.licence.id}` } });
       onLicense?.(licence);
     });
 
   /** 许可证：已经同意过（licenses/<id> 里有它的哈希）就不问；问了且同意后照 sdkmanager 的格式记下。 */
   const ensureLicence = async (id: string, pkg: RepoPackage, emit: (p: Progress) => void, onLicense?: (l: Licence) => void) => {
-    if (!LICENCE_ID.test(pkg.licence.id)) throw new StepError(`清单里的许可证 id 不能用作文件名：${pkg.licence.id}`);
+    if (!LICENCE_ID.test(pkg.licence.id)) throw new StepError({ en: `The license id in the manifest cannot be used as a file name: ${pkg.licence.id}`, zh: `清单里的许可证 id 不能用作文件名：${pkg.licence.id}` });
     const file = join(deps.sdkRoot, "licenses", pkg.licence.id);
     const before = await readFile(file, "utf8").catch(() => "");
     if (isLicenceAccepted(before, pkg.licence.text)) return;
-    if (!(await askLicence(id, pkg, emit, onLicense))) throw new StepError(`没有同意许可证 ${pkg.licence.id}，没有安装`);
+    if (!(await askLicence(id, pkg, emit, onLicense))) throw new StepError({ en: `License ${pkg.licence.id} was not accepted; nothing installed`, zh: `没有同意许可证 ${pkg.licence.id}，没有安装` });
     await mkdir(dirname(file), { recursive: true });
     // 等回答期间别处也可能写了它：重读一次再追加
     await writeFile(file, licenceFileText(await readFile(file, "utf8").catch(() => ""), pkg.licence.text));
@@ -125,8 +130,8 @@ export function createInstaller(deps: InstallerDeps): Installer {
   /** 下载到 zip：多过清单写的字节数就停，写盘出错（磁盘满）就失败；下完字节数和 sha1 都要对上。 */
   const download = async (id: string, url: string, pkg: RepoPackage, zip: string, emit: (p: Progress) => void) => {
     const res = await deps.fetch(url, abort.signal);
-    requireRepoUrl(res.url, "下载地址跳转后");
-    if (!res.ok || !res.body) throw new StepError(`下载失败：HTTP ${res.status}`);
+    requireRepoUrl(res.url, { en: "The download address after redirects", zh: "下载地址跳转后" });
+    if (!res.ok || !res.body) throw new StepError({ en: `Download failed: HTTP ${res.status}`, zh: `下载失败：HTTP ${res.status}` });
     const body = res.body;
     const want = pkg.archive.size;
     const hash = createHash("sha1");
@@ -135,20 +140,20 @@ export function createInstaller(deps: InstallerDeps): Installer {
     async function* tap() {
       for await (const chunk of body) {
         got += chunk.length;
-        if (got > want) throw new StepError(`下载到的超过清单写的 ${want} 字节，停止下载`);
+        if (got > want) throw new StepError({ en: `Downloaded more than the ${want} bytes in the manifest; stopped downloading`, zh: `下载到的超过清单写的 ${want} 字节，停止下载` });
         hash.update(chunk);
         const pct = Math.min(100, Math.floor((got / want) * 100));
         if (pct !== lastPct) {
           lastPct = pct;
-          emit({ id, phase: "download", pct, logTail: `下载 ${url}` });
+          emit({ id, phase: "download", pct, logTail: { en: `Downloading ${url}`, zh: `下载 ${url}` } });
         }
         yield chunk;
       }
     }
     await pipeline(tap(), createWriteStream(zip));
-    if (got !== want) throw new StepError(`只下载到 ${got} 字节，清单写的是 ${want} 字节，没有解压`);
+    if (got !== want) throw new StepError({ en: `Only ${got} of the ${want} bytes in the manifest were downloaded; not unpacked`, zh: `只下载到 ${got} 字节，清单写的是 ${want} 字节，没有解压` });
     const sha1 = hash.digest("hex");
-    if (sha1 !== pkg.archive.sha1) throw new StepError(`sha1 校验不通过（清单 ${pkg.archive.sha1}，下载到的 ${sha1}），没有解压`);
+    if (sha1 !== pkg.archive.sha1) throw new StepError({ en: `sha1 check failed (manifest ${pkg.archive.sha1}, downloaded ${sha1}); not unpacked`, zh: `sha1 校验不通过（清单 ${pkg.archive.sha1}，下载到的 ${sha1}），没有解压` });
     return sha1;
   };
 
@@ -158,15 +163,15 @@ export function createInstaller(deps: InstallerDeps): Installer {
    */
   const installPackage = async (id: string, pkgPath: string, emit: (p: Progress) => void, onLicense?: (l: Licence) => void) => {
     const manifestUrl = manifestUrlFor(pkgPath);
-    if (!manifestUrl) throw new StepError(`不认识的包：${pkgPath}`);
-    emit({ id, phase: "download", pct: 0, logTail: `读取 ${manifestUrl}` });
+    if (!manifestUrl) throw new StepError({ en: `Unknown package: ${pkgPath}`, zh: `不认识的包：${pkgPath}` });
+    emit({ id, phase: "download", pct: 0, logTail: { en: `Reading ${manifestUrl}`, zh: `读取 ${manifestUrl}` } });
     const res = await deps.fetch(manifestUrl, abort.signal);
-    requireRepoUrl(res.url, "清单地址跳转后");
-    if (!res.ok) throw new StepError(`读取清单失败：HTTP ${res.status}`);
+    requireRepoUrl(res.url, { en: "The manifest address after redirects", zh: "清单地址跳转后" });
+    if (!res.ok) throw new StepError({ en: `Reading the manifest failed: HTTP ${res.status}`, zh: `读取清单失败：HTTP ${res.status}` });
     const pkg = findPackage(await res.text(), pkgPath);
-    if (!pkg) throw new StepError(`清单里没有 macOS arm64 能用的 ${pkgPath} 稳定版`);
+    if (!pkg) throw new StepError({ en: `The manifest has no stable ${pkgPath} for macOS arm64`, zh: `清单里没有 macOS arm64 能用的 ${pkgPath} 稳定版` });
     const url = new URL(pkg.archive.url, manifestUrl);
-    requireRepoUrl(url.href, "下载地址");
+    requireRepoUrl(url.href, { en: "The download address", zh: "下载地址" });
     await ensureLicence(id, pkg, emit, onLicense);
     const target = packageDir(deps.sdkRoot, pkgPath);
     const tmpRoot = tmpRootOf(deps.sdkRoot);
@@ -175,20 +180,20 @@ export function createInstaller(deps: InstallerDeps): Installer {
     try {
       const zip = join(tmp, "package.zip");
       const sha1 = await download(id, url.href, pkg, zip, emit);
-      emit({ id, phase: "unpack", logTail: `sha1 ${sha1} 校验通过，解压中` });
+      emit({ id, phase: "unpack", logTail: { en: `sha1 ${sha1} checked, unpacking`, zh: `sha1 ${sha1} 校验通过，解压中` } });
       const staging = join(tmp, "unzip");
       await mkdir(staging);
       await deps.unzip(zip, staging, abort.signal);
       // zip 里只有一个顶层目录（emulator/、platform-tools/、arm64-v8a/），sdkmanager 也是把它整个挪到包目录
       const tops = (await readdir(staging, { withFileTypes: true })).filter((d) => d.name !== "__MACOSX");
       const src = tops.length === 1 && tops[0].isDirectory() ? join(staging, tops[0].name) : staging;
-      emit({ id, phase: "install", logTail: `装到 ${target}` });
+      emit({ id, phase: "install", logTail: { en: `Installing to ${target}`, zh: `装到 ${target}` } });
       // zip 里可能自带 package.xml（甚至是符号链接）：先删掉，再只新建不顺着链接写
       await rm(join(src, "package.xml"), { force: true });
       await writeFile(join(src, "package.xml"), pkg.packageXml, { flag: "wx" });
       await mkdir(dirname(target), { recursive: true });
       await replaceDir(src, target, join(tmp, "old"));
-      emit({ id, phase: "done", logTail: `已装 ${pkgPath} ${pkg.revision} 到 ${target}` });
+      emit({ id, phase: "done", logTail: { en: `Installed ${pkgPath} ${pkg.revision} to ${target}`, zh: `已装 ${pkgPath} ${pkg.revision} 到 ${target}` } });
     } finally {
       // 旧包挪不回去（replaceDir 报错）时它还在 tmp/old：留着整个临时目录，别把用户唯一的一份删了
       const stranded = (await exists(join(tmp, "old"))) && !(await exists(target));
@@ -200,16 +205,16 @@ export function createInstaller(deps: InstallerDeps): Installer {
 
   const installOne = async (id: string, emit: (p: Progress) => void, onLicense: ((l: Licence) => void) | undefined, job: InstallJob) => {
     if (id === "avd") {
-      if (!job.avd) throw new StepError("没有指定设备名、机型和系统版本");
-      emit({ id, phase: "install", logTail: `创建 ${job.avd.name}` });
+      if (!job.avd) throw new StepError({ en: "No device name, model and system version given", zh: "没有指定设备名、机型和系统版本" });
+      emit({ id, phase: "install", logTail: { en: `Creating ${job.avd.name}`, zh: `创建 ${job.avd.name}` } });
       await writeAvd(job.avd, deps.avdHome);
-      emit({ id, phase: "done", logTail: `已创建 ${job.avd.name}（内存 ${job.avd.ramMb} MB）` });
+      emit({ id, phase: "done", logTail: { en: `Created ${job.avd.name} (memory ${job.avd.ramMb} MB)`, zh: `已创建 ${job.avd.name}（内存 ${job.avd.ramMb} MB）` } });
     } else if (id === "system-image") {
       await installPackage(id, job.image ?? job.avd?.image ?? SYSTEM_IMAGE, emit, onLicense);
     } else if (PACKAGES[id]) {
       await installPackage(id, PACKAGES[id], emit, onLicense);
     } else {
-      throw new StepError(`不认识的安装项：${id}`);
+      throw new StepError({ en: `Unknown install item: ${id}`, zh: `不认识的安装项：${id}` });
     }
   };
 
@@ -220,14 +225,14 @@ export function createInstaller(deps: InstallerDeps): Installer {
       let failed: string | null = null;
       for (const id of todo) {
         if (failed) {
-          onProgress({ id, phase: "failed", logTail: `${failed} 没装好，跳过` });
+          onProgress({ id, phase: "failed", logTail: { en: `${failed} was not installed, skipped`, zh: `${failed} 没装好，跳过` } });
           continue;
         }
         try {
           await installOne(id, onProgress, onLicense, job);
         } catch (e) {
           failed = id;
-          onProgress({ id, phase: "failed", logTail: abort.signal.aborted ? "网关退出，安装已停止" : (e as Error).message });
+          onProgress({ id, phase: "failed", logTail: abort.signal.aborted ? { en: "The gateway quit; installation stopped", zh: "网关退出，安装已停止" } : textOf(e) });
         } finally {
           waiting = null;
         }
@@ -264,7 +269,7 @@ export async function fetchWithIdle(url: string, idleMs: number, outer?: AbortSi
   let timer: ReturnType<typeof setTimeout> | undefined;
   const bump = () => {
     clearTimeout(timer);
-    timer = setTimeout(() => ac.abort(new Error(`${idleMs} 毫秒没有收到数据：${url}`)), idleMs);
+    timer = setTimeout(() => ac.abort(new TextError({ en: `No data received for ${idleMs} ms: ${url}`, zh: `${idleMs} 毫秒没有收到数据：${url}` })), idleMs);
   };
   bump();
   let r: Response;

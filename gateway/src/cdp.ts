@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { TextError, textOf, type Msg } from "../../shared/i18n.ts";
 
 export type CdpClient = {
   send(method: string, params?: object): Promise<any>;
@@ -8,20 +9,26 @@ export type CdpClient = {
   readonly closed: Promise<void>;
 };
 
+/** error：认得的给两种语言，认不出的（WebView 的 net::ERR_…、CDP 的报错）是原文。 */
 export type NavResult =
   | { ok: true; href: string; title: string; bridge: boolean }
-  | { ok: false; error: string };
+  | { ok: false; error: string | Msg };
 
 /** 本机开发服务器没启动时给用户的提示。 */
-export const DEV_SERVER_DOWN = "连不上这个地址：本机开发服务器启动了吗？";
+export const DEV_SERVER_DOWN: Msg = { en: "Cannot reach this address: is the local dev server running?", zh: "连不上这个地址：本机开发服务器启动了吗？" };
 
-const ERR_MAP: Record<string, string> = {
-  "net::ERR_CLEARTEXT_NOT_PERMITTED": "这个 App 禁止明文 http，请用 https 或 debug 包",
+const ERR_MAP: Record<string, Msg> = {
+  "net::ERR_CLEARTEXT_NOT_PERMITTED": { en: "This app does not allow plain http: use https or a debug build", zh: "这个 App 禁止明文 http，请用 https 或 debug 包" },
   "net::ERR_CONNECTION_REFUSED": DEV_SERVER_DOWN,
-  "net::ERR_NAME_NOT_RESOLVED": "域名解析失败",
+  "net::ERR_NAME_NOT_RESOLVED": { en: "The domain name could not be resolved", zh: "域名解析失败" },
 };
 
-function mapError(text: string): string {
+/** 页面加载超时、页面已关闭：navigate 的回复用（server.ts 也用）。 */
+export const PAGE_TIMEOUT: Msg = { en: "The page timed out loading", zh: "页面加载超时" };
+export const PAGE_CLOSED: Msg = { en: "The H5 page closed", zh: "页面已关闭" };
+const CDP_CLOSED: Msg = { en: "The debugging connection has closed", zh: "CDP socket 已关闭" };
+
+function mapError(text: string): string | Msg {
   return ERR_MAP[text] ?? text;
 }
 
@@ -56,7 +63,7 @@ export function connectCdp(wsUrl: string): Promise<CdpClient> {
     });
 
     ws.on("close", () => {
-      const err = new Error("CDP socket 已关闭");
+      const err = new TextError(CDP_CLOSED);
       for (const p of pending.values()) p.reject(err);
       pending.clear();
       closedResolve();
@@ -65,7 +72,7 @@ export function connectCdp(wsUrl: string): Promise<CdpClient> {
     const client: CdpClient = {
       send(method, params) {
         if (ws.readyState !== WebSocket.OPEN) {
-          return Promise.reject(new Error("CDP socket 已关闭"));
+          return Promise.reject(new TextError(CDP_CLOSED));
         }
         return new Promise((res, rej) => {
           const id = nextId++;
@@ -95,7 +102,7 @@ export async function navigateAndCheck(
   try {
     await cdp.send("Page.enable");
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+    return { ok: false, error: textOf(e) };
   }
 
   // 2+3. 先注册 loadEventFired 监听器再发 navigate，避免同 tick 到达时丢失事件
@@ -132,7 +139,7 @@ export async function navigateAndCheck(
   } catch (e: any) {
     // navigate 失败时清理监听器
     if (!loadDone) { loadDone = true; clearTimeout(loadTid); offLoad(); resolveLoad("closed"); }
-    return { ok: false, error: e?.message ?? String(e) };
+    return { ok: false, error: textOf(e) };
   }
 
   if (navResult?.errorText) {
@@ -142,8 +149,8 @@ export async function navigateAndCheck(
   }
 
   const loadResult = await loadPromise;
-  if (loadResult === "timeout") return { ok: false, error: "页面加载超时" };
-  if (loadResult === "closed") return { ok: false, error: "页面已关闭" };
+  if (loadResult === "timeout") return { ok: false, error: PAGE_TIMEOUT };
+  if (loadResult === "closed") return { ok: false, error: PAGE_CLOSED };
 
   // 4. Runtime.evaluate
   try {
@@ -157,6 +164,6 @@ export async function navigateAndCheck(
     const bridge = bridgeRes?.result?.value === "object";
     return { ok: true, href, title, bridge };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+    return { ok: false, error: textOf(e) };
   }
 }

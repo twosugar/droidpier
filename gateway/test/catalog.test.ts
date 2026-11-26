@@ -118,7 +118,8 @@ test("目录：清单读不到时只列已安装的并给出原因，机型照�
   const c = await buildCatalog(deps({ manifest: async () => { throw new Error("HTTP 503"); } }));
   assert.ok(c.devices.length > 0);
   assert.deepEqual(c.images.map((i) => i.api), ["33", "29"]);
-  assert.match(c.imagesError!, /读取可下载的系统版本失败：HTTP 503/);
+  assert.match(c.imagesError!.zh, /读取可下载的系统版本失败：HTTP 503/);
+  assert.equal(c.imagesError!.en, "Reading the downloadable system versions failed: HTTP 503");
 });
 
 test("系统镜像清单：修订号按 major.minor.micro 比数字；大小取 macosx 或不限系统的 complete 包，不取补丁和别的系统", () => {

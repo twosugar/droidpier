@@ -44,7 +44,7 @@ test(":::: 无法解析 → {error}", () => {
 // Review Focus 3：内部有空格的地址（如 "local host:5173"）不能解析，应返回 error
 test("内部有空格的地址 → {error}", () => {
   const r = normalizeTarget("local host:5173");
-  assert.ok("error" in r);
+  assert.deepEqual(r, { error: { en: "Invalid address", zh: "地址格式不对" } });
 });
 
 // https://localhost 没写端口 → reversePort=443

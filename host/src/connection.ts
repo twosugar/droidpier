@@ -26,7 +26,7 @@ import {
 } from "../../shared/protocol.ts";
 import { classifyFailure, refineLocalFailure, type LocalPermission } from "./launch.ts";
 import { createPending } from "./pending.ts";
-import { t } from "../../shared/i18n.ts";
+import { lang, t } from "../../shared/i18n.ts";
 import type { GatewayInfo, UpdateReport } from "./gateway-update.ts";
 import type { LogLine } from "../../shared/logcat.ts";
 
@@ -194,7 +194,8 @@ export function createConnection(opts: {
       attempts = 0;
       pendingScreenshot = null;
       const { width, height } = opts.size();
-      sock.send(JSON.stringify({ t: "hello", version: PROTOCOL_VERSION, width, height } satisfies ClientMsg));
+      // 界面语言：GATEWAY_LEVEL ≥ 10 的网关按它发文字，旧网关不看这个字段
+      sock.send(JSON.stringify({ t: "hello", version: PROTOCOL_VERSION, width, height, lang: lang() } satisfies ClientMsg));
       opts.onOpen?.();
     };
     sock.onmessage = (e) => {

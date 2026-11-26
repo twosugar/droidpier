@@ -64,7 +64,10 @@ test("errorText ERR_CLEARTEXT_NOT_PERMITTED 映射成中文提示", async (t) =>
   t.after(() => cdp.close());
   const result = await navigateAndCheck(cdp, "http://localhost:5173/");
   assert.equal(result.ok, false);
-  if (!result.ok) assert.ok(result.error.includes("禁止明文"));
+  if (!result.ok) {
+    assert.equal(typeof result.error === "string" ? result.error : result.error.zh, "这个 App 禁止明文 http，请用 https 或 debug 包");
+    assert.equal(typeof result.error === "string" ? result.error : result.error.en, "This app does not allow plain http: use https or a debug build");
+  }
 });
 
 // Review Focus 4：loadEventFired 不来时不能挂死，要在超时后 resolve {ok:false}
@@ -80,7 +83,7 @@ test("loadEventFired 不来时 100ms 超时 → {ok:false,error:超时}", async 
   t.after(() => cdp.close());
   const result = await navigateAndCheck(cdp, "http://localhost:5173/", 100);
   assert.equal(result.ok, false);
-  if (!result.ok) assert.ok(result.error.includes("超时"));
+  if (!result.ok) assert.ok((typeof result.error === "string" ? result.error : result.error.zh).includes("超时"));
 });
 
 // 修复竞态：服务端在同一 tick 回 navigate 结果并推 loadEventFired（无 setTimeout），不能丢失事件

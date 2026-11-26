@@ -18,6 +18,7 @@ import {
   setClipboard,
 } from "./scrcpy.ts";
 import { SCRCPY_VERSION } from "./scrcpy-server.ts";
+import { TextError } from "../../shared/i18n.ts";
 
 /** 推到手机上的位置；服务端带 cleanup=true，退出时自己删掉。 */
 const REMOTE_JAR = `/data/local/tmp/droidpier-scrcpy-${SCRCPY_VERSION}.jar`;
@@ -62,7 +63,7 @@ export type PhoneDeps = {
   log?(s: string): void;
 };
 
-const unsupported = () => Promise.reject(new Error("这台设备不支持这个操作"));
+const unsupported = () => Promise.reject(new TextError({ en: "This device does not support this action", zh: "这台设备不支持这个操作" }));
 
 /** 等这条连接的第一块数据；收到之前就断了、或等满 waitMs，返回 null（服务端还没监听）。 */
 function firstData(s: Duplex, waitMs: number): Promise<Buffer | null> {
@@ -193,7 +194,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
       if (code === null) {
         // 页面把单个可打印 ASCII 字符作为 keypress 发来，按字符注入
         if (eventType === "keypress" && [...key].length === 1) return send(injectText(key));
-        throw new Error(`不认识的按键：${key}`);
+        throw new TextError({ en: `Unknown key: ${key}`, zh: `不认识的按键：${key}` });
       }
       if (eventType !== "keyup") send(injectKeycode(0, code));
       if (eventType !== "keydown") send(injectKeycode(1, code));
@@ -256,7 +257,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
     // 视频连接：收到第一块数据（含哑字节）才算服务端真的在听
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      if (closed) throw new Error("scrcpy 服务端没有起来");
+      if (closed) throw new TextError({ en: "The scrcpy server did not start", zh: "scrcpy 服务端没有起来" });
       const s = await deps.connect(port);
       const first = await firstData(s, Math.max(0, deadline - Date.now()));
       if (first) {
@@ -265,7 +266,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
         break;
       }
       s.destroy();
-      if (Date.now() >= deadline) throw new Error(`${timeoutMs / 1000} 秒内连不上手机上的 scrcpy 服务端`);
+      if (Date.now() >= deadline) throw new TextError({ en: `Could not reach the scrcpy server on the phone within ${timeoutMs / 1000} seconds`, zh: `${timeoutMs / 1000} 秒内连不上手机上的 scrcpy 服务端` });
       await new Promise((r) => setTimeout(r, RETRY_MS));
     }
     // 设备名要等控制连接也连上后才发，所以先连控制再等会话包
@@ -288,7 +289,7 @@ export async function connectPhone(id: string, deps: PhoneDeps): Promise<DeviceS
     let sessionTimer: ReturnType<typeof setTimeout> | undefined;
     const firstSession = new Promise<void>((res, rej) => {
       onFirstSession = () => (clearTimeout(sessionTimer), res());
-      sessionTimer = setTimeout(() => rej(new Error(`${timeoutMs / 1000} 秒内没收到 scrcpy 的画面尺寸`)), timeoutMs);
+      sessionTimer = setTimeout(() => rej(new TextError({ en: `No screen size from scrcpy within ${timeoutMs / 1000} seconds`, zh: `${timeoutMs / 1000} 秒内没收到 scrcpy 的画面尺寸` })), timeoutMs);
     });
     video.on("data", (b: Buffer) => parser.push(b));
     video.once("close", () => close("视频连接断开"));

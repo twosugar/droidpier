@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { TextError } from "../../shared/i18n.ts";
 
 /** 启动服务端时传的版本号必须和服务端自己的版本完全相同，否则服务端直接退出（Options.java）。 */
 export const SCRCPY_VERSION = "5.0.1";
@@ -31,7 +32,7 @@ export async function materializeScrcpyServer(src: string, tmpRoot: string): Pro
   if (existing && sha256(existing) === SCRCPY_SHA256) return target;
   const buf = await readFile(src);
   const got = sha256(buf);
-  if (got !== SCRCPY_SHA256) throw new Error(`scrcpy-server 的 sha256 不对：应为 ${SCRCPY_SHA256}，实际 ${got}`);
+  if (got !== SCRCPY_SHA256) throw new TextError({ en: `Wrong sha256 for scrcpy-server: expected ${SCRCPY_SHA256}, got ${got}`, zh: `scrcpy-server 的 sha256 不对：应为 ${SCRCPY_SHA256}，实际 ${got}` });
   // 先写临时名再改名：两个请求同时落盘时不会读到写了一半的文件
   const part = `${target}.${process.pid}.part`;
   await writeFile(part, buf);

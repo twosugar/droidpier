@@ -2,6 +2,10 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pickDefaultImage } from "../../shared/avd-spec.ts";
 import type { AvdCatalog, DeviceModel, SystemImage } from "../../shared/protocol.ts";
+import { msgOf, textOf, type Msg } from "../../shared/i18n.ts";
+
+/** 创建设备对话框的目录：imagesError 是两种语言（server.ts 按页面的语言发）。 */
+export type CatalogMsgs = Omit<AvdCatalog, "imagesError"> & { imagesError?: Msg };
 import { IMAGE_ABI, MANIFEST_HOST } from "./platform.ts";
 import { DEVICE_MODELS } from "./avd-create.ts";
 
@@ -104,10 +108,13 @@ export type CatalogDeps = {
 };
 
 /** 组出创建设备对话框的目录：已安装的镜像在前，可下载的去掉已安装的同一个包。 */
-export async function buildCatalog(deps: CatalogDeps): Promise<AvdCatalog> {
+export async function buildCatalog(deps: CatalogDeps): Promise<CatalogMsgs> {
   const [installed, remote, existing] = await Promise.all([
     deps.installed(),
-    deps.manifest().then((x) => ({ list: parseSysImgManifest(x) }), (e: Error) => ({ error: `读取可下载的系统版本失败：${e.message}` })),
+    deps.manifest().then((x) => ({ list: parseSysImgManifest(x) }), (e: Error): { error: Msg } => {
+      const r = msgOf(textOf(e));
+      return { error: { en: `Reading the downloadable system versions failed: ${r.en}`, zh: `读取可下载的系统版本失败：${r.zh}` } };
+    }),
     deps.existing(),
   ]);
   const have = new Set(installed.map((i) => i.pkg));

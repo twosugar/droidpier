@@ -9,6 +9,7 @@ import { emulatorBin, emulatorEnv, emulatorLogPath } from "./platform.ts";
 import { bootLogHint, bootLogReason, bootStuckDetail } from "./boot-log.ts";
 import { adb, ADB_TIMEOUT_MS, emulatorId } from "./adb.ts";
 import type { AvdInfo } from "../../shared/protocol.ts";
+import { TextError, textOf, msgOf, type Msg } from "../../shared/i18n.ts";
 
 const GRPC_BASE_PORT = 8554;
 const BOOT_TIMEOUT_MS = 180_000;
@@ -45,7 +46,8 @@ export type StartJob = {
   serial: number;
   grpcPort: number;
   progress: "spawning" | "booting" | "ready" | "failed";
-  error?: string;
+  /** 给页面看的失败原因（两种语言）。 */
+  error?: Msg;
   done: Promise<Running>;
 };
 
@@ -148,27 +150,35 @@ export function startAvd(name: string, deps?: Partial<LifecycleDeps>): StartJob 
   let myPort = 0;
   const logPath = d.logPath(name);
   // 开机中退出时把日志里的原因带上，用户不用自己去翻日志
-  const exitError = async (what: string): Promise<Error> => {
+  const exitError = async (what: Msg): Promise<Error> => {
     const log = await d.readLog(logPath);
-    if (log === null) return new Error(`模拟器进程在开机中退出（${what}）`);
+    if (log === null) return new TextError({ en: `The emulator process exited during boot (${what.en})`, zh: `模拟器进程在开机中退出（${what.zh}）` });
     const reason = bootLogReason(log);
     const hint = bootLogHint(log);
-    const detail = [reason, hint].filter(Boolean).join("。");
-    return new Error(`模拟器进程在开机中退出（${what}）${detail ? `：${detail}` : ""}。完整日志：${logPath}`);
+    const parts = [reason ? msgOf(reason) : null, hint].filter((x): x is Msg => x !== null);
+    const en = parts.map((x) => x.en.replace(/\.$/, "")).join(". ");
+    const zh = parts.map((x) => x.zh).join("。");
+    return new TextError({
+      en: `The emulator process exited during boot (${what.en})${en ? `: ${en}` : ""}. Full log: ${logPath}`,
+      zh: `模拟器进程在开机中退出（${what.zh}）${zh ? `：${zh}` : ""}。完整日志：${logPath}`,
+    });
   };
   // 开机超时也说明卡在哪，不然用户只看到“超时”，不知道是模拟器没起来还是 adb 读不到
   const timeoutError = async (): Promise<Error> => {
-    const what = `开机超时（${BOOT_TIMEOUT_MS / 1000} 秒）`;
+    const what = { en: `Boot timed out (${BOOT_TIMEOUT_MS / 1000} seconds)`, zh: `开机超时（${BOOT_TIMEOUT_MS / 1000} 秒）` };
     const log = await d.readLog(logPath);
-    if (log === null) return new Error(what);
+    if (log === null) return new TextError(what);
     // serial 为 0：没找到发现文件，还没问过 adb，不能怪 adb
     const detail = bootStuckDetail(log, job.serial > 0);
-    return new Error(`${what}${detail ? `：${detail}` : ""}。完整日志：${logPath}`);
+    return new TextError({
+      en: `${what.en}${detail ? `: ${detail.en}` : ""}. Full log: ${logPath}`,
+      zh: `${what.zh}${detail ? `：${detail.zh}` : ""}。完整日志：${logPath}`,
+    });
   };
   const run = async (): Promise<Running> => {
     const info = (await d.listAvds()).find((a) => a.name === name);
-    if (!info) throw new Error(`没有这个 AVD：${name}`);
-    if (info.running === "no-grpc") throw new Error(`${name} 已在运行但没开 gRPC，无法接管`);
+    if (!info) throw new TextError({ en: `No such AVD: ${name}`, zh: `没有这个 AVD：${name}` });
+    if (info.running === "no-grpc") throw new TextError({ en: `${name} is running without gRPC and cannot be taken over`, zh: `${name} 已在运行但没开 gRPC，无法接管` });
     if (info.running === "grpc") {
       const r = await d.findRunning(name);
       if (r) return r;
@@ -202,10 +212,10 @@ export function startAvd(name: string, deps?: Partial<LifecycleDeps>): StartJob 
     const start = d.now();
     let running: Running | null = null;
     while (d.now() - start < BOOT_TIMEOUT_MS) {
-      if (exited) throw await exitError(`code ${exited.code}`);
+      if (exited) throw await exitError(msgOf(`code ${exited.code}`));
       running ??= await d.findRunning(name);
       if (running) {
-        if (!d.alive(running.pid)) throw await exitError(`pid ${running.pid} 已不在`);
+        if (!d.alive(running.pid)) throw await exitError({ en: `pid ${running.pid} is gone`, zh: `pid ${running.pid} 已不在` });
         job.serial = running.serial;
         // adb 卡住时按“还没开机”处理，不能拖过开机期限
         const out = await Promise.race([
@@ -237,7 +247,7 @@ export function startAvd(name: string, deps?: Partial<LifecycleDeps>): StartJob 
     },
     (e: Error) => {
       job.progress = "failed";
-      job.error = e.message;
+      job.error = msgOf(textOf(e));
       settle();
       reject(e);
     },

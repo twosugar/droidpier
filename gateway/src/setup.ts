@@ -5,6 +5,10 @@ import { androidVersion, scanInstalledImages } from "./catalog.ts";
 import { avdDataDir } from "./avd.ts";
 import { AVD_DISK_MB } from "../../shared/avd-spec.ts";
 import type { EnvMissing, EnvReport } from "../../shared/protocol.ts";
+import type { Msg } from "../../shared/i18n.ts";
+
+/** 环境检查的结果：说明（detail、error）是两种语言，发给哪个页面就用哪种（server.ts 的 send）。 */
+export type EnvMsgs = Omit<EnvReport, "missing" | "error"> & { missing: Array<Omit<EnvMissing, "detail"> & { detail: Msg }>; error?: Msg };
 
 export type { EnvMissing, EnvReport };
 
@@ -85,20 +89,22 @@ function pkgOf(sysdir: string): string | null {
   return m ? `system-images;${m[1]};${m[2]};${m[3]}` : null;
 }
 
+const joinMsgs = (xs: Msg[]): Msg => ({ en: xs.map((x) => x.en).join("; "), zh: xs.map((x) => x.zh).join("；") });
+
 const apiOf = (pkg: string) => /;android-([^;]+);/.exec(pkg)?.[1] ?? "?";
 
 /**
  * 检查这台 Mac 能不能开一台设备：要有 emulator、platform-tools 的 adb，以及至少一台镜像目录还在的 AVD（任何 Android 版本都行）。
  * 不能时只列真缺的：模拟器、adb、系统镜像、设备。SDK 目录不存在不算缺（安装时自己建）。
  */
-export async function checkEnv(deps: EnvDeps): Promise<EnvReport> {
+export async function checkEnv(deps: EnvDeps): Promise<EnvMsgs> {
   const sdk = deps.sdkRoot;
-  const missing: EnvMissing[] = [];
+  const missing: EnvMsgs["missing"] = [];
   if (!(await deps.exists(join(sdk, "emulator/emulator")))) {
-    missing.push({ id: "emulator", auto: true, ...SIZE.emulator, detail: "没有模拟器程序" });
+    missing.push({ id: "emulator", auto: true, ...SIZE.emulator, detail: { en: "No emulator program", zh: "没有模拟器程序" } });
   }
   if (!(await deps.exists(join(sdk, "platform-tools/adb")))) {
-    missing.push({ id: "platform-tools", auto: true, ...SIZE["platform-tools"], detail: "没有 adb" });
+    missing.push({ id: "platform-tools", auto: true, ...SIZE["platform-tools"], detail: { en: "No adb", zh: "没有 adb" } });
   }
   const avds = await avdImages(deps);
   if (!avds.some((a) => a.ok)) {
@@ -111,23 +117,27 @@ export async function checkEnv(deps: EnvDeps): Promise<EnvReport> {
       autoImage = !!pkg && pkg.endsWith(`;${IMAGE_ABI}`) && manifestUrlFor(pkg) !== null;
       missing.push({
         id: "system-image", auto: autoImage, ...(pkg ? { pkg } : {}), ...(pkg === SYSTEM_IMAGE ? SIZE.defaultImage : SIZE.otherImage),
-        detail: broken.map((a) => {
+        detail: joinMsgs(broken.map((a): Msg => {
           const img = pkgOf(a.sysdir) ? androidVersion(apiOf(pkgOf(a.sysdir)!)) : a.sysdir;
-          return a.abi === IMAGE_ABI ? `设备 ${a.label} 的系统镜像 ${img} 不在了` : `设备 ${a.label} 的系统镜像 ${img} 是 ${a.abi} 的，这台 Mac 跑不了`;
-        }).join("；"),
+          return a.abi === IMAGE_ABI
+            ? { en: `The system image ${img} of device ${a.label} is gone`, zh: `设备 ${a.label} 的系统镜像 ${img} 不在了` }
+            : { en: `The system image ${img} of device ${a.label} is ${a.abi}, which this Mac cannot run`, zh: `设备 ${a.label} 的系统镜像 ${img} 是 ${a.abi} 的，这台 Mac 跑不了` };
+        })),
       });
     } else if (installed.length === 0) {
       missing.push({
         id: "system-image", auto: true, pkg: SYSTEM_IMAGE, ...SIZE.defaultImage,
-        detail: "没有系统镜像，会装 Android 14",
+        detail: { en: "No system image; Android 14 will be installed", zh: "没有系统镜像，会装 Android 14" },
       });
     }
     // 没有设备，或者设备缺的镜像装不了：建一台（建设备对话框里可以选别的系统版本）
     if (broken.length === 0 || !autoImage) {
-      const what = broken.length ? "还没有能启动的模拟器设备" : "还没有模拟器设备";
+      const what: Msg = broken.length ? { en: "No emulator device that can start yet", zh: "还没有能启动的模拟器设备" } : { en: "No emulator devices yet", zh: "还没有模拟器设备" };
       missing.push({
         id: "avd", auto: true, diskMb: AVD_DISK_MB,
-        detail: installed.length ? `${what}，可以用已装的 ${androidVersion(installed[0].api)} 建一台` : what,
+        detail: installed.length
+          ? { en: `${what.en}; you can create one with the installed ${androidVersion(installed[0].api)}`, zh: `${what.zh}，可以用已装的 ${androidVersion(installed[0].api)} 建一台` }
+          : what,
       });
     }
   }

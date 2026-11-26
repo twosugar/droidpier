@@ -46,6 +46,7 @@ import { cleanStaleUploads } from "./upload-temp.ts";
 import { realRotateIo, realServiceDeps, rotateLog, SERVICE_LABEL, serviceLabel, serviceLogs, serviceStart, serviceStatus, serviceStop } from "./service.ts";
 import { tmpdir } from "node:os";
 import { checkPending, cleanStaleWork, confirmStable, createAutoUpdater, firstWithin, realCleanDeps, DOWNLOAD_BASE, downloadBase, installLayout, newerNotice, realUpdaterDeps, RESTART_EXIT_CODE, toReport, updateOnce } from "./updater.ts";
+import { TextError } from "../../shared/i18n.ts";
 
 // scripts/build-binary.ts 打包时把 DROIDPIER_VERSION 替换成构建时间；直接用源码跑时没有
 declare const DROIDPIER_VERSION: string | undefined;
@@ -248,7 +249,7 @@ const iosInspectorFor = (udid: string) => {
       // 每台模拟器的调试 socket 不同，路径只能问模拟器里的 launchd
       connect: async () => {
         const path = (await simctl(["spawn", udid, "launchctl", "getenv", "RWI_LISTEN_SOCKET"])).trim();
-        if (!path) throw new Error("模拟器里没有 webinspectord（RWI_LISTEN_SOCKET 为空）");
+        if (!path) throw new TextError({ en: "No webinspectord in the simulator (RWI_LISTEN_SOCKET is empty)", zh: "模拟器里没有 webinspectord（RWI_LISTEN_SOCKET 为空）" });
         return await new Promise<net.Socket>((resolve, reject) => {
           const s = net.connect(path);
           s.once("connect", () => resolve(s));
@@ -340,7 +341,7 @@ const catalogDeps = realCatalogDeps({
   manifestUrl: SYS_IMG_MANIFEST_URL,
   fetchText: async (url) => {
     const r = await fetchWithIdle(url, 60_000);
-    requireRepoUrl(r.url, "系统镜像清单跳转后");
+    requireRepoUrl(r.url, { en: "The system image manifest after redirects", zh: "系统镜像清单跳转后" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.text();
   },
@@ -429,7 +430,7 @@ console.log(`droidpier: ${pageUrl}  (${first ? `emulator-${serial}` : "no emulat
 // 终端里只提示，不提问：安装要在页面上确认
 if (!env.ok) {
   console.log(`打开页面完成安装：${pageUrl}`);
-  for (const m of env.missing) console.log(`  缺 ${m.id}：${m.detail}`);
+  for (const m of env.missing) console.log(`  缺 ${m.id}：${m.detail.zh}`);
 }
 if (!noOpen) openBrowser(pageUrl, (e) => console.log(`打开浏览器失败：${e.message}`));
 

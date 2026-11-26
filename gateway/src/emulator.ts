@@ -5,6 +5,7 @@ import { pidAlive, type Running } from "./discovery.ts";
 import { loadController } from "./sdk.ts";
 import { adb, emulatorId } from "./adb.ts";
 import type { DeviceCaps, FrameHeader, RotateDir, Rotation } from "../../shared/protocol.ts";
+import { TextError } from "../../shared/i18n.ts";
 
 type Size = { width: number; height: number };
 
@@ -150,7 +151,8 @@ export async function connectEmulator(running: Running, timeoutMs = 3000): Promi
     status = await unary("getStatus", {}, timeoutMs);
   } catch (e) {
     client.close();
-    throw new Error(`连不上模拟器 gRPC 127.0.0.1:${running.grpcPort}：${(e as Error).message}`);
+    const why = (e as Error).message;
+    throw new TextError({ en: `Cannot reach the emulator gRPC at 127.0.0.1:${running.grpcPort}: ${why}`, zh: `连不上模拟器 gRPC 127.0.0.1:${running.grpcPort}：${why}` });
   }
   const hw = new Map<string, string>((status.hardwareConfig?.entry ?? []).map((e: any) => [e.key, e.value]));
   const device = { width: Number(hw.get("hw.lcd.width")), height: Number(hw.get("hw.lcd.height")) };
