@@ -6,10 +6,12 @@
 // 用法：simhelper <Xcode Developer 目录> <模拟器 UDID>
 // stdout：一帧一个包，[u32 小端 长度][u8 类型][内容]，长度不含自己的 4 字节。
 //   类型 1 视频：[u8 标志：第 0 位配置包、第 1 位关键帧][u32 宽][u32 高][Annex B 数据]
-//   类型 2 事件：UTF-8 JSON，{"t":"ready","width":..,"height":..} 或 {"t":"error","message":..}
+//   类型 2 事件：UTF-8 JSON，{"t":"ready","width":..,"height":..,"rotation":..,"rotate":bool,"hinge":bool} 或 {"t":"error","message":..}
+//   （rotate：能转设备朝向；hinge：是折叠机、能开合铰链）
 // stdin：一行一个 JSON 命令。{"t":"touch","x":..,"y":..,"down":true|false,"edge":0..4}（帧缓冲像素；edge 是从哪条屏幕边缘
 //   开始的系统手势，3 是底边：全面屏的回主屏、多任务要带上它，系统才认，2026-11-22 iOS 18.3 实测）、{"t":"keyframe"}、
-//   {"t":"button","source":..,"down":..}（硬件按键，source 见 gateway/src/ios-keys.ts）、{"t":"hidkey","usage":..,"down":..}（键盘，USB HID 键码）
+//   {"t":"button","source":..,"down":..}（硬件按键，source 见 gateway/src/ios-keys.ts）、{"t":"hidkey","usage":..,"down":..}（键盘，USB HID 键码）、
+//   {"t":"hinge","angle":0..180}（折叠机的铰链角度，0 合上、180 展开）、{"t":"orient","value":"portrait"|"landscape-right"|"pud"|"landscape-left"}（设备朝向）
 // stdin 关闭即退出。
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -22,6 +24,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <xpc/xpc.h>
+#import <IOKit/IOCFSerialize.h>
 
 #define CALL(o, s) ((id(*)(id, SEL))objc_msgSend)(o, sel_registerName(s))
 
@@ -46,10 +49,16 @@ static size_t fbWidth, fbHeight;
 // 界面方向（设备顺时针转过的角度）和转正后的视频尺寸：帧缓冲永远是竖的，界面横过来时（折叠机展开）画面在里面是躺着的，
 // 编码前按方向转正，视频是 outW x outH；触摸照旧按帧缓冲坐标
 static int rotationDeg, sentRotation = -1;
-// 正在用的屏在 class 0 屏里的序号，当作 dtuhidd 触摸的 target：折叠机外屏要发 1，发 0 点不动（2026-11-26 iPhone Duo 实测）。
-// 内屏还点不动：target 0 / 1 / 2、按竖屏或横屏的坐标都试过，没有反应，内屏要怎么指定还不知道。iPhone 只有一块屏，一直是 0。
-// encodeQ 写、inputQ 读
+// 正在用的屏在 class 0 屏里的序号。encodeQ 写、inputQ 读
 static _Atomic uint64_t screenIndex;
+// class 0 屏的名字（外屏 LCD、内屏 LCD-1），和 screenIndex 对应；main 里定好后不再改
+static NSArray<NSString *> *screenNames;
+// 屏名 → dtuhidd 触摸的 target（见 loadTouchTargets）。查不到时用 screenIndex：iPhone 只有一块屏，0 是主屏的别名。只在 inputQ 上用
+static NSDictionary<NSString *, NSNumber *> *touchTargets;
+// 模拟器报的运动能力（CoreDevice 的 querymotioncapabilities，同 idb 的 MotionCapabilities）：deviceMotion 时设备朝向走厂商事件，
+// 否则走 Purple；hingeAngle 只有 iPhone Duo 有（2026-11-26 实测 iOS 27.1 Duo 两个都是 true，iOS 18.3 iPhone 16 Pro 都是 false）。
+// main 里查一次
+static BOOL deviceMotion, hingeAngle, canRotate;
 // 按下时发给的屏：手指抬起前不换，开合铰链时旧屏上不会留下一根抬不起来的手指。只在 inputQ 上用
 static uint64_t touchTarget;
 static size_t outW, outH;
@@ -211,7 +220,8 @@ static void encodeCurrent(void) {
     if (rotatedPool) { CVPixelBufferPoolRelease(rotatedPool); rotatedPool = NULL; }
     lastConfig = nil;
     forceKey = YES;
-    event(@{@"t": @"ready", @"width": @(fbWidth), @"height": @(fbHeight), @"rotation": @(rotationDeg)});
+    event(@{@"t": @"ready", @"width": @(fbWidth), @"height": @(fbHeight), @"rotation": @(rotationDeg),
+            @"rotate": @(canRotate), @"hinge": @(hingeAngle)});
   }
   if (!encoder) createEncoder();
   CVPixelBufferRef pb = NULL;
@@ -264,21 +274,58 @@ static void hidSend(void *msg) {
 // 旧的 Indigo 消息在 Xcode 27 上不可靠：按键、键盘被丢掉，触摸时灵时不灵（2026-11-23 iOS 18.3 实测重启后点按全部失效，
 // idb 也是这个结论）。连不上 dtuhidd（没有这个服务的旧 Xcode / 旧系统）才用 Indigo
 static NSString *const DTU_SERVICE = @"com.apple.coredevice.feature.remote.hid.digitizer";
+// 厂商事件：转设备朝向、开合铰链（idb 的 SimulatorVendorHIDTransport）
+static NSString *const VENDOR_SERVICE = @"com.apple.coredevice.feature.remote.hid.vendordefined";
 typedef xpc_object_t (*EndpointFromPortFn)(mach_port_t, uint64_t, uint64_t) __attribute__((ns_returns_retained));
 typedef xpc_connection_t (*ConnectionFromEndpointFn)(xpc_object_t) __attribute__((ns_returns_retained));
 typedef void (*EnableSim2HostFn)(xpc_connection_t);
-static xpc_connection_t dtu;
+static xpc_connection_t dtu, vendor;
 static BOOL dtuTouching;
 static uint64_t dtuRetryAt;
 static int dtuSilent;
 
-static xpc_object_t dtuMessage(const char *type, xpc_object_t payload, bool barrier) {
+static xpc_object_t dtuMessage(NSString *service, const char *type, xpc_object_t payload, bool barrier) {
   xpc_object_t m = xpc_dictionary_create(NULL, NULL, 0);
   xpc_dictionary_set_string(m, "messageType", type);
   xpc_dictionary_set_bool(m, "isBarrier", barrier);
-  xpc_dictionary_set_string(m, "featureIdentifier", DTU_SERVICE.UTF8String);
+  xpc_dictionary_set_string(m, "featureIdentifier", service.UTF8String);
   xpc_dictionary_set_value(m, "payload", payload);
   return m;
+}
+
+static mach_port_t simLookup(NSString *service) {
+  if (![device respondsToSelector:sel_registerName("lookup:error:")]) return MACH_PORT_NULL;
+  NSError *e = nil;
+  return ((mach_port_t (*)(id, SEL, id, NSError **))objc_msgSend)(device, sel_registerName("lookup:error:"), service, &e);
+}
+
+// 连模拟器里的一个 XPC 服务（sim2host），返回已 resume 的连接，连不上是 nil；onEvent 收这条连接的事件（断开等）
+static xpc_connection_t simConnect(NSString *service, void (^onEvent)(xpc_object_t)) {
+  EndpointFromPortFn endpointFromPort = (EndpointFromPortFn)dlsym(RTLD_DEFAULT, "xpc_endpoint_create_mach_port_4sim");
+  ConnectionFromEndpointFn fromEndpoint = (ConnectionFromEndpointFn)dlsym(RTLD_DEFAULT, "xpc_connection_create_from_endpoint");
+  EnableSim2HostFn sim2host = (EnableSim2HostFn)dlsym(RTLD_DEFAULT, "xpc_connection_enable_sim2host_4sim");
+  if (!endpointFromPort || !fromEndpoint || !sim2host) return nil;
+  mach_port_t port = simLookup(service);
+  if (port == MACH_PORT_NULL) return nil;
+  xpc_object_t endpoint = endpointFromPort(port, 0, 0);
+  xpc_connection_t c = endpoint ? fromEndpoint(endpoint) : nil;
+  if (!c) return nil;
+  sim2host(c);
+  xpc_connection_set_event_handler(c, onEvent ?: ^(xpc_object_t ev) {});
+  xpc_connection_resume(c);
+  return c;
+}
+
+// 发一条要回复的消息，最多等 timeout 秒；没回复或回的不是字典时是 nil
+static xpc_object_t simRequest(xpc_connection_t c, xpc_object_t m, int64_t timeout) {
+  dispatch_semaphore_t answered = dispatch_semaphore_create(0);
+  __block xpc_object_t reply = nil;
+  xpc_connection_send_message_with_reply(c, m, dispatch_get_global_queue(0, 0), ^(xpc_object_t r) {
+    if (xpc_get_type(r) == XPC_TYPE_DICTIONARY) reply = r;
+    dispatch_semaphore_signal(answered);
+  });
+  if (dispatch_semaphore_wait(answered, dispatch_time(DISPATCH_TIME_NOW, timeout * NSEC_PER_SEC))) return nil;
+  return reply;
 }
 
 static xpc_object_t keyPayload(uint32_t usage, BOOL down) {
@@ -294,29 +341,13 @@ static void dtuConnect(void) {
   // 刚开机时 dtuhidd 可能还没起来：失败后过 5 秒再试，不是每个触摸都去连。
   // 有端口却连续 5 次不应答（idb 说的 dtuhidd 崩溃后被 launchd 限流）就不再试，免得每次都卡住输入队列 4 秒
   if (dtuSilent >= 5 || clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < dtuRetryAt) return;
-  EndpointFromPortFn endpointFromPort = (EndpointFromPortFn)dlsym(RTLD_DEFAULT, "xpc_endpoint_create_mach_port_4sim");
-  ConnectionFromEndpointFn fromEndpoint = (ConnectionFromEndpointFn)dlsym(RTLD_DEFAULT, "xpc_connection_create_from_endpoint");
-  EnableSim2HostFn sim2host = (EnableSim2HostFn)dlsym(RTLD_DEFAULT, "xpc_connection_enable_sim2host_4sim");
-  if (!endpointFromPort || !fromEndpoint || !sim2host || ![device respondsToSelector:sel_registerName("lookup:error:")]) return;
-  NSError *e = nil;
-  mach_port_t port = ((mach_port_t (*)(id, SEL, id, NSError **))objc_msgSend)(device, sel_registerName("lookup:error:"), DTU_SERVICE, &e);
-  if (port == MACH_PORT_NULL) { dtuRetryAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + 5 * NSEC_PER_SEC; return; }
-  xpc_object_t endpoint = endpointFromPort(port, 0, 0);
-  xpc_connection_t c = endpoint ? fromEndpoint(endpoint) : nil;
-  if (!c) { dtuRetryAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + 5 * NSEC_PER_SEC; return; }
-  sim2host(c);
-  xpc_connection_set_event_handler(c, ^(xpc_object_t ev) {
+  __block xpc_connection_t c = nil;
+  c = simConnect(DTU_SERVICE, ^(xpc_object_t ev) {
     if (ev == XPC_ERROR_CONNECTION_INTERRUPTED) dispatch_async(inputQ, ^{ dtuTouching = NO; });
     else if (ev == XPC_ERROR_CONNECTION_INVALID) dispatch_async(inputQ, ^{ if (dtu == c) { dtu = nil; dtuTouching = NO; } });
   });
-  xpc_connection_resume(c);
-  dispatch_semaphore_t answered = dispatch_semaphore_create(0);
-  __block BOOL alive = NO;
-  xpc_connection_send_message_with_reply(c, dtuMessage("IndigoKeyboardButtonEvent", keyPayload(0, NO), true), dispatch_get_global_queue(0, 0), ^(xpc_object_t r) {
-    alive = xpc_get_type(r) == XPC_TYPE_DICTIONARY;
-    dispatch_semaphore_signal(answered);
-  });
-  if (dispatch_semaphore_wait(answered, dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC)) || !alive) {
+  if (!c) { dtuRetryAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + 5 * NSEC_PER_SEC; return; }
+  if (!simRequest(c, dtuMessage(DTU_SERVICE, "IndigoKeyboardButtonEvent", keyPayload(0, NO), true), 4)) {
     xpc_connection_cancel(c);
     dtuSilent++;
     dtuRetryAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + 5 * NSEC_PER_SEC;
@@ -326,7 +357,131 @@ static void dtuConnect(void) {
 }
 
 static void dtuSend(const char *type, xpc_object_t payload) {
-  xpc_connection_send_message(dtu, dtuMessage(type, payload, false));
+  xpc_connection_send_message(dtu, dtuMessage(DTU_SERVICE, type, payload, false));
+}
+
+static NSString *xpcString(xpc_object_t d, const char *key) {
+  const char *s = d ? xpc_dictionary_get_string(d, key) : NULL;
+  return s ? @(s) : nil;
+}
+
+// 调一个 CoreDevice 动作（同 idb 的 CoreDeviceRequest），返回它的输出字典；连不上、出错、超时都是 nil
+static xpc_object_t coreDevice(NSString *service, const char *action) {
+  NSString *version = [NSBundle bundleWithPath:@"/Library/Developer/PrivateFrameworks/CoreDevice.framework"].infoDictionary[@"CFBundleVersion"];
+  if (!version) return nil;
+  xpc_object_t components = xpc_array_create(NULL, 0);
+  for (NSString *part in [version componentsSeparatedByString:@"."]) xpc_array_set_uint64(components, XPC_ARRAY_APPEND, (uint64_t)part.longLongValue);
+  xpc_object_t ver = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_value(ver, "components", components);
+  xpc_dictionary_set_int64(ver, "originalComponentsCount", (int64_t)xpc_array_get_count(components));
+  xpc_dictionary_set_string(ver, "stringValue", version.UTF8String);
+  xpc_object_t req = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_string(req, "CoreDevice.actionIdentifier", action);
+  xpc_dictionary_set_string(req, "CoreDevice.deviceIdentifier", [CALL(device, "UDID") UUIDString].UTF8String);
+  xpc_dictionary_set_string(req, "CoreDevice.invocationIdentifier", NSUUID.UUID.UUIDString.UTF8String);
+  xpc_dictionary_set_int64(req, "CoreDevice.CoreDeviceDDIProtocolVersion", 1);
+  xpc_dictionary_set_value(req, "CoreDevice.coreDeviceVersion", ver);
+  xpc_dictionary_set_value(req, "CoreDevice.input", xpc_dictionary_create(NULL, NULL, 0));
+  xpc_connection_t c = simConnect(service, nil);
+  xpc_object_t reply = c ? simRequest(c, req, 3) : nil;
+  if (c) xpc_connection_cancel(c);
+  xpc_object_t out = reply ? xpc_dictionary_get_value(reply, "CoreDevice.output") : nil;
+  return out && xpc_get_type(out) == XPC_TYPE_DICTIONARY ? out : nil;
+}
+
+// 没有设备运动的系统（iOS 18 等）转朝向：给 SpringBoard 的 PurpleWorkspacePort 发 GSEvent（同 idb 的 SimulatorPurpleHID，
+// 格式照 Simulator.app 的 sendPurpleEvent:）：112 字节的 mach 消息，类型 50（朝向变了）| 0x20000，偏移 0x4C 是朝向。在 inputQ 上调
+static void purpleOrient(uint32_t orientation) {
+  mach_port_t port = simLookup(@"PurpleWorkspacePort");
+  if (port == MACH_PORT_NULL) { event(@{@"t": @"error", @"message": @"找不到模拟器的 PurpleWorkspacePort"}); return; }
+
+  uint32_t buf[28] = {0};
+  mach_msg_header_t *h = (mach_msg_header_t *)buf;
+  h->msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+  h->msgh_size = 108;
+  h->msgh_remote_port = port;
+  h->msgh_id = 0x7B;
+  buf[0x18 / 4] = 50 | 0x20000;
+  buf[0x48 / 4] = 4;
+  buf[0x4C / 4] = orientation;
+  kern_return_t kr = mach_msg(h, MACH_SEND_MSG | MACH_SEND_TIMEOUT, 108, 0, MACH_PORT_NULL, 2000, MACH_PORT_NULL);
+  // lookup 每次给一份发送权，用完还回去
+  mach_port_deallocate(mach_task_self(), port);
+  if (kr != KERN_SUCCESS) event(@{@"t": @"error", @"message": [NSString stringWithFormat:@"转朝向没发出去（%d）", kr]});
+}
+
+// 每块屏的触摸 target（同 idb 的 SimulatorTouchscreenProtocol）：CoreDevice 的 displayinfo 给出屏名和它的 uniqueId，
+// dtuhidd 的 universalhidservice 列出触摸屏服务和它对着的 displayUUID，触摸屏的服务编号是 0x100 + target。
+// iPhone Duo 是外屏 LCD → 1、内屏 LCD-1 → 3；内屏发 0、1、2 都点不动（2026-11-26 Xcode 27.1 iOS 27.1 实测）。
+// 查不到（旧 Xcode、旧系统）就留空，触摸照旧发 screenIndex；刚开机时服务可能还没起来，按下时隔 5 秒再查，最多 6 次。在 inputQ 上调
+static void loadTouchTargets(void) {
+  static int tries;
+  static uint64_t retryAt;
+  if (touchTargets || screenNames.count < 2 || tries >= 6 || clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < retryAt) return;
+  tries++;
+  retryAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + 5 * NSEC_PER_SEC;
+  xpc_object_t info = coreDevice(@"com.apple.coredevice.feature.getdisplayinfo", "com.apple.coredevice.action.displayinfo");
+  xpc_object_t displays = info ? xpc_dictionary_get_value(info, "displays") : nil;
+  if (!displays || xpc_get_type(displays) != XPC_TYPE_ARRAY) return;
+  NSMutableDictionary<NSString *, NSString *> *nameByUUID = [NSMutableDictionary dictionary];
+  xpc_array_apply(displays, ^bool(size_t i, xpc_object_t d) {
+    if (xpc_get_type(d) != XPC_TYPE_DICTIONARY) return true;
+    NSString *name = xpcString(d, "name"), *uid = xpcString(d, "uniqueId");
+    if (name && uid) nameByUUID[uid] = name;
+    return true;
+  });
+  xpc_object_t list = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_value(list, "connectedServices", xpc_dictionary_create(NULL, NULL, 0));
+  xpc_object_t svcReq = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_bool(svcReq, "isBarrier", false);
+  xpc_dictionary_set_value(svcReq, "payload", list);
+  xpc_connection_t hid = simConnect(@"com.apple.coredevice.feature.remote.universalhidservice", nil);
+  xpc_object_t svcReply = hid ? simRequest(hid, svcReq, 3) : nil;
+  if (hid) xpc_connection_cancel(hid);
+  xpc_object_t services = svcReply ? xpc_dictionary_get_value(svcReply, "connectedServices") : nil;
+  if (!services || xpc_get_type(services) != XPC_TYPE_ARRAY) return;
+  NSMutableDictionary<NSString *, NSNumber *> *targets = [NSMutableDictionary dictionary];
+  xpc_array_apply(services, ^bool(size_t i, xpc_object_t s) {
+    // 触摸屏：数字化仪页 0x0D、用法 0x04
+    if (xpc_get_type(s) != XPC_TYPE_DICTIONARY || xpc_dictionary_get_uint64(s, "PrimaryUsagePage") != 0x0D || xpc_dictionary_get_uint64(s, "PrimaryUsage") != 0x04) return true;
+    uint64_t sid = xpc_dictionary_get_uint64(s, "_ServiceID");
+    NSString *name = nameByUUID[xpcString(s, "displayUUID") ?: @""];
+    if ((sid & ~0xFFull) == 0x100 && (sid & 0xFF) && name) targets[name] = @(sid & 0xFF);
+    return true;
+  });
+  touchTargets = targets;
+}
+
+// 发一条厂商事件（idb 的 IndigoVendorDefinedEvent.virtualMachineControl）：IOCFSerialize 二进制序列化的字典，
+// 模拟器里的 locationd 按 source / type 认（hinge-slider-control 的值是角度，orientation-picker-control 的值是朝向名）。
+// 连接一直开着、启动时就连（vendorConnect）：dtuhidd 每条连接新建一批虚拟 HID 服务，系统约 0.3 秒后才匹配上，
+// 刚连上就发的事件会被丢掉（2026-11-26 iPhone Duo 实测）。在 inputQ 上调
+static BOOL vendorConnect(void) {
+  if (vendor || !(deviceMotion || hingeAngle)) return NO;
+  __block xpc_connection_t c = nil;
+  c = simConnect(VENDOR_SERVICE, ^(xpc_object_t ev) {
+    // 断开或 dtuhidd 重启（INTERRUPTED）都重连：重启后旧连接上的虚拟服务没了，要走重连后等匹配的路
+    if (ev == XPC_ERROR_CONNECTION_INVALID || ev == XPC_ERROR_CONNECTION_INTERRUPTED)
+      dispatch_async(inputQ, ^{ if (vendor == c) { xpc_connection_cancel(c); vendor = nil; } });
+  });
+  vendor = c;
+  return c != nil;
+}
+
+static void vendorSend(NSString *source, NSString *type, id value) {
+  // 断了重连：等虚拟服务匹配上再发
+  if (vendorConnect()) usleep(1000000);
+  if (!vendor) { event(@{@"t": @"error", @"message": @"连不上模拟器的厂商事件服务（dtuhidd）"}); return; }
+  NSDictionary *d = @{@"provider": @"com.apple.Virtualization.VirtualMachines", @"source": source, @"type": type, @"value": value};
+  CFDataRef data = IOCFSerialize((__bridge CFTypeRef)d, kIOCFSerializeToBinary);
+  if (!data) return;
+  xpc_object_t p = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_uint64(p, "usagePage", 0xff61);
+  xpc_dictionary_set_uint64(p, "usage", 0x5b);
+  xpc_dictionary_set_uint64(p, "version", 0);
+  xpc_dictionary_set_data(p, "data", CFDataGetBytePtr(data), (size_t)CFDataGetLength(data));
+  CFRelease(data);
+  xpc_connection_send_message(vendor, dtuMessage(VENDOR_SERVICE, "IndigoVendorDefinedEvent", p, false));
 }
 
 static void touch(double x, double y, BOOL down, uint64_t edge) {
@@ -343,7 +498,12 @@ static void touch(double x, double y, BOOL down, uint64_t edge) {
     // 0 开始、1 移动、2 结束
     xpc_dictionary_set_uint64(p, "eventType", !down ? 2 : dtuTouching ? 1 : 0);
     xpc_dictionary_set_uint64(p, "edge", edge);
-    if (down && !dtuTouching) touchTarget = screenIndex;
+    if (down && !dtuTouching) {
+      loadTouchTargets();
+      uint64_t i = screenIndex;
+      NSNumber *t = i < screenNames.count ? touchTargets[screenNames[i]] : nil;
+      touchTarget = t ? t.unsignedLongLongValue : i;
+    }
     xpc_dictionary_set_uint64(p, "target", touchTarget);
     dtuTouching = down;
     dtuSend("IndigoDigitizerEvent", p);
@@ -466,6 +626,18 @@ int main(int argc, char **argv) {
     for (NSUInteger i = 0; i < screens.count; i++)
       if (!surfaceBlank((__bridge IOSurfaceRef)CALL(screens[i], "framebufferSurface"))) { screenPort = screens[i]; screenIndex = i; break; }
     if (!screenPort) screenPort = screens.firstObject;
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (id desc in screens) {
+      id props = [desc respondsToSelector:sel_registerName("screenProperties")] ? CALL(desc, "screenProperties") : nil;
+      [names addObject:[CALL(props, "name") description] ?: @""];
+    }
+    screenNames = names;
+    xpc_object_t motion = coreDevice(@"com.apple.coredevice.feature.monitormotion", "com.apple.coredevice.action.querymotioncapabilities");
+    deviceMotion = motion && xpc_dictionary_get_bool(motion, "deviceMotionState");
+    hingeAngle = motion && xpc_dictionary_get_bool(motion, "hingeAngle");
+    mach_port_t purple = deviceMotion ? MACH_PORT_NULL : simLookup(@"PurpleWorkspacePort");
+    canRotate = deviceMotion || purple != MACH_PORT_NULL;
+    if (purple) mach_port_deallocate(mach_task_self(), purple);
     NSError *e = nil;
     // 必须给会话重置回调：initWithDevice:error: 不给，模拟器那边的 HID 会话一重置，SimulatorKit 就调空指针崩掉（2026-11-21 实测）
     hidClient = ((id (*)(id, SEL, id, id, NSError **, id))objc_msgSend)([objc_getClass("_TtC12SimulatorKit24SimDeviceLegacyHIDClient") alloc],
@@ -495,8 +667,8 @@ int main(int argc, char **argv) {
     }
     // 先出一帧：画面静止时帧回调不来，页面也要能看到当前画面
     dispatch_async(encodeQ, ^{ readRotation(); encodeFresh(); });
-    // 先连好 dtuhidd，第一下点按不用等存活探测
-    dispatch_async(inputQ, ^{ dtuConnect(); });
+    // 先连好 dtuhidd、查好每块屏的触摸 target，第一下点按不用等
+    dispatch_async(inputQ, ^{ dtuConnect(); vendorConnect(); loadTouchTargets(); });
 
     // 读 stdin 会一直阻塞，放在自己的线程上，不占 GCD 的工作线程
     [NSThread detachNewThreadWithBlock:^{
@@ -518,6 +690,18 @@ int main(int argc, char **argv) {
           uint32_t usage = (uint32_t)[m[@"usage"] unsignedIntValue];
           BOOL down = [m[@"down"] boolValue];
           dispatch_async(inputQ, ^{ hidKey(usage, down); });
+        } else if ([t isEqual:@"hinge"] && [m[@"angle"] isKindOfClass:NSNumber.class]) {
+          NSNumber *angle = @(fmin(fmax([m[@"angle"] doubleValue], 0), 180));
+          dispatch_async(inputQ, ^{ vendorSend(@"hinge-slider-control", @"range", angle); });
+        } else if ([t isEqual:@"orient"] && [@[@"portrait", @"landscape-right", @"pud", @"landscape-left"] containsObject:m[@"value"]]) {
+          NSString *value = m[@"value"];
+          // Purple 的朝向编号：1 竖、2 倒、3 / 4 横。3 转出来界面是 270°，所以顺时针 90° 的 landscape-right 是 4
+          // （2026-11-26 iOS 18.3 iPhone 16 Pro 的 Safari 实测；同 idb 说的 Purple 两个横向和设备朝向是反的）
+          uint32_t purple = (uint32_t)[@[@"portrait", @"pud", @"landscape-left", @"landscape-right"] indexOfObject:value] + 1;
+          dispatch_async(inputQ, ^{
+            if (deviceMotion) vendorSend(@"orientation-picker-control", @"enum", value);
+            else purpleOrient(purple);
+          });
         } else if ([t isEqual:@"keyframe"]) {
           dispatch_async(encodeQ, ^{ forceKey = YES; lastConfig = nil; encodeFresh(); });
         }

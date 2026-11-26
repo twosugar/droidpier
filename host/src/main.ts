@@ -892,6 +892,7 @@ export async function createHost(player: Player) {
       }
       // 顺时针不带 dir，旧网关也照样能转；旧网关不认 dir，会把逆时针也转成顺时针
       if (name === "emu.rotate") return sent(args?.dir === "left" ? { t: "rotate", dir: "left" } : { t: "rotate" });
+      if (name === "emu.hinge") return sent({ t: "hinge", angle: Number(args?.angle) });
       if (name === "emu.screenshot") return sent({ t: "screenshot" });
       // 确认框里点了"重启"才调用
       if (name === "emu.reboot") return state === "connected" ? ctl({ t: "reboot" }) : { ok: false };

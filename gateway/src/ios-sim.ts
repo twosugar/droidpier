@@ -17,8 +17,14 @@ const INTERVAL_MS = 5000;
 /** 小程序起来到出第一帧的上限：验证时 0.3–1 秒（2026-11-21 实测，整机负载很高时），给足余量。 */
 const FIRST_FRAME_MS = 15_000;
 
-/** 画面、触摸、按键和文字（gateway/src/ios-keys.ts）；没有旋转、重启、滚轮，也不走 adb（H5 调试、日志、装 APK）。 */
+/**
+ * 画面、触摸、按键和文字（gateway/src/ios-keys.ts）；没有重启、滚轮，也不走 adb（H5 调试、日志、装 APK）。
+ * 能不能旋转、开合铰链由小程序的 ready 报（rotate、hinge），这里是没报时的样子。
+ */
 export const IOS_SIM_CAPS: DeviceCaps = { rotate: false, reboot: false, stop: false, clipboard: true, input: true, scroll: false, adb: false, logs: true };
+
+/** 小程序 orient 命令的设备朝向，按设备顺时针转的顺序：下一个是顺时针转 90°（2026-11-26 iPhone Duo、iPhone 16 Pro 实测）。 */
+const ORIENTS = ["portrait", "landscape-right", "pud", "landscape-left"] as const;
 
 const STATES: Record<string, IosSimInfo["state"]> = { Shutdown: "shutdown", Booting: "booting", Booted: "booted", "Shutting Down": "shutting-down" };
 
@@ -199,7 +205,7 @@ export function helperName(source: string): string {
 /** 编译小程序要的参数（xcrun clang）。 */
 export function helperCompileArgs(src: string, out: string): string[] {
   return ["clang", "-fobjc-arc", "-O2", "-framework", "Foundation", "-framework", "IOSurface", "-framework", "VideoToolbox",
-    "-framework", "CoreMedia", "-framework", "CoreVideo", "-framework", "CoreGraphics", src, "-o", out];
+    "-framework", "CoreMedia", "-framework", "CoreVideo", "-framework", "CoreGraphics", "-framework", "IOKit", src, "-o", out];
 }
 
 /** 小程序的一个进程：stdout 出包，stdin 收命令（格式见 gateway/native/simhelper.m 开头）。 */
@@ -226,8 +232,9 @@ export type IosSimDeps = {
 /**
  * ready 的 width / height 是帧缓冲（竖屏）的尺寸；rotation 是界面方向（设备顺时针转过的角度）：折叠机展开后界面横过来，
  * 小程序把画面转正了再编码，视频是横的，触摸照旧按帧缓冲坐标。旧小程序不带 rotation，当 0。
+ * rotate：能转设备朝向；hinge：是折叠机，能开合铰链。
  */
-type HelperEvent = { t: "ready"; width: number; height: number; rotation?: Rotation } | { t: "error"; message: string };
+type HelperEvent = { t: "ready"; width: number; height: number; rotation?: Rotation; rotate?: boolean; hinge?: boolean } | { t: "error"; message: string };
 
 /** 把小程序 stdout 的字节流切成包：[u32 小端 长度][u8 类型][内容]。任意切块喂入都行。 */
 export function createHelperParser(on: { video(p: Omit<VideoPacket, "data"> & { data: Buffer }): void; event(e: HelperEvent): void }) {
@@ -265,6 +272,9 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
   let closed = false;
   let firstKey: (() => void) | null = null;
   let failStart: ((e: Error) => void) | null = null;
+  // 设备朝向在 ORIENTS 里的位置。连上时按界面方向猜（iPhone 的界面方向基本就是设备朝向，App 不支持横屏时猜成竖的）；
+  // 折叠机展开时界面本来就是横的，猜不出，当竖的
+  let orient: number | null = null;
 
   const helper = await deps.spawnHelper(udid);
   const close = (why: string) => {
@@ -323,7 +333,17 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     setClipboard: (text) => deps.setClipboard(text),
     getClipboard: () => deps.getClipboard(),
     onClipboard: () => {},
-    rotate: unsupported,
+    // 转设备朝向；界面跟着转了，小程序的 ready 报新方向，经 onRotation 广播。App 不支持这个方向时界面不动
+    async rotate(dir = "right") {
+      if (!session.caps.rotate) return unsupported();
+      orient = ((orient ?? 0) + (dir === "left" ? 3 : 1)) % 4;
+      cmd({ t: "orient", value: ORIENTS[orient] });
+      return session.rotation;
+    },
+    async hinge(angle) {
+      if (!session.caps.hinge) return unsupported();
+      cmd({ t: "hinge", angle });
+    },
     reboot: unsupported,
     screenshot: () => deps.screenshot(),
     onRotation: (cb) => void rotationCbs.push(cb),
@@ -339,7 +359,9 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     },
     event(e) {
       if (e.t === "ready") {
+        session.caps = { ...IOS_SIM_CAPS, rotate: e.rotate === true, ...(e.hinge === true ? { hinge: true } : {}) };
         const r = e.rotation ?? 0;
+        orient ??= e.hinge === true ? 0 : r / 90;
         const changed = r !== session.rotation || e.width !== session.device.width || e.height !== session.device.height;
         session.device = { width: e.width, height: e.height };
         session.rotation = r;

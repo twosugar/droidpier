@@ -41,6 +41,8 @@ export interface EmulatorSession {
   scroll?(x: number, y: number, dx: number, dy: number): Promise<void>;
   /** 转 90°（缺省顺时针），返回新的方向。 */
   rotate(dir?: RotateDir): Promise<Rotation>;
+  /** 只有 caps.hinge 的设备有：铰链转到这个角度（0 合上、180 展开）。 */
+  hinge?(angle: number): Promise<void>;
   /** 只写设备剪贴板，不粘贴。 */
   setClipboard(text: string): Promise<void>;
   getClipboard(): Promise<string>;

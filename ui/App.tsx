@@ -319,6 +319,10 @@ const ICON_PATHS = {
   rotateLeft: '<path d="M20 9V7a2 2 0 0 0-2-2h-6"/><path d="m15 2-3 3 3 3"/><path d="M20 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/>',
   rotateRight: '<path d="M12 5H6a2 2 0 0 0-2 2v3"/><path d="m9 8 3-3-3-3"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>',
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  // 折叠机的三种姿态：合上（一块屏，左边是折痕）、半折（书立着）、展开（两半摊平）
+  foldClosed: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10 3v18"/>',
+  foldHalf: '<path d="M12 5v15"/><path d="M12 5 5 3v15l7 2"/><path d="m12 5 7-2v15l-7 2"/>',
+  foldOpen: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
   reboot: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
   code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
@@ -2673,6 +2677,14 @@ function App() {
               </If>
               <IconButton variant="toolbar" icon="camera" label={t({ en: "Screenshot", zh: "截图" })} tip={keyTip("⌘S")} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.screenshot", {}))} />
             </ToolGroup>
+            {/* 折叠机（iPhone Duo 模拟器）：铰链转到 0° / 90° / 180°，模拟器自己决定点亮哪块屏 */}
+            <If when={caps()?.hinge === true}>
+              <ToolGroup label={t({ en: "Hinge", zh: "铰链" })}>
+                <IconButton variant="toolbar" icon="foldClosed" label={t({ en: "Close", zh: "合上" })} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.hinge", { angle: 0 }))} />
+                <IconButton variant="toolbar" icon="foldHalf" label={t({ en: "Half open", zh: "半折" })} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.hinge", { angle: 90 }))} />
+                <IconButton variant="toolbar" icon="foldOpen" label={t({ en: "Open flat", zh: "展开" })} disabled={!shownIsLive()} why={liveWhy()} onPress={() => act(host.call("emu.hinge", { angle: 180 }))} />
+              </ToolGroup>
+            </If>
             <ToolGroup label={t({ en: "Hardware buttons", zh: "硬件按键" })}>
               <IconButton variant="toolbar" icon="power" label={t({ en: "Power", zh: "电源" })} tip={keyTip("⌘P")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("Power")} />
               <IconButton variant="toolbar" icon="volDown" label={t({ en: "Volume −", zh: "音量−" })} tip={keyTip("⌘-")} disabled={!!inputWhy()} why={inputWhy()} onPress={() => key("AudioVolumeDown")} />
