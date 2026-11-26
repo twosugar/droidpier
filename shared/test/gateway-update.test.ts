@@ -29,7 +29,7 @@ test("前台运行、关了自动更新、旧到没有 gateway 消息：给安�
     assert.equal(b?.kind, "manual");
     assert.equal(b?.command, INSTALL_CMD);
   }
-  assert.equal(gatewayBanner(fg, 2, null, INSTALL_CMD)?.text, "Gateway is outdated, run the install command to update");
+  assert.equal(gatewayBanner(fg, 2, null, INSTALL_CMD)?.text, "The gateway is out of date, run the install command to update");
 });
 
 test("自动更新没成（下载站还没新版本、失败）时改成给安装命令", () => {
@@ -41,9 +41,9 @@ test("自动更新没成（下载站还没新版本、失败）时改成给安�
 
 test("timeoutText：网关级别不够时说太旧不支持，并给出更新的命令；够或还不知道时用原来的说明", () => {
   const cmd = "curl -fsSL https://droid.devpier.dev/install.sh | sh";
-  const old = `Gateway is too old to support delete device. Run ${cmd} in Terminal to update`;
-  assert.equal(timeoutText(null, 1, { en: "delete device", zh: "删除设备" }, "slow", cmd), old);
-  assert.equal(timeoutText(svc(0), 1, { en: "delete device", zh: "删除设备" }, "slow", cmd), old);
-  assert.equal(timeoutText(svc(1), 1, { en: "delete device", zh: "删除设备" }, "slow", cmd), "slow");
-  assert.equal(timeoutText(undefined, 1, { en: "delete device", zh: "删除设备" }, "slow", cmd), "slow");
+  const old = `The gateway is too old for deleting devices. Run ${cmd} in Terminal to update it`;
+  assert.equal(timeoutText(null, 1, { en: "deleting devices", zh: "删除设备" }, "slow", cmd), old);
+  assert.equal(timeoutText(svc(0), 1, { en: "deleting devices", zh: "删除设备" }, "slow", cmd), old);
+  assert.equal(timeoutText(svc(1), 1, { en: "deleting devices", zh: "删除设备" }, "slow", cmd), "slow");
+  assert.equal(timeoutText(undefined, 1, { en: "deleting devices", zh: "删除设备" }, "slow", cmd), "slow");
 });

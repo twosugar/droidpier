@@ -725,7 +725,7 @@ const LOG_ROW_H = TYPE.code.lineHeight;
 function LogRowView(props: { row: () => LogRow }) {
   return (
     <If when={!("skipped" in props.row())} else={
-      <Text style={{ ...TYPE.code, height: LOG_ROW_H, paddingHorizontal: SPACE.inset, color: token("muted-foreground"), fontStyle: "italic", numberOfLines: 1 }}>{(() => { const n = (props.row() as { skipped: number }).skipped; return t({ en: `Skipped ${n} lines (the page fell behind)`, zh: `省略了 ${n} 行（页面跟不上）` }); })()}</Text>
+      <Text style={{ ...TYPE.code, height: LOG_ROW_H, paddingHorizontal: SPACE.inset, color: token("muted-foreground"), fontStyle: "italic", numberOfLines: 1 }}>{(() => { const n = (props.row() as { skipped: number }).skipped; return t({ en: `Skipped ${n} ${n === 1 ? "line" : "lines"} (the page fell behind)`, zh: `省略了 ${n} 行（页面跟不上）` }); })()}</Text>
     }>
       {(() => {
         const l = () => props.row() as LogLine;

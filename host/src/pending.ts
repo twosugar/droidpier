@@ -9,7 +9,7 @@ export function createPending<R>(timeoutMs: number) {
     request(send: (rid: number) => boolean, waitMs = timeoutMs): Promise<R> {
       const rid = nextRid++;
       return new Promise<R>((resolve, reject) => {
-        if (!send(rid)) return reject(new Error(t({ en: "No gateway connected", zh: "没有连上网关" })));
+        if (!send(rid)) return reject(new Error(t({ en: "Not connected to the gateway", zh: "没有连上网关" })));
         const n = Math.round(waitMs / 1000);
         const timer = setTimeout(() => {
           waiting.delete(rid);

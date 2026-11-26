@@ -77,7 +77,7 @@ export function createUploads(opts: {
     if (!item) return;
     const file = files.get(item.id)!;
     if (!opts.send({ t: "upload", id: item.id, name: file.name, size: item.size })) {
-      fail(item, t({ en: "No gateway connected", zh: "没有连上网关" }));
+      fail(item, t({ en: "Not connected to the gateway", zh: "没有连上网关" }));
       changed();
       return pump();
     }
@@ -127,11 +127,11 @@ export function createUploads(opts: {
         return;
       }
       item.state = m.state;
-      if (m.state === "failed") fail(item, m.error ?? t({ en: "Unknown error", zh: "未知原因" }));
+      if (m.state === "failed") fail(item, m.error ?? t({ en: "Unknown reason", zh: "未知原因" }));
       if (isEnded(item)) {
         files.delete(item.id);
         finishActive();
-        if (item.state === "done" && item.kind === "file") opts.onNotice(t({ en: `${item.name} has been placed in the Downloads folder`, zh: `${item.name} 已放到 下载 文件夹` }));
+        if (item.state === "done" && item.kind === "file") opts.onNotice(t({ en: `Saved ${item.name} to the Download folder`, zh: `${item.name} 已放到 下载 文件夹` }));
       }
       changed();
       pump();

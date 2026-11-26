@@ -86,7 +86,7 @@ test("非 APK 放好后给一句提示", () => {
   u.onMsg({ t: "upload", id: 1, state: "uploading", received: 0 });
   u.onMsg({ t: "upload", id: 1, state: "pushing" });
   u.onMsg({ t: "upload", id: 1, state: "done" });
-  assert.deepEqual(h.notices, ["n.txt has been placed in the Downloads folder"]);
+  assert.deepEqual(h.notices, ["Saved n.txt to the Download folder"]);
 });
 
 test("网关一直不回（旧网关不认识 upload）：超时后标失败", async () => {

@@ -15,7 +15,7 @@ test("按 rid 把回复交给对应的请求", async () => {
 
 test("发不出去时立即失败", async () => {
   const p = createPending<string>(15000);
-  await assert.rejects(p.request(() => false), /No gateway connected/);
+  await assert.rejects(p.request(() => false), /Not connected to the gateway/);
 });
 
 test("15 秒没回复以超时失败，之后到的回复被忽略", async () => {

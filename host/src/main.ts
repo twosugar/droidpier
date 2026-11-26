@@ -252,6 +252,7 @@ export async function createHost(player: Player) {
   if (!supported) state = "unsupported-browser";
   const logcatOn = () => (gateway?.level ?? 0) >= LOGCAT_LEVEL;
   const statusEvent = () => player.hostEvent("emu.status", { state, serial, deviceId, kind, caps, device, upgrade, logcat: logcatOn(), painted, rev: ++rev });
+  // 横幅的文字按 host 的语言生成：换语言时（emu.setLang）重新推一次
   const gatewayEvent = () => {
     gatewayNote = gateway === undefined ? null : gatewayBanner(gateway, GATEWAY_LEVEL, updateReport, INSTALL);
     player.hostEvent("emu.gateway", { banner: gatewayNote, rev: ++rev });
@@ -417,12 +418,12 @@ export async function createHost(player: Player) {
     onError: (message) => player.hostEvent("emu.notice", { text: message, error: true, gateway: true }),
     onAdbStuck: (message) => player.hostEvent("emu.adbStuck", { message }),
     onReboot: (result, error) => player.hostEvent("emu.notice", result === "done"
-      ? { text: kind === "phone" ? t({ en: "Phone rebooted. If you have a lock screen, unlock it on the screen", zh: "手机已重启。设了锁屏密码的话，在画面上解锁" }) : t({ en: "Emulator rebooted", zh: "模拟器已重启" }) }
+      ? { text: kind === "phone" ? t({ en: "Phone restarted. If you have a lock screen, unlock it on the screen", zh: "手机已重启。设了锁屏密码的话，在画面上解锁" }) : t({ en: "Emulator restarted", zh: "模拟器已重启" }) }
       : result === "adb-down"
         ? kind === "phone"
           ? { text: t({ en: "Phone did not finish booting in two minutes: unplug and replug after it boots", zh: "手机两分钟内没开机完成：开机后重新插拔手机" }), error: true }
-          : { text: t({ en: "Emulator rebooted, but adb inside is not responding yet: H5 debugging temporarily unavailable", zh: "模拟器已重启，但里面的 adb 还没有响应：H5 调试暂时不可用" }), error: true }
-        : { text: failText(t({ en: "Reboot failed", zh: "重启失败" }), error), error: true }),
+          : { text: t({ en: "Emulator restarted, but adb inside is not responding yet: H5 debugging temporarily unavailable", zh: "模拟器已重启，但里面的 adb 还没有响应：H5 调试暂时不可用" }), error: true }
+        : { text: failText(t({ en: "Restart failed", zh: "重启失败" }), error), error: true }),
     onVersionError: (code, cmd) => {
       state = code;
       upgrade = cmd;
@@ -685,7 +686,7 @@ export async function createHost(player: Player) {
 
   // 文件拖到屏幕上：APK 安装，其他文件放进下载文件夹；iOS 模拟器上装 App（.app 文件夹、.zip、.ipa）。拖到屏幕外不让浏览器自己打开文件
   const dropBlocked = () =>
-    state === "connected" ? null : state === "rebooting" ? (kind === "phone" ? t({ en: "Phone is rebooting, wait for it to boot", zh: "手机正在重启，等它开机后再试" }) : t({ en: "Emulator is rebooting, wait for it to boot", zh: "模拟器正在重启，等它开机后再试" })) : t({ en: "No device connected", zh: "没有连接设备" });
+    state === "connected" ? null : state === "rebooting" ? (kind === "phone" ? t({ en: "Phone is restarting, wait for it to boot", zh: "手机正在重启，等它开机后再试" }) : t({ en: "Emulator is restarting, wait for it to boot", zh: "模拟器正在重启，等它开机后再试" })) : t({ en: "No device connected", zh: "没有连接设备" });
   const takeFiles = (list: File[]) => {
     const why = dropBlocked();
     if (why) return player.hostEvent("emu.notice", { text: why, error: true });
@@ -845,7 +846,7 @@ export async function createHost(player: Player) {
   const stopOld = async (name: string): Promise<{ ok: boolean; error?: string }> => {
     const onScreen = state === "connected" && avds?.some((a) => a.name === name && a.running === "grpc" && a.serial === serial);
     if (!onScreen) return { ok: false, error: tooOldText({ en: "stopping a device not on screen", zh: "停止没连在画面上的设备" }, INSTALL) };
-    if (!conn.control({ t: "stop" })) return { ok: false, error: t({ en: "No gateway connected, operation not sent. Wait for the gateway to reconnect and try again.", zh: "没有连上网关，操作没有发出。等网关重新连上后再试。" }) };
+    if (!conn.control({ t: "stop" })) return { ok: false, error: t({ en: "Not connected to the gateway, so nothing was sent. Try again once the gateway reconnects.", zh: "没有连上网关，操作没有发出。等网关重新连上后再试。" }) };
     const end = Date.now() + STOP_OLD_MS;
     while (Date.now() < end) {
       await new Promise((r) => setTimeout(r, 1000));
@@ -911,7 +912,7 @@ export async function createHost(player: Player) {
       }
       // 检测、清除代理：失败不抛，error 给页面显示，adbStuck 时页面给出重启按钮
       if (name === "emu.proxyCheck" || name === "emu.proxyClear") {
-        if (gateway !== undefined && gatewayBelow(gateway, PROXY_LEVEL)) return { ok: false, proxy: null, error: tooOldText({ en: "network detection", zh: "检测网络" }, INSTALL), adbStuck: false };
+        if (gateway !== undefined && gatewayBelow(gateway, PROXY_LEVEL)) return { ok: false, proxy: null, error: tooOldText({ en: "checking the network", zh: "检测网络" }, INSTALL), adbStuck: false };
         const failed = (e: Error) => ({ ok: false, proxy: null, error: e.message, adbStuck: false });
         if (name === "emu.proxyCheck") {
           return conn.request({ t: "proxyCheck" }).then((r) => ({ ok: r.ok ?? false, proxy: r.proxy, untrusted: r.untrusted ?? [], error: r.error ?? null, adbStuck: r.code === "adb-unresponsive" }), failed);
@@ -949,7 +950,7 @@ export async function createHost(player: Player) {
         if (typeof displayName !== "string") throw new Error("emu.renameAvd requires displayName");
         return conn.request({ t: "renameAvd", name: needName(name, args), displayName }).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_EDIT_LEVEL, { en: "rename", zh: "改名" }, e.message, INSTALL) : e.message }),
+          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_EDIT_LEVEL, { en: "renaming devices", zh: "改名" }, e.message, INSTALL) : e.message }),
         );
       }
       // 同上；删得慢（大目录、avdmanager 起 Java）时页面先超时，网关删完照样广播新列表
@@ -958,7 +959,7 @@ export async function createHost(player: Player) {
         const stop = (args as { stop?: unknown } | undefined)?.stop === true;
         return conn.request({ t: "deleteAvd", name: needName(name, args), ...(stop ? { stop: true as const } : {}) }, stop ? STOP_REPLY_MS : undefined).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_EDIT_LEVEL, { en: "delete device", zh: "删除设备" }, t({ en: `${e.message}: may still be deleting, check device list later`, zh: `${e.message}：可能还在删，稍后看设备列表` }), INSTALL) : e.message }),
+          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_EDIT_LEVEL, { en: "deleting devices", zh: "删除设备" }, t({ en: `${e.message}: may still be deleting, check device list later`, zh: `${e.message}：可能还在删，稍后看设备列表` }), INSTALL) : e.message }),
         );
       }
       // 网关等设备真的停了才回（画面上这台、开机中、重启中的都行）。已知是旧网关（级别 < 2）时不发这条，改用 stopOld
@@ -987,7 +988,7 @@ export async function createHost(player: Player) {
         if (gateway !== undefined && gatewayBelow(gateway, AVD_STOP_LEVEL)) return stopOld(target);
         return conn.request({ t: "stopAvd", name: target }, STOP_REPLY_MS).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_STOP_LEVEL, { en: "stop device", zh: "停止设备" }, t({ en: `${e.message}: may still be stopping, check device list later`, zh: `${e.message}：可能还在停，稍后看设备列表` }), INSTALL) : e.message }),
+          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_STOP_LEVEL, { en: "stopping devices", zh: "停止设备" }, t({ en: `${e.message}: may still be stopping, check device list later`, zh: `${e.message}：可能还在停，稍后看设备列表` }), INSTALL) : e.message }),
         );
       }
       if (name === "emu.status") {
@@ -1069,6 +1070,7 @@ export async function createHost(player: Player) {
         const lang = (args as { lang?: unknown } | undefined)?.lang;
         if (!LANGS.includes(lang as Lang)) throw new Error("emu.setLang needs lang: en or zh");
         hostLang = lang as Lang;
+        if (gateway !== undefined) gatewayEvent();
         return { ok: writePref(LANG_KEY, hostLang) };
       }
       // 侧栏收起与否，存在这台浏览器里
@@ -1089,7 +1091,7 @@ function idleConnection(): ReturnType<typeof createConnection> {
     send: () => false,
     control: () => false,
     sendBinary: () => false,
-    request: () => Promise.reject(new Error(t({ en: "No gateway connected", zh: "没有连接网关" }))),
+    request: () => Promise.reject(new Error(t({ en: "Not connected to the gateway", zh: "没有连接网关" }))),
     wake: () => {},
   };
 }
