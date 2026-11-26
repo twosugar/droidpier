@@ -3497,3 +3497,24 @@ test("iOS 模拟器：装不上时回 failed 带原因；.zip 按 zip 解", asyn
   assert.match(u.last(2).error, /真机/);
   assert.equal(u.calls[0].format, "zip");
 });
+
+// ─────────────── 网关按页面的语言发文字 ───────────────
+
+test("界面语言：hello 带 en 的页面收到英文，没带的（旧页面）收到中文；lang 消息换语言后跟着换", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "emu-upload-"));
+  const s = await setup(t, null, undefined, undefined, undefined, undefined, { files: fakeFiles(root).ops });
+  const en = await s.connect();
+  en.ws.send(JSON.stringify({ t: "hello", version: PROTOCOL_VERSION, width: 540, height: 1170, lang: "en" }));
+  const old = await s.connect();
+  hello(old);
+  await until(() => [en, old].every((c) => c.msgs.some((m) => m.t === "status")));
+  const failOf = async (c: Client, id: number) => {
+    c.ws.send(JSON.stringify({ t: "upload", id, name: "a.apk", size: 1 }));
+    await until(() => c.msgs.some((m) => m.t === "upload" && m.id === id));
+    return c.msgs.find((m) => m.t === "upload" && m.id === id).error;
+  };
+  assert.equal(await failOf(en, 1), "No device connected");
+  assert.equal(await failOf(old, 2), "没有连接设备");
+  en.ws.send(JSON.stringify({ t: "lang", lang: "zh" }));
+  assert.equal(await failOf(en, 3), "没有连接设备");
+});

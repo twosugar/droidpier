@@ -1,5 +1,5 @@
 import { avdNameError } from "./avd-spec.ts";
-import type { Msg } from "./i18n.ts";
+import { LANGS, type Lang, type Msg } from "./i18n.ts";
 import type { LogFilter, LogLevel, LogLine } from "./logcat.ts";
 
 /** 协议版本号。 */
@@ -18,8 +18,9 @@ export const PROTOCOL_VERSION = 1;
  * 7：proxyCheck / proxyClear（检测、清除模拟器里连不上的代理）。
  * 8：indicatePage（在 H5 页面列表里悬停时把那个页面整个高亮）。
  * 9：iOS 模拟器的 upload 装 App（.app 打成的 tar、.zip、.ipa）。
+ * 10：hello 的 lang 和 lang 消息：网关按页面的语言发文字（没说时中文）。
  */
-export const GATEWAY_LEVEL = 9;
+export const GATEWAY_LEVEL = 10;
 
 /** logcatRead 一次最多要多少行（WebMCP 的 droidpier_read_logcat）。 */
 export const LOGCAT_READ_MAX = 1000;
@@ -327,7 +328,10 @@ export type AdbErrorCode = "adb-unresponsive";
 /** 客户端发给服务端的消息。 */
 export type ClientMsg =
   /** token：旧页面还会带上网关启动口令，网关不再看它。 */
-  | { t: "hello"; version: number; width: number; height: number; token?: string }
+  /** lang：页面的界面语言，网关发给它的文字用这种（不带时中文，旧页面）。 */
+  | { t: "hello"; version: number; width: number; height: number; token?: string; lang?: Lang }
+  /** 页面换了界面语言（只发给 GATEWAY_LEVEL ≥ 10 的网关）。 */
+  | { t: "lang"; lang: Lang }
   | { t: "touch"; x: number; y: number; down: boolean }
   | { t: "key"; key: string; eventType: "keydown" | "keyup" | "keypress" }
   | { t: "text"; text: string }
@@ -500,7 +504,11 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case "hello":
       if (!isNum(o.version) || !isNum(o.width) || !isNum(o.height)) return null;
       if (o.token !== undefined && !isStr(o.token)) return null;
+      if (o.lang !== undefined && !LANGS.includes(o.lang as Lang)) return null;
       return o as ClientMsg;
+    case "lang":
+      if (!LANGS.includes(o.lang as Lang)) return null;
+      return { t: "lang", lang: o.lang as Lang };
     case "touch":
       if (!isNum(o.x) || !isNum(o.y) || !isBool(o.down)) return null;
       return o as ClientMsg;

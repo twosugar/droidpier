@@ -200,7 +200,7 @@ test("parseClientMsg：logcatRead 校验 rid、filter、limit", () => {
   assert.equal(parseClientMsg(JSON.stringify({ t: "logcatRead", rid: 1, filter: { pkg: "a b", level: "E", text: "" }, limit: 5 })), null);
 });
 
-test("GATEWAY_LEVEL 是 9（给 iOS 模拟器装 App）", () => assert.equal(GATEWAY_LEVEL, 9));
+test("GATEWAY_LEVEL 是 10（网关按页面的语言发文字）", () => assert.equal(GATEWAY_LEVEL, 10));
 
 test("parseClientMsg：indicatePage 要 socket、id 和布尔的 on，多余字段丢掉", () => {
   assert.deepEqual(parseClientMsg('{"t":"indicatePage","socket":"s","id":"1","on":true,"x":1}'), { t: "indicatePage", socket: "s", id: "1", on: true });
@@ -258,4 +258,11 @@ test("updateFailureMsg / ADB_UNRESPONSIVE_MSG：页面的两种语言；中文�
   assert.deepEqual(updateFailureMsg("weird"), { en: "weird", zh: "weird" });
   assert.equal(updateFailureMsg(undefined).en, "Unknown reason");
   assert.equal(ADB_UNRESPONSIVE, ADB_UNRESPONSIVE_MSG.zh);
+});
+
+test("parseClientMsg：hello 可以带界面语言；lang 消息只认 en / zh", () => {
+  assert.equal((parseClientMsg('{"t":"hello","version":1,"width":1,"height":1,"lang":"en"}') as { lang?: string }).lang, "en");
+  assert.equal(parseClientMsg('{"t":"hello","version":1,"width":1,"height":1,"lang":"fr"}'), null);
+  assert.deepEqual(parseClientMsg('{"t":"lang","lang":"zh","x":1}'), { t: "lang", lang: "zh" });
+  assert.equal(parseClientMsg('{"t":"lang","lang":"de"}'), null);
 });

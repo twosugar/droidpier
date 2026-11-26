@@ -41,6 +41,8 @@ const PROXY_LEVEL = 7;
 const INDICATE_LEVEL = 8;
 // 从这个级别起网关能给 iOS 模拟器装 App（拖进来的 .app、.zip、.ipa）；旧网关回「暂不支持」
 const IOS_APP_LEVEL = 9;
+// 从这个级别起网关按页面的语言发文字（hello 的 lang、lang 消息）；旧网关不认 lang 消息，不发
+const LANG_LEVEL = 10;
 
 // 以前记端口和启动口令的键，都不用了，清掉
 const OLD_KEYS = ["droidpier.port", "droidpier.launch"];
@@ -1071,6 +1073,7 @@ export async function createHost(player: Player) {
         if (!LANGS.includes(lang as Lang)) throw new Error("emu.setLang needs lang: en or zh");
         hostLang = lang as Lang;
         if (gateway !== undefined) gatewayEvent();
+        if (gateway !== undefined && !gatewayBelow(gateway, LANG_LEVEL)) conn.control({ t: "lang", lang: hostLang });
         return { ok: writePref(LANG_KEY, hostLang) };
       }
       // 侧栏收起与否，存在这台浏览器里

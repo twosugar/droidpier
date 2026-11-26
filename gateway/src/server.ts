@@ -28,6 +28,7 @@ import { gbText, spaceCheck } from "../../shared/disk-space.ts";
 import { avdNameError, createItems, ramMbFor } from "../../shared/avd-spec.ts";
 import { UPLOAD_DIR_PREFIX } from "./upload-temp.ts";
 import { BIN_UPLOAD, checkChunk, decodeUploadChunk, fileKind, installFailure, IOS_ONLY_APPS, iosFileKind, PUSH_DIR, sanitizeFileName, UPLOAD_MAX_BYTES } from "../../shared/upload.ts";
+import { localize, type Lang, type Localizable, type Msg } from "../../shared/i18n.ts";
 import {
   BIN_SCREENSHOT,
   binKind,
@@ -573,11 +574,14 @@ export async function startServer(opts: {
   let rebooting: { id: string } | null = null;
   const isRebooting = (s: EmulatorSession) => rebooting?.id === s.id;
   const REBOOTING = "设备正在重启，等它开机后再试";
-  const send = (ws: WebSocket, m: ServerMsg) => {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
+  // 每个页面的界面语言（hello 的 lang、lang 消息）；没说的是旧页面，用中文
+  const langOf = new WeakMap<WebSocket, Lang>();
+  // 消息里的 { en, zh } 按这个页面的语言换成字符串（shared/i18n.ts 的 localize）
+  const send = (ws: WebSocket, m: Localizable<ServerMsg>) => {
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(localize(m, langOf.get(ws) ?? "zh")));
   };
   const live = () => [...conns].filter((c) => c.helloSeen && c.ws.readyState === c.ws.OPEN);
-  const broadcast = (m: ServerMsg, only: (c: Conn) => boolean = () => true) => {
+  const broadcast = (m: Localizable<ServerMsg>, only: (c: Conn) => boolean = () => true) => {
     for (const c of live()) if (only(c)) send(c.ws, m);
   };
   // 用户点过的真机：掉线期间不把模拟器接给没会话的页面，插回后自动重连（docs/superpowers/specs/2026-11-13-real-device-design.md 6.2）。
@@ -1203,7 +1207,7 @@ export async function startServer(opts: {
     };
     let upload: Upload | null = null;
     let wsClosed = false;
-    const uploadMsg = (id: number, state: UploadState, extra: { received?: number; error?: string } = {}) =>
+    const uploadMsg = (id: number, state: UploadState, extra: { received?: number; error?: string | Msg } = {}) =>
       send(ws, { t: "upload", id, state, ...extra });
     const dropTemp = async (u: Upload) => {
       try {
@@ -1234,11 +1238,11 @@ export async function startServer(opts: {
       u.idle = setTimeout(() => abortUpload(u, "太久没有收到数据，已中止"), opts.files?.idleMs ?? 30_000);
     };
     const startUpload = (m: { id: number; name: string; size: number }) => {
-      const fail = (error: string) => uploadMsg(m.id, "failed", { error });
+      const fail = (error: string | Msg) => uploadMsg(m.id, "failed", { error });
       const files = opts.files;
       if (!files) return fail("这个网关不支持传文件");
       const s = conn.session;
-      if (!s) return fail("没有连接设备");
+      if (!s) return fail({ en: "No device connected", zh: "没有连接设备" });
       if (isRebooting(s)) return fail(REBOOTING);
       const name = sanitizeFileName(m.name);
       if (!name) return fail("文件名不合法");
@@ -1424,6 +1428,7 @@ export async function startServer(opts: {
           return;
         }
         conn.helloSeen = true;
+        langOf.set(ws, m.lang ?? "zh");
         size = { width: m.width, height: m.height };
         send(ws, { t: "gateway", level: GATEWAY_LEVEL, version: opts.version ?? "", service: opts.service === true, autoUpdate: opts.update?.autoUpdate === true });
         if (opts.setup) {
@@ -1468,6 +1473,9 @@ export async function startServer(opts: {
         return;
       }
       switch (m.t) {
+        case "lang":
+          langOf.set(ws, m.lang);
+          break;
         case "inspectPointer":
           inspector.pointer(m as InspectPointer);
           break;
