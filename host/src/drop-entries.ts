@@ -3,6 +3,7 @@
 // 别的文件夹不传，告诉用户。
 import { tarParts, type TarEntry } from "../../shared/tar.ts";
 import { APP_TAR_SUFFIX } from "../../shared/upload.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** FileSystemEntry 用到的部分（浏览器的 FileSystemFileEntry / FileSystemDirectoryEntry 都符合）。 */
 export type DropEntry = {
@@ -48,7 +49,7 @@ export async function filesFromDrop(entries: DropEntry[]): Promise<{ files: File
       await walk(e, e.name, list);
       files.push(new File(tarParts(list).parts, `${e.name}${APP_TAR_SUFFIX.slice(".app".length)}`));
     } else if (e.isDirectory) {
-      skipped.push(`${e.name} 是文件夹，没有传：只有 iOS 的 .app 可以整个拖进来`);
+      skipped.push(t({ en: `${e.name} is a folder and was not sent: only iOS .app folders can be dragged in whole`, zh: `${e.name} 是文件夹，没有传：只有 iOS 的 .app 可以整个拖进来` }));
     }
   }
   return { files, skipped };

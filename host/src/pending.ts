@@ -1,3 +1,5 @@
+import { t } from "../../shared/i18n.ts";
+
 /** 带 rid 的请求和回复配对：超时或连接断开时以失败结束，不留挂起的等待者。 */
 export function createPending<R>(timeoutMs: number) {
   let nextRid = 1;
@@ -7,10 +9,11 @@ export function createPending<R>(timeoutMs: number) {
     request(send: (rid: number) => boolean, waitMs = timeoutMs): Promise<R> {
       const rid = nextRid++;
       return new Promise<R>((resolve, reject) => {
-        if (!send(rid)) return reject(new Error("没有连上网关"));
+        if (!send(rid)) return reject(new Error(t({ en: "No gateway connected", zh: "没有连上网关" })));
+        const n = Math.round(waitMs / 1000);
         const timer = setTimeout(() => {
           waiting.delete(rid);
-          reject(new Error(`网关 ${Math.round(waitMs / 1000)} 秒没有回应`));
+          reject(new Error(t({ en: `Gateway did not respond in ${n} seconds`, zh: `网关 ${n} 秒没有回应` })));
         }, waitMs);
         waiting.set(rid, { resolve, reject, timer });
       });

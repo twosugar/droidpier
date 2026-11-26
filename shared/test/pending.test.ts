@@ -15,7 +15,7 @@ test("按 rid 把回复交给对应的请求", async () => {
 
 test("发不出去时立即失败", async () => {
   const p = createPending<string>(15000);
-  await assert.rejects(p.request(() => false), /没有连上网关/);
+  await assert.rejects(p.request(() => false), /No gateway connected/);
 });
 
 test("15 秒没回复以超时失败，之后到的回复被忽略", async () => {
@@ -30,7 +30,7 @@ test("15 秒没回复以超时失败，之后到的回复被忽略", async () =>
     await Promise.resolve();
     assert.equal(done, false);
     mock.timers.tick(1);
-    await assert.rejects(r, /15 秒没有回应/);
+    await assert.rejects(r, /Gateway did not respond in 15 seconds/);
     assert.equal(p.settle(rid, "late"), false);
   } finally {
     mock.timers.reset();
@@ -60,7 +60,7 @@ test("单条请求可以指定更长的等待（停止设备等 75 秒）：过�
     await Promise.resolve();
     assert.equal(done, false);
     mock.timers.tick(60000);
-    await assert.rejects(r, /75 秒没有回应/);
+    await assert.rejects(r, /Gateway did not respond in 75 seconds/);
   } finally {
     mock.timers.reset();
   }

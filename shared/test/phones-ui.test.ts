@@ -12,14 +12,14 @@ test("phoneLabel：只有型号时用型号，都没有时用设备 id", () => {
 });
 
 test("phoneStatus：可用的手机按是不是当前画面给两种文案", () => {
-  assert.equal(phoneStatus({ id: "a", state: "device" }, true), "当前画面");
-  assert.equal(phoneStatus({ id: "a", state: "device" }, false), "可用");
+  assert.equal(phoneStatus({ id: "a", state: "device" }, true), "On screen");
+  assert.equal(phoneStatus({ id: "a", state: "device" }, false), "Available");
 });
 
 test("phoneStatus：未授权、离线的文案不随当前设备变", () => {
   for (const cur of [true, false]) {
-    assert.equal(phoneStatus({ id: "a", state: "unauthorized" }, cur), "请在手机上允许 USB 调试");
-    assert.equal(phoneStatus({ id: "a", state: "offline" }, cur), "离线，重新插拔试试");
+    assert.equal(phoneStatus({ id: "a", state: "unauthorized" }, cur), "Allow USB debugging on the phone");
+    assert.equal(phoneStatus({ id: "a", state: "offline" }, cur), "Offline. Try plugging it in again");
   }
 });
 
@@ -60,7 +60,7 @@ test("splitPhones：MuMu 单独一组，真机一组；旧网关不带标记时�
 });
 
 test("phoneStatus：MuMu 离线时提示开机，不说插拔", () => {
-  assert.equal(phoneStatus({ id: "127.0.0.1:16384", state: "offline", emulator: "mumu" }, false), "离线，MuMu 可能已关机");
+  assert.equal(phoneStatus({ id: "127.0.0.1:16384", state: "offline", emulator: "mumu" }, false), "Offline. MuMu may be shut down");
 });
 
 const MU_STOPPED = { index: 0, name: "我的安卓", state: "stopped" as const };
@@ -82,13 +82,13 @@ test("mumuRows：网关没发 MuMu 列表（旧网关、没装 mumutool）时只
 });
 
 test("mumuRowStatus：关机、启动中、关机中、运行中但 adb 还没连上、可用、当前画面", () => {
-  assert.equal(mumuRowStatus({ key: "a", mumu: MU_STOPPED }, false), "未运行");
-  assert.equal(mumuRowStatus({ key: "a", mumu: { ...MU_STOPPED, state: "starting" } }, false), "启动中…");
-  assert.equal(mumuRowStatus({ key: "a", mumu: { ...MU_STOPPED, state: "stopping" } }, false), "关机中…");
-  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING }, false), "正在连接…");
-  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING, phone: MU_PHONE }, false), "可用");
-  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING, phone: MU_PHONE }, true), "当前画面");
-  assert.equal(mumuRowStatus({ key: "a", phone: MU_PHONE }, true), "当前画面");
+  assert.equal(mumuRowStatus({ key: "a", mumu: MU_STOPPED }, false), "Not running");
+  assert.equal(mumuRowStatus({ key: "a", mumu: { ...MU_STOPPED, state: "starting" } }, false), "Starting…");
+  assert.equal(mumuRowStatus({ key: "a", mumu: { ...MU_STOPPED, state: "stopping" } }, false), "Shutting down…");
+  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING }, false), "Connecting…");
+  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING, phone: MU_PHONE }, false), "Available");
+  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING, phone: MU_PHONE }, true), "On screen");
+  assert.equal(mumuRowStatus({ key: "a", phone: MU_PHONE }, true), "On screen");
 });
 
 test("mumuRowTitle：有 MuMu 列表时用 MuMu 里的设备名，否则用 adb 读到的型号", () => {
@@ -103,7 +103,7 @@ test("mumuRows：MuMu 关机后 adb 里留着的离线条目不再单独占一�
 });
 
 test("mumuRowStatus：MuMu 已在运行但 adb 里那台还是离线（刚开机）时说正在连接，不说已关机", () => {
-  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING, phone: { ...MU_PHONE, state: "offline" } }, false), "正在连接…");
+  assert.equal(mumuRowStatus({ key: "a", mumu: MU_RUNNING, phone: { ...MU_PHONE, state: "offline" } }, false), "Connecting…");
 });
 
 test("phoneTitle：MuMu 的那台用 MuMu 里的名字，别的照 phoneLabel", () => {

@@ -16,7 +16,7 @@ import { filesFromDrop, type DropEntry } from "./drop-entries.ts";
 import { parseZoom, ZOOM_STEPS } from "../../shared/zoom.ts";
 import { readPref, writePref } from "./prefs.ts";
 import { parseTheme, THEMES } from "../../shared/theme.ts";
-import { LANGS, parseLang, setLangSource, type Lang } from "../../shared/i18n.ts";
+import { LANGS, parseLang, setLangSource, t, type Lang } from "../../shared/i18n.ts";
 import { registerTools } from "./webmcp.ts";
 import { gatewayBanner, gatewayBelow, shouldRequestUpdate, timeoutText, tooOldText, type GatewayBanner, type GatewayInfo, type UpdateReport } from "./gateway-update.ts";
 import type { LogFilter } from "../../shared/logcat.ts";
@@ -115,7 +115,7 @@ export async function createHost(player: Player) {
   frame.style.cssText = "position:relative";
   const canvas = document.createElement("canvas");
   canvas.tabIndex = 0;
-  canvas.setAttribute("aria-label", "模拟器屏幕");
+  canvas.setAttribute("aria-label", t({ en: "Emulator screen", zh: "模拟器屏幕" }));
   // 输入法组字只发生在可编辑元素上：键盘焦点实际放在这个隐藏的 textarea 上
   const ime = document.createElement("textarea");
   ime.setAttribute("aria-hidden", "true");
@@ -231,7 +231,7 @@ export async function createHost(player: Player) {
 
   let avds: AvdInfo[] | null = null;
   const phones = createPhoneList((list) => player.hostEvent("emu.phones", { list }));
-  // 装了 MuMu 但播放器没打开（网关的 mumu 消息带 appClosed）：页面给“打开 MuMu”
+  // 装了 MuMu 但播放器没打开（网关的 mumu 消息带 appClosed）：页面给"打开 MuMu"
   let mumuAppClosed = false;
   const mumu = createPhoneList<MumuInfo>((list) => player.hostEvent("emu.mumu", { list, appClosed: list !== null && mumuAppClosed }));
   const iosSims = createPhoneList<IosSimInfo>((list) => player.hostEvent("emu.iosSims", { list }));
@@ -345,7 +345,7 @@ export async function createHost(player: Player) {
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      player.hostEvent("emu.notice", { text: `已保存截图 ${name}` });
+      player.hostEvent("emu.notice", { text: t({ en: `Screenshot ${name} saved`, zh: `已保存截图 ${name}` }) });
     },
     onClip: (text) => clipSync.onClip(text),
     onAvds: (list) => {
@@ -391,7 +391,7 @@ export async function createHost(player: Player) {
       phones.onDisconnect();
       mumu.onDisconnect();
       iosSims.onDisconnect();
-      // 网关在更新后重启：留着“正在自动更新”，等它重新连上报新的级别
+      // 网关在更新后重启：留着"正在自动更新"，等它重新连上报新的级别
       if (updateReport?.state === "restarting") return;
       gateway = undefined;
       updateReport = null;
@@ -417,12 +417,12 @@ export async function createHost(player: Player) {
     onError: (message) => player.hostEvent("emu.notice", { text: message, error: true, gateway: true }),
     onAdbStuck: (message) => player.hostEvent("emu.adbStuck", { message }),
     onReboot: (result, error) => player.hostEvent("emu.notice", result === "done"
-      ? { text: kind === "phone" ? "手机已重启。设了锁屏密码的话，在画面上解锁" : "模拟器已重启" }
+      ? { text: kind === "phone" ? t({ en: "Phone rebooted. If you have a lock screen, unlock it on the screen", zh: "手机已重启。设了锁屏密码的话，在画面上解锁" }) : t({ en: "Emulator rebooted", zh: "模拟器已重启" }) }
       : result === "adb-down"
         ? kind === "phone"
-          ? { text: "手机两分钟内没开机完成：开机后重新插拔手机", error: true }
-          : { text: "模拟器已重启，但里面的 adb 还没有响应：H5 调试暂时不可用", error: true }
-        : { text: failText("重启失败", error), error: true }),
+          ? { text: t({ en: "Phone did not finish booting in two minutes: unplug and replug after it boots", zh: "手机两分钟内没开机完成：开机后重新插拔手机" }), error: true }
+          : { text: t({ en: "Emulator rebooted, but adb inside is not responding yet: H5 debugging temporarily unavailable", zh: "模拟器已重启，但里面的 adb 还没有响应：H5 调试暂时不可用" }), error: true }
+        : { text: failText(t({ en: "Reboot failed", zh: "重启失败" }), error), error: true }),
     onVersionError: (code, cmd) => {
       state = code;
       upgrade = cmd;
@@ -685,12 +685,12 @@ export async function createHost(player: Player) {
 
   // 文件拖到屏幕上：APK 安装，其他文件放进下载文件夹；iOS 模拟器上装 App（.app 文件夹、.zip、.ipa）。拖到屏幕外不让浏览器自己打开文件
   const dropBlocked = () =>
-    state === "connected" ? null : state === "rebooting" ? `${kind === "phone" ? "手机" : "模拟器"}正在重启，等它开机后再试` : "没有连接设备";
+    state === "connected" ? null : state === "rebooting" ? (kind === "phone" ? t({ en: "Phone is rebooting, wait for it to boot", zh: "手机正在重启，等它开机后再试" }) : t({ en: "Emulator is rebooting, wait for it to boot", zh: "模拟器正在重启，等它开机后再试" })) : t({ en: "No device connected", zh: "没有连接设备" });
   const takeFiles = (list: File[]) => {
     const why = dropBlocked();
     if (why) return player.hostEvent("emu.notice", { text: why, error: true });
     const ios = caps?.adb === false;
-    const gatewayTooOld = ios && gateway !== undefined && gatewayBelow(gateway, IOS_APP_LEVEL) ? tooOldText("给 iOS 模拟器装 App", INSTALL) : undefined;
+    const gatewayTooOld = ios && gateway !== undefined && gatewayBelow(gateway, IOS_APP_LEVEL) ? tooOldText({ en: "installing apps on iOS simulators", zh: "给 iOS 模拟器装 App" }, INSTALL) : undefined;
     if (list.length) uploads.add(list, { ios, gatewayTooOld });
   };
   // 「发送文件…」：选好的文件和拖进来的走同一条路。不放进 DOM，click() 照样弹出选择框；
@@ -743,7 +743,7 @@ export async function createHost(player: Player) {
         for (const text of skipped) player.hostEvent("emu.notice", { text, error: true });
         takeFiles(files);
       },
-      (err: Error) => player.hostEvent("emu.notice", { text: `读文件夹失败：${err.message}`, error: true }),
+      (err: Error) => player.hostEvent("emu.notice", { text: t({ en: `Failed to read folder: ${err.message}`, zh: `读文件夹失败：${err.message}` }), error: true }),
     );
   });
   window.addEventListener("dragover", (e) => {
@@ -812,10 +812,10 @@ export async function createHost(player: Player) {
       const until = Date.now() + 10 * 60_000;
       for (;;) {
         const it = uploads.list().find((i) => i.id === id);
-        if (!it) return { state: "failed", error: "传输记录不见了" };
+        if (!it) return { state: "failed", error: "Transfer record gone" };
         if (it.state === "done" || it.state === "failed") return { state: it.state, error: it.error };
-        if (signal.aborted) return { state: it.state, error: "调用方取消了等待，安装仍在继续，进度看页面" };
-        if (Date.now() > until) return { state: it.state, error: "等了 10 分钟还没装完，进度看页面" };
+        if (signal.aborted) return { state: it.state, error: "Caller cancelled the wait; install is still running, check the page for progress" };
+        if (Date.now() > until) return { state: it.state, error: "Still not done after 10 minutes, check the page for progress" };
         await new Promise((r) => setTimeout(r, 500));
       }
     },
@@ -844,25 +844,25 @@ export async function createHost(player: Player) {
   });
   const stopOld = async (name: string): Promise<{ ok: boolean; error?: string }> => {
     const onScreen = state === "connected" && avds?.some((a) => a.name === name && a.running === "grpc" && a.serial === serial);
-    if (!onScreen) return { ok: false, error: tooOldText("停止没连在画面上的设备", INSTALL) };
-    if (!conn.control({ t: "stop" })) return { ok: false, error: "没有连上网关，操作没有发出。等网关重新连上后再试。" };
+    if (!onScreen) return { ok: false, error: tooOldText({ en: "stopping a device not on screen", zh: "停止没连在画面上的设备" }, INSTALL) };
+    if (!conn.control({ t: "stop" })) return { ok: false, error: t({ en: "No gateway connected, operation not sent. Wait for the gateway to reconnect and try again.", zh: "没有连上网关，操作没有发出。等网关重新连上后再试。" }) };
     const end = Date.now() + STOP_OLD_MS;
     while (Date.now() < end) {
       await new Promise((r) => setTimeout(r, 1000));
       const list = await nextAvds();
-      if (list === "down") return { ok: false, error: "和网关断开了，不知道设备停了没有。等网关重新连上后看设备列表。" };
+      if (list === "down") return { ok: false, error: t({ en: "Disconnected from gateway, unknown whether the device stopped. Check the device list after reconnecting.", zh: "和网关断开了，不知道设备停了没有。等网关重新连上后看设备列表。" }) };
       if (list && !list.some((a) => a.name === name && a.running !== "no")) return { ok: true };
     }
-    return { ok: false, error: `等了 ${STOP_OLD_MS / 1000} 秒它还在运行，稍后看设备列表` };
+    return { ok: false, error: t({ en: `Still running after ${STOP_OLD_MS / 1000} seconds, check the device list later`, zh: `等了 ${STOP_OLD_MS / 1000} 秒它还在运行，稍后看设备列表` }) };
   };
   const needName = (fn: string, args: unknown) => {
     const name = (args as { name?: unknown } | undefined)?.name;
-    if (typeof name !== "string") throw new Error(`${fn} 需要 name`);
+    if (typeof name !== "string") throw new Error(`${fn} requires name`);
     return name;
   };
   const needPage = (fn: string, args: unknown) => {
     const a = args as { socket?: unknown; id?: unknown } | undefined;
-    if (typeof a?.socket !== "string" || typeof a.id !== "string") throw new Error(`${fn} 需要 socket 和 id`);
+    if (typeof a?.socket !== "string" || typeof a.id !== "string") throw new Error(`${fn} requires socket and id`);
     return { socket: a.socket, id: a.id };
   };
 
@@ -871,7 +871,7 @@ export async function createHost(player: Player) {
     return conn.request({ t: "inspect", ...page }).then((r) => {
       if (gen !== devtoolsGen) return { cancelled: true };
       if ("url" in r) {
-        if (!isDevtoolsSrc(r.url, String(GATEWAY_PORT))) return { error: "DevTools 前端地址不可信，已拒绝打开" };
+        if (!isDevtoolsSrc(r.url, String(GATEWAY_PORT))) return { error: t({ en: "DevTools page URL is untrusted and was rejected", zh: "DevTools 前端地址不可信，已拒绝打开" }) };
         devtoolsPage = page;
         devtools.src = r.url;
         return { opened: true };
@@ -884,13 +884,13 @@ export async function createHost(player: Player) {
   return {
     call(name: string, args: { key?: string; text?: string; name?: string; address?: string; dir?: string } | undefined) {
       if (name === "emu.key") {
-        if (typeof args?.key !== "string") throw new Error("emu.key 需要 key");
+        if (typeof args?.key !== "string") throw new Error("emu.key requires key");
         return sent({ t: "key", key: args.key, eventType: "keypress" });
       }
       // 顺时针不带 dir，旧网关也照样能转；旧网关不认 dir，会把逆时针也转成顺时针
       if (name === "emu.rotate") return sent(args?.dir === "left" ? { t: "rotate", dir: "left" } : { t: "rotate" });
       if (name === "emu.screenshot") return sent({ t: "screenshot" });
-      // 确认框里点了“重启”才调用
+      // 确认框里点了"重启"才调用
       if (name === "emu.reboot") return state === "connected" ? ctl({ t: "reboot" }) : { ok: false };
       // 下一份列表到了再返回；没连上网关时直接给缓存
       if (name === "emu.avds") {
@@ -902,21 +902,21 @@ export async function createHost(player: Player) {
       if (name === "emu.stop") return state === "connected" ? ctl({ t: "stop" }) : { ok: false };
       // 提示条上的按钮调用，处在用户点击里
       if (name === "emu.copy") {
-        if (typeof args?.text !== "string") throw new Error("emu.copy 需要 text");
+        if (typeof args?.text !== "string") throw new Error("emu.copy requires text");
         return navigator.clipboard.writeText(args.text).then(() => ({ ok: true }));
       }
       if (name === "emu.webviews") {
-        // 读失败不抛：adbStuck 时页面要就地给出“重启模拟器”
+        // 读失败不抛：adbStuck 时页面要就地给出"重启模拟器"
         return conn.request({ t: "webviews" }).then((r) => ({ list: r.list, error: r.error, adbStuck: r.code === "adb-unresponsive" }));
       }
       // 检测、清除代理：失败不抛，error 给页面显示，adbStuck 时页面给出重启按钮
       if (name === "emu.proxyCheck" || name === "emu.proxyClear") {
-        if (gateway !== undefined && gatewayBelow(gateway, PROXY_LEVEL)) return { ok: false, proxy: null, error: tooOldText("检测网络", INSTALL), adbStuck: false };
+        if (gateway !== undefined && gatewayBelow(gateway, PROXY_LEVEL)) return { ok: false, proxy: null, error: tooOldText({ en: "network detection", zh: "检测网络" }, INSTALL), adbStuck: false };
         const failed = (e: Error) => ({ ok: false, proxy: null, error: e.message, adbStuck: false });
         if (name === "emu.proxyCheck") {
           return conn.request({ t: "proxyCheck" }).then((r) => ({ ok: r.ok ?? false, proxy: r.proxy, untrusted: r.untrusted ?? [], error: r.error ?? null, adbStuck: r.code === "adb-unresponsive" }), failed);
         }
-        if (typeof args?.proxy !== "string") throw new Error("emu.proxyClear 需要 proxy");
+        if (typeof args?.proxy !== "string") throw new Error("emu.proxyClear requires proxy");
         return conn.request({ t: "proxyClear", proxy: args.proxy }).then((r) => ({ ok: r.ok, proxy: null, error: r.error ?? null, adbStuck: r.code === "adb-unresponsive" }), failed);
       }
       // 拿到前端地址就在 testID="devtools" 的占位 View 里显示，返回 opened 让 TSX 展开控制台
@@ -939,47 +939,47 @@ export async function createHost(player: Player) {
         return { ok: true };
       }
       if (name === "emu.navigate") {
-        if (typeof args?.address !== "string") throw new Error("emu.navigate 需要 address");
+        if (typeof args?.address !== "string") throw new Error("emu.navigate requires address");
         return conn.request({ t: "navigate", ...needPage(name, args), address: args.address })
           .then(({ ok, href, title, bridge, error, code }) => ({ ok, href, title, bridge, error, adbStuck: code === "adb-unresponsive" }));
       }
       // 失败不抛，页面就地显示原因；旧网关不认这条消息，等满超时后同样走这里
       if (name === "emu.renameAvd") {
         const displayName = (args as { displayName?: unknown } | undefined)?.displayName;
-        if (typeof displayName !== "string") throw new Error("emu.renameAvd 需要 displayName");
+        if (typeof displayName !== "string") throw new Error("emu.renameAvd requires displayName");
         return conn.request({ t: "renameAvd", name: needName(name, args), displayName }).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_EDIT_LEVEL, "改名", e.message, INSTALL) : e.message }),
+          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_EDIT_LEVEL, { en: "rename", zh: "改名" }, e.message, INSTALL) : e.message }),
         );
       }
       // 同上；删得慢（大目录、avdmanager 起 Java）时页面先超时，网关删完照样广播新列表
-      // stop：运行中先停止再删。旧网关不认 stop，照旧回“先关闭这台设备再删除”
+      // stop：运行中先停止再删。旧网关不认 stop，照旧回"先关闭这台设备再删除"
       if (name === "emu.deleteAvd") {
         const stop = (args as { stop?: unknown } | undefined)?.stop === true;
         return conn.request({ t: "deleteAvd", name: needName(name, args), ...(stop ? { stop: true as const } : {}) }, stop ? STOP_REPLY_MS : undefined).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_EDIT_LEVEL, "删除设备", `${e.message}：可能还在删，稍后看设备列表`, INSTALL) : e.message }),
+          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_EDIT_LEVEL, { en: "delete device", zh: "删除设备" }, t({ en: `${e.message}: may still be deleting, check device list later`, zh: `${e.message}：可能还在删，稍后看设备列表` }), INSTALL) : e.message }),
         );
       }
       // 网关等设备真的停了才回（画面上这台、开机中、重启中的都行）。已知是旧网关（级别 < 2）时不发这条，改用 stopOld
-      // 侧栏 MuMu 行上点了“启动”、确认了“关机”：状态变化随网关推来的 mumu 列表回来
+      // 侧栏 MuMu 行上点了"启动"、确认了"关机"：状态变化随网关推来的 mumu 列表回来
       if (name === "emu.mumuLaunch") return ctl({ t: "mumuLaunch" });
       if (name === "emu.mumuOpen" || name === "emu.mumuClose") {
         const index = (args as { index?: unknown } | undefined)?.index;
-        if (!Number.isInteger(index) || (index as number) < 0) throw new Error(`${name} 需要 index`);
+        if (!Number.isInteger(index) || (index as number) < 0) throw new Error(`${name} requires index`);
         return ctl({ t: name === "emu.mumuOpen" ? "mumuOpen" : "mumuClose", index: index as number });
       }
-      // 侧栏 iOS 模拟器行上点了“启动”、确认了“关机”：状态变化随 iosSims 列表回来
+      // 侧栏 iOS 模拟器行上点了"启动"、确认了"关机"：状态变化随 iosSims 列表回来
       if (name === "emu.iosSimOpen" || name === "emu.iosSimClose") {
         const udid = (args as { udid?: unknown } | undefined)?.udid;
-        if (typeof udid !== "string" || !isIosSimUdid(udid)) throw new Error(`${name} 需要 udid`);
+        if (typeof udid !== "string" || !isIosSimUdid(udid)) throw new Error(`${name} requires udid`);
         return ctl({ t: name === "emu.iosSimOpen" ? "iosSimOpen" : "iosSimClose", udid });
       }
       // 创建 iOS 模拟器对话框：目录、创建（参数网关再核一遍）。创建最久等 130 秒：网关里 simctl create 最多 60 秒，再加刷新列表
       if (name === "emu.iosCatalog") return conn.request({ t: "iosCatalog" }, 30_000).then((r) => ({ catalog: r.catalog ?? null, error: r.error ?? null }));
       if (name === "emu.createIosSim") {
         const a = args as { name?: unknown; deviceType?: unknown; runtime?: unknown } | undefined;
-        if (typeof a?.name !== "string" || typeof a.deviceType !== "string" || typeof a.runtime !== "string") throw new Error("emu.createIosSim 需要 name、deviceType、runtime");
+        if (typeof a?.name !== "string" || typeof a.deviceType !== "string" || typeof a.runtime !== "string") throw new Error("emu.createIosSim requires name, deviceType, and runtime");
         return conn.request({ t: "createIosSim", name: a.name, deviceType: a.deviceType, runtime: a.runtime }, 130_000).then((r) => ({ udid: r.udid ?? null, error: r.error ?? null }));
       }
       if (name === "emu.stopAvd") {
@@ -987,7 +987,7 @@ export async function createHost(player: Player) {
         if (gateway !== undefined && gatewayBelow(gateway, AVD_STOP_LEVEL)) return stopOld(target);
         return conn.request({ t: "stopAvd", name: target }, STOP_REPLY_MS).then(
           (r) => ({ ok: r.ok, error: r.error }),
-          (e: Error) => ({ ok: false, error: e.message.endsWith("没有回应") ? timeoutText(gateway, AVD_STOP_LEVEL, "停止设备", `${e.message}：可能还在停，稍后看设备列表`, INSTALL) : e.message }),
+          (e: Error) => ({ ok: false, error: (e.message.includes("没有回应") || e.message.includes("did not respond")) ? timeoutText(gateway, AVD_STOP_LEVEL, { en: "stop device", zh: "停止设备" }, t({ en: `${e.message}: may still be stopping, check device list later`, zh: `${e.message}：可能还在停，稍后看设备列表` }), INSTALL) : e.message }),
         );
       }
       if (name === "emu.status") {
@@ -998,7 +998,7 @@ export async function createHost(player: Player) {
       }
       if (name === "emu.logcatOpen" || name === "emu.logcatFilter") {
         const filter = (args as { filter?: LogFilter } | undefined)?.filter;
-        if (!filter) throw new Error(`${name} 缺少 filter`);
+        if (!filter) throw new Error(`${name} requires filter`);
         return { ok: conn.send({ t: name === "emu.logcatOpen" ? "logcatOpen" : "logcatFilter", filter }) };
       }
       if (name === "emu.logcatClose") return { ok: conn.send({ t: "logcatClose" }) };
@@ -1027,7 +1027,7 @@ export async function createHost(player: Player) {
       // 页面确认框里点了确认才调用
       if (name === "emu.install") {
         const ids = (args as { ids?: unknown } | undefined)?.ids;
-        if (!Array.isArray(ids) || !ids.every((id) => (INSTALL_IDS as readonly unknown[]).includes(id))) throw new Error("emu.install 需要 ids");
+        if (!Array.isArray(ids) || !ids.every((id) => (INSTALL_IDS as readonly unknown[]).includes(id))) throw new Error("emu.install requires ids");
         // 新一轮安装：上一轮的进度不再显示
         installs = [];
         setupEvent();
@@ -1040,7 +1040,7 @@ export async function createHost(player: Player) {
       // 页面确认框里点了确认才调用
       if (name === "emu.createAvd") {
         const a = args as { name?: unknown; device?: unknown; image?: unknown } | undefined;
-        if (typeof a?.name !== "string" || typeof a.device !== "string" || typeof a.image !== "string") throw new Error("emu.createAvd 需要 name、device、image");
+        if (typeof a?.name !== "string" || typeof a.device !== "string" || typeof a.image !== "string") throw new Error("emu.createAvd requires name, device, and image");
         installs = [];
         setupEvent();
         return ctl({ t: "createAvd", name: a.name, device: a.device, image: a.image });
@@ -1048,20 +1048,20 @@ export async function createHost(player: Player) {
       // 带着页面上显示的那份许可证的 id：网关只认正在等的那份
       if (name === "emu.acceptLicenses" || name === "emu.rejectLicenses") {
         const id = (args as { id?: unknown } | undefined)?.id;
-        if (typeof id !== "number") throw new Error(`${name} 需要 id`);
+        if (typeof id !== "number") throw new Error(`${name} requires id`);
         return ctl({ t: name === "emu.acceptLicenses" ? "acceptLicenses" : "rejectLicenses", id });
       }
       if (name === "emu.site") return SITE;
       if (name === "emu.zoom") return parseZoom(readPref(ZOOM_KEY));
       if (name === "emu.setZoom") {
         const zoom = (args as { zoom?: unknown } | undefined)?.zoom;
-        if (!ZOOM_STEPS.includes(zoom as number)) throw new Error(`emu.setZoom 需要 zoom：${ZOOM_STEPS.join("、")} 之一`);
+        if (!ZOOM_STEPS.includes(zoom as number)) throw new Error(`emu.setZoom requires zoom: one of ${ZOOM_STEPS.join(", ")}`);
         return { ok: writePref(ZOOM_KEY, String(zoom)) };
       }
       if (name === "emu.theme") return parseTheme(readPref(THEME_KEY));
       if (name === "emu.setTheme") {
         const theme = (args as { theme?: unknown } | undefined)?.theme;
-        if (!THEMES.includes(theme as never)) throw new Error("emu.setTheme 需要 theme：system、light 或 dark");
+        if (!THEMES.includes(theme as never)) throw new Error("emu.setTheme requires theme: system, light, or dark");
         return { ok: writePref(THEME_KEY, theme as string) };
       }
       if (name === "emu.lang") return hostLang;
@@ -1075,7 +1075,7 @@ export async function createHost(player: Player) {
       if (name === "emu.sidebar") return { hidden: readPref(SIDEBAR_KEY) === "hidden" };
       if (name === "emu.setSidebar") {
         const hidden = (args as { hidden?: unknown } | undefined)?.hidden;
-        if (typeof hidden !== "boolean") throw new Error("emu.setSidebar 需要 hidden");
+        if (typeof hidden !== "boolean") throw new Error("emu.setSidebar requires hidden");
         return { ok: writePref(SIDEBAR_KEY, hidden ? "hidden" : "shown") };
       }
       throw new Error(`no host function ${name}`);
@@ -1089,7 +1089,7 @@ function idleConnection(): ReturnType<typeof createConnection> {
     send: () => false,
     control: () => false,
     sendBinary: () => false,
-    request: () => Promise.reject(new Error("没有连接网关")),
+    request: () => Promise.reject(new Error(t({ en: "No gateway connected", zh: "没有连接网关" }))),
     wake: () => {},
   };
 }

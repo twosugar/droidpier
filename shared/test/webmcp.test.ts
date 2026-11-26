@@ -82,7 +82,7 @@ test("截图编码失败时返回原因，不抛出", async () => {
 
 test("点击要先截图；截图后按截图坐标发按下和抬起", async () => {
   const { h, run } = harness();
-  assert.match(String((await run("droidpier_tap", { x: 10, y: 10 })).error), /先调用 droidpier_screenshot/);
+  assert.match(String((await run("droidpier_tap", { x: 10, y: 10 })).error), /Call droidpier_screenshot first/);
   await run("droidpier_screenshot");
   await run("droidpier_tap", { x: 270, y: 600, durationMs: 10 });
   assert.deepEqual(h.sent, [{ t: "touch", x: 540, y: 1200, down: true }, { t: "touch", x: 540, y: 1200, down: false }]);
@@ -92,7 +92,7 @@ test("截图后设备转了方向，点击要求重新截图", async () => {
   const { h, run } = harness();
   await run("droidpier_screenshot");
   h.rotation = 90;
-  assert.match(String((await run("droidpier_tap", { x: 1, y: 1 })).error), /方向变了/);
+  assert.match(String((await run("droidpier_tap", { x: 1, y: 1 })).error), /orientation changed/);
   assert.equal(h.sent.length, 0);
 });
 
@@ -111,7 +111,7 @@ test("没有设备时操作类工具不发消息，返回原因", async () => {
   const { h, run } = harness({ connected: false });
   const r = await run("droidpier_press_key", { key: "GoBack" });
   assert.equal(r.ok, false);
-  assert.match(String(r.error), /没有连接设备/);
+  assert.match(String(r.error), /No device connected/);
   assert.equal(h.sent.length, 0);
 });
 
@@ -120,14 +120,14 @@ test("参数不对时返回 ok:false 和原因，不抛出（Chrome 会把抛出
   await run("droidpier_screenshot");
   const r = await run("droidpier_tap", { x: "a", y: 1 });
   assert.equal(r.ok, false);
-  assert.match(String(r.error), /x 需要是数字/);
+  assert.match(String(r.error), /x must be a number/);
 });
 
 test("按键只认列表里的键", async () => {
   const { h, run } = harness();
   await run("droidpier_press_key", { key: "GoHome" });
   assert.deepEqual(h.sent, [{ t: "key", key: "GoHome", eventType: "keypress" }]);
-  assert.match(String((await run("droidpier_press_key", { key: "Shutdown" })).error), /不认识的键/);
+  assert.match(String((await run("droidpier_press_key", { key: "Shutdown" })).error), /Unknown key/);
 });
 
 test("重启、关闭设备先问用户：拒绝时什么都不发", async () => {
@@ -186,10 +186,10 @@ test("设备列表：devices 是 AVD，phones 是真机，当前真机 current �
 test("启动设备：可用的真机切过去；未授权、离线的不发消息并说下一步；旧网关时找不到", async () => {
   const { h, run } = harness({ phones: PHONES });
   assert.equal((await run("droidpier_start_device", { name: "R5CR10WN52H" })).ok, true);
-  assert.match(String((await run("droidpier_start_device", { name: "AUTH1" })).error), /允许 USB 调试/);
-  assert.match(String((await run("droidpier_start_device", { name: "OFF1" })).error), /重新插拔/);
+  assert.match(String((await run("droidpier_start_device", { name: "AUTH1" })).error), /USB debugging/);
+  assert.match(String((await run("droidpier_start_device", { name: "OFF1" })).error), /unplug and replug/);
   assert.deepEqual(h.controls, [{ t: "use", name: "R5CR10WN52H" }]);
-  assert.match(String((await harness({ phones: null }).run("droidpier_start_device", { name: "R5CR10WN52H" })).error), /没有叫/);
+  assert.match(String((await harness({ phones: null }).run("droidpier_start_device", { name: "R5CR10WN52H" })).error), /No device named/);
 });
 
 test("真机不支持旋转、关机、重启：直接返回不支持，不问用户、不发消息", async () => {
@@ -197,7 +197,7 @@ test("真机不支持旋转、关机、重启：直接返回不支持，不问�
   for (const name of ["droidpier_rotate", "droidpier_stop_device", "droidpier_reboot"]) {
     const r = await run(name);
     assert.equal(r.ok, false);
-    assert.match(String(r.error), /不支持/);
+    assert.match(String(r.error), /not support|does not support/);
   }
   assert.equal(h.asked.length, 0);
   assert.equal(h.sent.length + h.controls.length, 0);
@@ -213,7 +213,7 @@ test("读日志：旧网关不发请求，直接说网关版本较旧", async ()
   const { h, run } = harness({ logcatSupported: false });
   const r = await run("droidpier_read_logcat");
   assert.equal(r.ok, false);
-  assert.match(String(r.error), /网关版本较旧/);
+  assert.match(String(r.error), /too old to read logcat/);
   assert.equal(h.reads.length, 0);
 });
 
@@ -249,7 +249,7 @@ test("读日志：包名不像包名时当场报错，不发请求（网关会�
   const { h, run } = harness();
   const r = await run("droidpier_read_logcat", { package: "my app" });
   assert.equal(r.ok, false);
-  assert.match(String(r.error), /包名/);
+  assert.match(String(r.error), /Invalid package name/);
   assert.equal(h.reads.length, 0);
 });
 
@@ -257,5 +257,5 @@ test("读日志：没有符合条件的行时附一句为什么，免得当成�
   const r = await harness({ readLogcat: async () => ({ lines: [] }) }).run("droidpier_read_logcat", { package: "com.a", level: "E" });
   assert.equal(r.ok, true);
   assert.deepEqual(r.lines, []);
-  assert.match(String(r.note), /最近约 5000 行/);
+  assert.match(String(r.note), /last ~5000 lines/);
 });

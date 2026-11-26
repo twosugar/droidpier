@@ -41,10 +41,10 @@ test("logEmptyText：断开、暂停、被过滤、真的没有，四种说法�
     logEmptyText({ live: true, paused: false, filtered: false }),
   ]);
   assert.equal(texts.size, 4);
-  assert.equal(logEmptyText({ live: true, paused: false, filtered: true }), "没有符合条件的日志。");
-  assert.equal(logEmptyText({ live: true, paused: false, filtered: false }), "还没有日志");
+  assert.equal(logEmptyText({ live: true, paused: false, filtered: true }), "No matching logs.");
+  assert.equal(logEmptyText({ live: true, paused: false, filtered: false }), "No logs yet");
 });
 
 test("logEmptyText：断开时不管暂停和过滤都先说断开", () => {
-  assert.match(logEmptyText({ live: false, paused: true, filtered: false }), /设备已断开/);
+  assert.match(logEmptyText({ live: false, paused: true, filtered: false }), /Device disconnected/);
 });

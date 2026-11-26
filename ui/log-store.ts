@@ -1,5 +1,6 @@
 // 日志面板的行：网关一批批推来，页面最多留 MAX_LINES 行（docs/superpowers/plans/2026-11-16-real-device-pr5-logcat.md 取舍 2）
 import type { LogLevel, LogLine } from "../shared/logcat";
+import { t } from "../shared/i18n.ts";
 
 /** 页面最多留多少行；刷屏时超出的丢最旧的，列表才不会越来越慢。 */
 export const MAX_LINES = 20000;
@@ -26,7 +27,7 @@ export function levelColor(l: LogLevel): "muted" | "text" | "warn" | "danger" {
  * 网关按条件过滤后才推过来，页面看不出不加条件时有没有日志，所以有条件时只能说「没有符合条件的」。
  */
 export function logEmptyText(s: { live: boolean; paused: boolean; filtered: boolean }): string {
-  if (!s.live) return "设备已断开，重新连上后继续显示日志。";
-  if (s.paused) return "已暂停";
-  return s.filtered ? "没有符合条件的日志。" : "还没有日志";
+  if (!s.live) return t({ en: "Device disconnected. Logs continue once it reconnects.", zh: "设备已断开，重新连上后继续显示日志。" });
+  if (s.paused) return t({ en: "Paused", zh: "已暂停" });
+  return s.filtered ? t({ en: "No matching logs.", zh: "没有符合条件的日志。" }) : t({ en: "No logs yet", zh: "还没有日志" });
 }
