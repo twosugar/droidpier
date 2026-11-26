@@ -83,6 +83,8 @@ type Conn = {
   ws: WebSocket;
   helloSeen: boolean;
   session?: EmulatorSession;
+  /** 上次在 ready 里告诉页面的设备尺寸：折叠机换屏后尺寸会变，要重发 ready。 */
+  sentDevice?: { width: number; height: number };
   /** 换到这个会话：发 ready 并重新订阅画面。 */
   attach(s: EmulatorSession): void;
   /** 方向变了：按新方向的设备尺寸重新订阅画面。 */
@@ -676,6 +678,11 @@ export async function startServer(opts: {
     s.onRotation((rotation) => {
       for (const c of live()) {
         if (c.session !== s) continue;
+        // 折叠机换到另一块屏（iOS 模拟器）：尺寸也变了，页面按新尺寸排版、换算触摸
+        if (c.sentDevice?.width !== s.device.width || c.sentDevice?.height !== s.device.height) {
+          c.sentDevice = { ...s.device };
+          send(c.ws, { t: "ready", version: PROTOCOL_VERSION, device: s.device, serial: s.serial, deviceId: s.id, kind: s.kind, caps: s.caps });
+        }
         send(c.ws, { t: "orientation", rotation });
         c.resubscribe();
         c.rotated();
@@ -1031,6 +1038,7 @@ export async function startServer(opts: {
       // 按着的手指属于旧会话，新会话里没有按下
       lastTouch = null;
       watch(s);
+      conn.sentDevice = { ...s.device };
       send(ws, { t: "ready", version: PROTOCOL_VERSION, device: s.device, serial: s.serial, deviceId: s.id, kind: s.kind, caps: s.caps });
       send(ws, { t: "orientation", rotation: s.rotation });
       if (isRebooting(s)) send(ws, { t: "status", state: "rebooting" });

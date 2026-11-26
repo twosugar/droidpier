@@ -45,10 +45,13 @@ static KeyboardFn keyboardMessage;
 static size_t fbWidth, fbHeight;
 // 界面方向（设备顺时针转过的角度）和转正后的视频尺寸：帧缓冲永远是竖的，界面横过来时（折叠机展开）画面在里面是躺着的，
 // 编码前按方向转正，视频是 outW x outH；触摸照旧按帧缓冲坐标
-static int rotationDeg;
-// 正在用的屏在 class 0 屏里的序号，也是 dtuhidd 触摸的 target：折叠机外屏要发 1，发 0 点不动
-// （2026-11-26 iPhone Duo 实测外屏；内屏按同样的顺序是 0，未单独验证）。iPhone 只有一块屏，一直是 0。encodeQ 写、inputQ 读
+static int rotationDeg, sentRotation = -1;
+// 正在用的屏在 class 0 屏里的序号，当作 dtuhidd 触摸的 target：折叠机外屏要发 1，发 0 点不动（2026-11-26 iPhone Duo 实测）。
+// 内屏还点不动：target 0 / 1 / 2、按竖屏或横屏的坐标都试过，没有反应，内屏要怎么指定还不知道。iPhone 只有一块屏，一直是 0。
+// encodeQ 写、inputQ 读
 static _Atomic uint64_t screenIndex;
+// 按下时发给的屏：手指抬起前不换，开合铰链时旧屏上不会留下一根抬不起来的手指。只在 inputQ 上用
+static uint64_t touchTarget;
 static size_t outW, outH;
 static VTPixelRotationSessionRef rotator;
 static CVPixelBufferPoolRef rotatedPool;
@@ -197,7 +200,9 @@ static void encodeCurrent(void) {
   if (!s) return;
   size_t w = IOSurfaceGetWidth(s), h = IOSurfaceGetHeight(s);
   size_t ow = rotationDeg % 180 ? h : w, oh = rotationDeg % 180 ? w : h;
-  if (w != fbWidth || h != fbHeight || ow != outW || oh != outH) {
+  // 90 和 270（0 和 180）转正后尺寸一样，方向变了也要重发 ready，网关才知道触摸按哪个方向换算
+  if (w != fbWidth || h != fbHeight || ow != outW || oh != outH || rotationDeg != sentRotation) {
+    sentRotation = rotationDeg;
     fbWidth = w;
     fbHeight = h;
     outW = ow;
@@ -338,7 +343,8 @@ static void touch(double x, double y, BOOL down, uint64_t edge) {
     // 0 开始、1 移动、2 结束
     xpc_dictionary_set_uint64(p, "eventType", !down ? 2 : dtuTouching ? 1 : 0);
     xpc_dictionary_set_uint64(p, "edge", edge);
-    xpc_dictionary_set_uint64(p, "target", screenIndex);
+    if (down && !dtuTouching) touchTarget = screenIndex;
+    xpc_dictionary_set_uint64(p, "target", touchTarget);
     dtuTouching = down;
     dtuSend("IndigoDigitizerEvent", p);
     return;

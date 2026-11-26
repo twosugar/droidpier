@@ -339,12 +339,12 @@ export async function connectIosSim(udid: string, name: string, deps: IosSimDeps
     },
     event(e) {
       if (e.t === "ready") {
-        session.device = { width: e.width, height: e.height };
         const r = e.rotation ?? 0;
-        if (r !== session.rotation) {
-          session.rotation = r;
-          for (const cb of rotationCbs) cb(r);
-        }
+        const changed = r !== session.rotation || e.width !== session.device.width || e.height !== session.device.height;
+        session.device = { width: e.width, height: e.height };
+        session.rotation = r;
+        // 方向变了，或者折叠机换到另一块屏（尺寸变了）：网关重发方向，尺寸变了时连 ready 一起（server.ts 的 watch）
+        if (changed) for (const cb of rotationCbs) cb(r);
       }
       else if (e.t === "error") {
         log(`${name}：${e.message}`);

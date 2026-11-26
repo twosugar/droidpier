@@ -277,3 +277,20 @@ test("connectIosSim：小程序报的方向（折叠机展开后界面横过来�
   assert.equal(s.rotation, 0);
   assert.deepEqual(turns, [270, 0]);
 });
+
+test("connectIosSim：方向没变但帧缓冲尺寸变了（换到另一块屏）也通知，让网关把新尺寸告诉页面", async () => {
+  const h = fakeHelper();
+  const pending = connectIosSim(A, "iPhone Duo", deps(h));
+  await new Promise((r) => setImmediate(r));
+  h.push(Buffer.concat([eventPkt({ t: "ready", width: 1398, height: 2034 }), videoPkt(1, 1398, 2034, [1]), videoPkt(2, 1398, 2034, [2])]));
+  const s = await pending;
+  const turns: number[] = [];
+  s.onRotation((r) => turns.push(r));
+  h.push(eventPkt({ t: "ready", width: 2007, height: 2853, rotation: 0 }));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(s.device, { width: 2007, height: 2853 });
+  assert.deepEqual(turns, [0]);
+  h.push(eventPkt({ t: "ready", width: 2007, height: 2853, rotation: 0 }));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(turns, [0]);
+});
